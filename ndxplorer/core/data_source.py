@@ -341,7 +341,8 @@ def compute_values(
     equations: Optional[List[Dict[str, str]]] = None,
     equation_json_fn: Optional[str] = None,
     engine: str = "python",
-) -> None:
+    changed_constants: Optional[Set[str]] = None,
+) -> List[str]:
     """
     Compute columns in DataFrame `d` from `equations`, using case-insensitive
     column lookup and quoted-name replacement for data/constant references.
@@ -448,42 +449,81 @@ def compute_values(
     available_cols_exact = set(cols_lower_exact)
     available_cols_left = set(cols_lower_left)
 
+    # Pre-parse every equation once so we can both (a) build a dependency graph
+    # for targeted recompute and (b) evaluate in declaration order.
+    parsed = []  # (out_key, expr, pre, data_refs, const_refs)
     for mapping in equations:
         for out_key, expr in mapping.items():
+            pre, data_refs, const_refs = _preprocess_equation(expr)
+            parsed.append((out_key, expr, pre, data_refs, const_refs))
+
+    # Targeted recompute: when only a few constants changed, recompute just the
+    # equations that (transitively) depend on them instead of all ~100. A full
+    # recompute of every derived column on every parameter edit froze the GUI.
+    to_compute = None  # None => recompute everything (initial load / no filter)
+    if changed_constants:
+        changed_lower = {str(x).lower() for x in changed_constants}
+        affected = {
+            str(ok).lower() for (ok, _e, _p, _d, cref) in parsed if cref & changed_lower
+        }
+        # Propagate to equations that read an affected (recomputed) output column.
+        grew = True
+        while grew:
+            grew = False
+            for (ok, _e, _p, dref, _c) in parsed:
+                okl = str(ok).lower()
+                if okl not in affected and (dref & affected):
+                    affected.add(okl)
+                    grew = True
+        to_compute = affected
+
+    computed_keys: List[str] = []
+    for out_key, expr, pre, data_refs, const_refs in parsed:
+        if to_compute is not None and str(out_key).lower() not in to_compute:
+            # Unaffected column: keep its existing values, but register it as
+            # available so downstream equations that reference it still resolve.
+            available_cols_exact.add(str(out_key).lower())
+            available_cols_left.add(_normalize_left(out_key).lower())
+            continue
+        try:
+            missing_cols = []
+            for ref in data_refs:
+                if (
+                    ref not in available_cols_exact
+                    and _normalize_left(ref).lower() not in available_cols_left
+                    and ref not in eq_keys_lower
+                ):
+                    missing_cols.append(ref)
+            missing_consts = [ref for ref in const_refs if ref not in consts_lower]
+            if missing_cols or missing_consts:
+                missing_desc = []
+                if missing_cols:
+                    missing_desc.append(f"columns={sorted(set(missing_cols))}")
+                if missing_consts:
+                    missing_desc.append(f"constants={sorted(set(missing_consts))}")
+                # debug, not info: this fires per equation on *every* recompute
+                # (the missing columns don't change between calls).
+                logging.debug(
+                    "compute_values: Skipping '%s' due to missing %s",
+                    out_key,
+                    "; ".join(missing_desc),
+                )
+                continue
+            # First try pandas.eval (engine='python' supports general Python eval)
             try:
-                pre, data_refs, const_refs = _preprocess_equation(expr)
-                missing_cols = []
-                for ref in data_refs:
-                    if (
-                        ref not in available_cols_exact
-                        and _normalize_left(ref).lower() not in available_cols_left
-                        and ref not in eq_keys_lower
-                    ):
-                        missing_cols.append(ref)
-                missing_consts = [ref for ref in const_refs if ref not in consts_lower]
-                if missing_cols or missing_consts:
-                    missing_desc = []
-                    if missing_cols:
-                        missing_desc.append(f"columns={sorted(set(missing_cols))}")
-                    if missing_consts:
-                        missing_desc.append(f"constants={sorted(set(missing_consts))}")
-                    logging.info(
-                        "compute_values: Skipping '%s' due to missing %s",
-                        out_key,
-                        "; ".join(missing_desc),
-                    )
-                    continue
-                # First try pandas.eval (engine='python' supports general Python eval)
-                try:
-                    d[out_key] = pd.eval(pre, local_dict={'d': d_ci, 'c': c}, engine=engine)
-                except Exception:
-                    # Fallback to plain eval for maximum compatibility
-                    d[out_key] = eval(pre, {}, {'d': d_ci, 'c': c})
-                lower_key = str(out_key).lower()
-                available_cols_exact.add(lower_key)
-                available_cols_left.add(_normalize_left(out_key).lower())
-            except Exception as e:
-                logging.warning(f"compute_values: Could not compute '{out_key}': {e}")
+                d[out_key] = pd.eval(pre, local_dict={'d': d_ci, 'c': c}, engine=engine)
+            except Exception:
+                # Fallback to plain eval for maximum compatibility
+                d[out_key] = eval(pre, {}, {'d': d_ci, 'c': c})
+            lower_key = str(out_key).lower()
+            available_cols_exact.add(lower_key)
+            available_cols_left.add(_normalize_left(out_key).lower())
+            computed_keys.append(out_key)
+        except Exception as e:
+            # debug, not warning: repeats every recompute and eagerly formats.
+            logging.debug("compute_values: Could not compute '%s': %s", out_key, e)
+
+    return computed_keys
 
 
 # ---------------------------
@@ -914,16 +954,40 @@ class DataSource:
         equations: Optional[List[Dict[str, str]]] = None,
         equation_json_fn: Optional[str] = None,
         engine: str = "python",
+        changed_constants: Optional[Set[str]] = None,
     ) -> None:
-        compute_values(
+        computed = compute_values(
             d=self.data,
             constants=constants,
             equations=equations,
             equation_json_fn=equation_json_fn,
             engine=engine,
+            changed_constants=changed_constants,
         )
         self.is_computed = True
-        # Ensure caches are refreshed
+
+        if changed_constants and computed and getattr(self, "_data_numeric", None) is not None:
+            # Targeted refresh: only re-convert the columns that were actually
+            # recomputed instead of re-running _fast_to_numeric over the whole
+            # (100-column) frame. Avoids a full reconversion on every param edit.
+            try:
+                existing = [c for c in computed if c in self._data.columns]
+                if existing:
+                    sub = _fast_to_numeric(self._data[existing])
+                    for col in existing:
+                        if col in sub.columns:
+                            self._data_numeric[col] = sub[col]
+                self._cached_values_array = None
+                self._cache_valid = False
+                if hasattr(self, "_column_cache"):
+                    self._column_cache.clear()
+                self._relevant_columns_cache = None
+                self._data_version = getattr(self, "_data_version", 0) + 1
+                return
+            except Exception as exc:
+                logging.debug("Targeted numeric refresh failed, full refresh: %s", exc)
+
+        # Full refresh (initial load or no targeting info)
         self.data = self.data
 
     @property

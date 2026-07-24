@@ -831,13 +831,15 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Parameter control
         ######################
+        # Track constants so a parameter edit can recompute only the derived
+        # columns that actually depend on the changed constant(s), and debounce
+        # rapid edits (e.g. mouse-wheel ticks) into a single recompute.
+        self._prev_constants = dict(self.parameter_control.dict) if getattr(self, "parameter_control", None) else {}
+        self._pending_changed_constants = set()
+        self._parameter_recompute_timer = None
+
         def parameter_update():
-            self.constants = self.parameter_control.dict
-            self.data_source.compute_columns(
-                constants=self.constants,
-                equations=self.equations
-            )
-            self.update_plots()
+            self._schedule_parameter_recompute()
         # Get the settings path
         settings_path = get_settings_path()
         self.parameter_control = ParameterEditor(
@@ -845,6 +847,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             json_file=str(settings_path / "mfd.constants.json"),
             callback=parameter_update
         )
+        self._prev_constants = dict(self.parameter_control.dict)
         self.verticalLayout_4.addWidget(self.parameter_control)
 
         # Actions
@@ -1687,6 +1690,49 @@ class NDXplorer(QtWidgets.QMainWindow):
         skip_clustering = not self._plot_update_requires_clustering
         self._cancel_scheduled_plot_update()
         self.update_plots(skip_clustering=skip_clustering)
+
+    def _schedule_parameter_recompute(self):
+        """Debounce parameter-table edits into one targeted recompute.
+
+        Diffs the current constants against the previous snapshot to learn which
+        constant(s) changed, accumulates them, and (re)starts a short timer so a
+        burst of edits (e.g. mouse-wheel ticks) collapses into a single recompute
+        of only the affected derived columns.
+        """
+        try:
+            new_constants = dict(self.parameter_control.dict)
+        except Exception:
+            new_constants = {}
+        prev = getattr(self, "_prev_constants", {})
+        changed = {
+            k for k in set(new_constants) | set(prev)
+            if new_constants.get(k) != prev.get(k)
+        }
+        self._prev_constants = new_constants
+        self.constants = new_constants
+        if changed:
+            self._pending_changed_constants |= changed
+
+        if self._parameter_recompute_timer is None:
+            from qtpy import QtCore
+            self._parameter_recompute_timer = QtCore.QTimer(self)
+            self._parameter_recompute_timer.setSingleShot(True)
+            self._parameter_recompute_timer.timeout.connect(self._flush_parameter_recompute)
+        self._parameter_recompute_timer.start(120)
+
+    def _flush_parameter_recompute(self):
+        """Run the debounced targeted recompute for accumulated constant edits."""
+        changed = self._pending_changed_constants
+        self._pending_changed_constants = set()
+        try:
+            self.data_source.compute_columns(
+                constants=self.constants,
+                equations=self.equations,
+                changed_constants=changed or None,
+            )
+        except Exception as exc:
+            logging.warning("Parameter recompute failed: %s", exc)
+        self.update_plots()
 
     def update_spinbox_limits(self, low_pct=0.1, high_pct=99, recompute=True):
         plot_update_helpers.update_spinbox_limits(self, low_pct=low_pct, high_pct=high_pct)
