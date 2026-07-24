@@ -17,6 +17,26 @@ import numpy as np
 from ..logging_config import logging
 
 
+def _ascending_edges(edges) -> np.ndarray:
+    """Return strictly-ascending bin edges suitable for ``bh.axis.Variable``.
+
+    A degenerate column (all-equal or all-NaN values — e.g. a ``Tau (green)``
+    that was never fit) collapses its computed edges to non-ascending values,
+    which boost-histogram rejects with "input sequence must be strictly
+    ascending" (so the axis silently shows nothing). Drop non-finite edges,
+    de-duplicate, and expand to a minimal valid range when fewer than two
+    distinct edges remain, so a constant column still histograms into one bin.
+    """
+    arr = np.asarray(edges, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    arr = np.unique(arr)  # sorted + de-duplicated
+    if arr.size < 2:
+        center = float(arr[0]) if arr.size else 0.0
+        pad = abs(center) * 1e-6 or 1e-6
+        arr = np.array([center - pad, center + pad])
+    return arr
+
+
 class HistogramComputationManager(QtCore.QObject):
     """Manager for computing histograms in a background thread."""
     
@@ -203,7 +223,7 @@ class HistogramComputationWorker(QtCore.QObject):
                         
                         if hasattr(x_bins_param, '__len__') and len(x_bins_param) > 1:
                             # Use actual bin edges
-                            x_hist = bh.Histogram(bh.axis.Variable(x_bins_param))
+                            x_hist = bh.Histogram(bh.axis.Variable(_ascending_edges(x_bins_param)))
                         else:
                             # Use integer count with range
                             x_hist = bh.Histogram(bh.axis.Regular(x_bins_param, *self.histogram_params['x_range']))
@@ -233,7 +253,7 @@ class HistogramComputationWorker(QtCore.QObject):
                         
                         if hasattr(y_bins_param, '__len__') and len(y_bins_param) > 1:
                             # Use actual bin edges
-                            y_hist = bh.Histogram(bh.axis.Variable(y_bins_param))
+                            y_hist = bh.Histogram(bh.axis.Variable(_ascending_edges(y_bins_param)))
                         else:
                             # Use integer count with range
                             y_hist = bh.Histogram(bh.axis.Regular(y_bins_param, *self.histogram_params['y_range']))
@@ -263,7 +283,7 @@ class HistogramComputationWorker(QtCore.QObject):
                         
                         if hasattr(z_bins_param, '__len__') and len(z_bins_param) > 1:
                             # Use actual bin edges
-                            z_hist = bh.Histogram(bh.axis.Variable(z_bins_param))
+                            z_hist = bh.Histogram(bh.axis.Variable(_ascending_edges(z_bins_param)))
                         else:
                             # Use integer count with range
                             z_hist = bh.Histogram(bh.axis.Regular(z_bins_param, *self.histogram_params['z_range']))
@@ -295,8 +315,8 @@ class HistogramComputationWorker(QtCore.QObject):
                             hasattr(y_bins_2d_param, '__len__') and len(y_bins_2d_param) > 1):
                             # Use actual bin edges
                             h2d = bh.Histogram(
-                                bh.axis.Variable(x_bins_2d_param),
-                                bh.axis.Variable(y_bins_2d_param)
+                                bh.axis.Variable(_ascending_edges(x_bins_2d_param)),
+                                bh.axis.Variable(_ascending_edges(y_bins_2d_param))
                             )
                         else:
                             # Use integer counts with ranges

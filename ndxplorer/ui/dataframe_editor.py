@@ -131,7 +131,13 @@ class DataFrameEditor(QtWidgets.QDialog):
 
         for j in range(ncols):
             dtype = self._col_dtypes[j]
-            is_numeric = np.issubdtype(dtype, np.number) if hasattr(dtype, 'kind') else False
+            # ``pd.api.types.is_numeric_dtype`` understands pandas extension dtypes
+            # (e.g. the nullable ``Float64Dtype`` the pyarrow reader produces);
+            # ``np.issubdtype`` raises ``TypeError`` on those.
+            try:
+                is_numeric = bool(pd.api.types.is_numeric_dtype(dtype))
+            except Exception:
+                is_numeric = False
 
             for i in range(nrows):
                 val = df.iloc[i, j]
