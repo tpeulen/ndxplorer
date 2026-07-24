@@ -1036,10 +1036,22 @@ class DataSource:
             self._column_cache.clear()
         # Invalidate column subset cache
         self._relevant_columns_cache = None
+        # Bump the monotonic data version so downstream caches can detect a data
+        # change with an O(1) integer compare instead of hashing the whole array.
+        self._data_version = getattr(self, "_data_version", 0) + 1
 
     @property
     def size(self) -> int:
         return self.values.shape[1] if not self.empty else 0
+
+    @property
+    def data_version(self) -> int:
+        """Monotonic counter bumped whenever the underlying data changes.
+
+        Lets caches detect a data change with an O(1) integer compare instead of
+        hashing the array on every access.
+        """
+        return getattr(self, "_data_version", 0)
 
     # ---- column filtering for performance ----
 

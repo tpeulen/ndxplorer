@@ -90,65 +90,67 @@ def compute_histograms_sync(
                     h2d.fill(x_data, y_data, weight=weights)
                 else:
                     h2d.fill(x_data, y_data)
-                result['2d'] = (h2d.values(), h2d.axes[0].edges, h2d.axes[1].edges)
+                # boost returns values shaped (nx, ny); downstream Histogram2D
+                # expects (ny, nx) — transpose to match the numpy/fast branches.
+                result['2d'] = (h2d.values().T, h2d.axes[0].edges, h2d.axes[1].edges)
                 
             except ImportError:
                 logging.warning("boost-histogram not available, falling back to numpy")
                 config.use_boost_histogram = False
         
         if not config.use_boost_histogram:
-            # Use numpy histogram (fallback/default)
-            logging.debug("Using numpy histogram computation")
-            
-            # Compute 1D histograms using numpy
+            # Uniform-bin fast path (bincount) when enabled, else NumPy. The fast
+            # helpers fall back to NumPy internally for any non-uniform bins.
+            if getattr(config, "use_fast_histogram", True):
+                from .fast_histogram import fast_histogram_1d, fast_histogram_2d
+                hist1d = fast_histogram_1d
+                hist2d = fast_histogram_2d
+                logging.debug("Using fast (bincount) histogram computation")
+            else:
+                def hist1d(data, bins, weights=None, density=False, data_range=None):
+                    counts, edges = np.histogram(data, bins=bins, range=data_range, weights=weights)
+                    return edges, counts
+
+                def hist2d(x, y, bins, weights=None, x_range=None, y_range=None):
+                    H, xe, ye = np.histogram2d(x, y, bins=bins, range=[x_range, y_range], weights=weights)
+                    return H, xe, ye
+                logging.debug("Using numpy histogram computation")
+
+            # Compute 1D histograms
             x_range = histogram_params['x_range']
             y_range = histogram_params['y_range']
-            
+
             # Handle zero range data for 1D histograms
             if x_range[0] == x_range[1]:
                 x_range = (x_range[0] - 0.5, x_range[1] + 0.5)
-                logging.debug(f"Zero range in X for 1D histogram, expanding to {x_range}")
-            
+
             if y_range[0] == y_range[1]:
                 y_range = (y_range[0] - 0.5, y_range[1] + 0.5)
-                logging.debug(f"Zero range in Y for 1D histogram, expanding to {y_range}")
-            
-            x_hist, x_edges = np.histogram(x_data, bins=histogram_params['x_bins'], range=x_range, weights=weights)
+
+            x_edges, x_hist = hist1d(x_data, histogram_params['x_bins'], weights=weights, data_range=x_range)
             result['x'] = (x_edges, x_hist)  # Store as (edges, counts)
-            
-            y_hist, y_edges = np.histogram(y_data, bins=histogram_params['y_bins'], range=y_range, weights=weights)
+
+            y_edges, y_hist = hist1d(y_data, histogram_params['y_bins'], weights=weights, data_range=y_range)
             result['y'] = (y_edges, y_hist)  # Store as (edges, counts)
-            
-            # Compute Z histogram if available
+
+            # Compute Z histogram only when a Z axis is active (lazy: skip otherwise)
             if z_data is not None:
                 z_range = histogram_params['z_range']
                 if z_range[0] == z_range[1]:
                     z_range = (z_range[0] - 0.5, z_range[1] + 0.5)
-                    logging.debug(f"Zero range in Z for 1D histogram, expanding to {z_range}")
-                
-                z_hist, z_edges = np.histogram(z_data, bins=histogram_params['z_bins'], range=z_range, weights=weights)
+
+                z_edges, z_hist = hist1d(z_data, histogram_params['z_bins'], weights=weights, data_range=z_range)
                 result['z'] = (z_edges, z_hist)  # Store as (edges, counts)
-            
-            # Compute 2D histogram using numpy
-            x_range = histogram_params['x_range']
-            y_range = histogram_params['y_range']
-            
-            # Handle zero range data
-            if x_range[0] == x_range[1]:
-                x_range = (x_range[0] - 0.5, x_range[1] + 0.5)
-                logging.debug(f"Zero range in X for background histogram, expanding to {x_range}")
-            
-            if y_range[0] == y_range[1]:
-                y_range = (y_range[0] - 0.5, y_range[1] + 0.5)
-                logging.debug(f"Zero range in Y for background histogram, expanding to {y_range}")
-            
-            H, x_edges, y_edges = np.histogram2d(
-                x_data, y_data, 
+
+            # Compute 2D histogram (reuses the same expanded x/y ranges)
+            H, x_edges, y_edges = hist2d(
+                x_data, y_data,
                 bins=[histogram_params['x_bins_2d'], histogram_params['y_bins_2d']],
-                range=[x_range, y_range],
-                weights=weights
+                weights=weights,
+                x_range=x_range,
+                y_range=y_range,
             )
-            # CRITICAL: np.histogram2d returns H with shape (nx, ny) but Histogram2D expects (ny, nx)
+            # CRITICAL: histogram2d returns H with shape (nx, ny) but Histogram2D expects (ny, nx)
             result['2d'] = (H.T, x_edges, y_edges)
         
         # Add metadata

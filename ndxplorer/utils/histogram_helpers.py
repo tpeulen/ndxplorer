@@ -6,7 +6,6 @@ Provides utilities for histogram computation, caching, and parameter management.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
@@ -173,18 +172,15 @@ def extract_histogram_params(ndxplorer: "NDXplorer") -> HistogramParams:
     x_bins_2d = str(x_bins_2d_arr)
     y_bins_2d = str(y_bins_2d_arr)
     
-    # Compute data hash for cache invalidation
+    # Data-change token for cache invalidation. Use the O(1) monotonic version
+    # counter on the data source instead of md5-hashing tens of MB of the array
+    # on every interactive update (the hash forced a full `.values` materialise
+    # plus a multi-MB md5 pass per pan/zoom/selection).
     data_hash = None
     try:
-        if hasattr(ndxplorer, 'values') and ndxplorer.values is not None:
-            # Hash the data shape and first/last few elements for quick change detection
-            data = ndxplorer.values
-            if len(data) > 0:
-                sample_data = np.concatenate([
-                    data[:min(5, len(data))],
-                    data[-min(5, len(data)):]
-                ])
-                data_hash = hashlib.md5(f"{data.shape}_{sample_data.tobytes()}".encode()).hexdigest()[:8]
+        ds = ndxplorer.data_source
+        if ds is not None:
+            data_hash = f"v{ds.data_version}:{ds.size}"
     except Exception:
         pass
     
