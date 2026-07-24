@@ -78,7 +78,42 @@ _WIN_NINF_RE = re.compile(r'^\s*-(?:\d*\.)?#INF\d*(?:e[+-]?\d+)?\s*$', re.IGNORE
 _TEXT_EXTS = (".bur", ".csv", ".txt", ".dat")
 _HDF5_EXTS = (".h5", ".hdf5")
 
-_DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4"]
+_DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4", "2c4"]
+
+
+def _drop_trailing_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop trailing empty/``Unnamed`` columns (companion writers append a blank).
+
+    Unlike a blanket "drop the last column", this removes only placeholder columns,
+    so a companion's real last column (a bv4 ``Proximity Ratio Std``, a 2c4
+    ``FRET-2CDE``) survives the merge.
+    """
+    while df.shape[1] > 1:
+        last = str(df.columns[-1]).strip()
+        if last == "" or last.lower().startswith("unnamed"):
+            df = df.iloc[:, :-1]
+        else:
+            break
+    return df
+
+
+def _discover_burst_extra_endings(base_path: pathlib.Path) -> List[str]:
+    """Companion endings to merge beside each ``.bur`` in *base_path*.
+
+    The known ``…4`` family unioned with any sibling directory whose name ends in
+    ``4`` (so new ``…4`` companions like ``2c4`` merge with no code change). The
+    base burst directories (``bi4_bur`` / ``bur``) do not end in ``4`` and so are
+    never mistaken for a companion.
+    """
+    endings = list(_DEFAULT_BURST_EXTRA_ENDINGS)
+    try:
+        for child in base_path.iterdir():
+            name = child.name.lower()
+            if child.is_dir() and name.endswith("4") and name not in endings:
+                endings.append(name)
+    except Exception:
+        pass
+    return endings
 
 # ----------------------------- utils -----------------------------------------
 
@@ -276,7 +311,14 @@ def _get_burst_additional_endings() -> List[str]:
         except Exception:
             pass
 
-    return endings or list(_DEFAULT_BURST_EXTRA_ENDINGS)
+    # Union the built-in defaults with any user-configured endings, so a stale
+    # settings file (e.g. one predating a newly-added companion like ``2c4``)
+    # still picks up the new default rather than shadowing it.
+    result = list(_DEFAULT_BURST_EXTRA_ENDINGS)
+    for ending in endings or []:
+        if ending not in result:
+            result.append(ending)
+    return result
 
 
 # ----------------------------- core API --------------------------------------
@@ -291,7 +333,7 @@ def read_burst_analysis(
     Read burst analysis from folder or zip.
 
     Supports:
-      1) Regular dirs with bi4_bur / bur (+ extras in bg4/br4/by4/bv4/td4).
+      1) Regular dirs with bi4_bur / bur (+ …4 companions: bg4/br4/by4/bv4/td4/2c4).
       2) Zipped MFD folders with the standard directory structure.
       3) "Selector zip" with loose .bur files (will be normalized to temp/bi4_bur).
 
@@ -440,7 +482,8 @@ def _process_burst_analysis_dir(
     import time as _time
     t0 = _time.perf_counter()
 
-    additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4", "td4"]
+    if additional_endings is None:
+        additional_endings = _discover_burst_extra_endings(base_path)
 
     # Prefer HDF5
     hdf5_dir = base_path / "hdf5"
@@ -513,8 +556,11 @@ def _process_burst_analysis_dir(
             df_extra.columns = [str(c).strip() for c in df_extra.columns]
             if df_extra.shape[1] == 0:
                 continue
-            if drop_last_column and df_extra.shape[1] > 1:
-                df_extra = df_extra.iloc[:, :-1]
+            # For companions, drop only the trailing empty/placeholder column (the
+            # writers append one so a blanket drop-last would remove real data,
+            # e.g. a bv4's "Proximity Ratio Std" or a 2c4's "FRET-2CDE").
+            if drop_last_column:
+                df_extra = _drop_trailing_empty_columns(df_extra)
             dfs.append(df_extra)
 
         combined = pd.concat(dfs, axis=1)
@@ -1044,8 +1090,8 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
     t2_start = _time.perf_counter()
     if has_object_cols:
         # Skip filename columns from post-processing too
-        filename_cols = [col for col in object_cols 
-                       if any(keyword in col.lower() for keyword in ['file', 'path', 'name', 'directory'])]
+        filename_cols = [col for col in object_cols
+                       if any(keyword in str(col).lower() for keyword in ['file', 'path', 'name', 'directory'])]
         if filename_cols:
             logging.info("[read] Skipping filename columns in post-processing: %s", filename_cols)
         
@@ -1236,6 +1282,17 @@ def _detect_and_build_kwargs(lines: List[str]) -> Dict:
         if score > best["score"]:
             best.update(score=score, delim=delim, complete_cols=complete_cols,
                         first_idx=first_complete, header_prev_idx=header_prev_idx, dec_comma=dec_flag)
+
+    if best["complete_cols"] == 0:
+        # Single-column fallback: the scan above requires >=2 columns, so a
+        # legitimate one-column table (e.g. a 2c4 companion whose only column is
+        # 'FRET-2CDE') would otherwise be read headerless with an integer column
+        # name. Prefer tab when present, else whitespace; header detection below
+        # then picks up the alpha first line.
+        first_nonempty = next((i for i, ln in enumerate(lines[:N]) if ln.strip()), 0)
+        delim1 = "\t" if any("\t" in ln for ln in lines[:N]) else None
+        best.update(score=0.0, delim=delim1, complete_cols=1,
+                    first_idx=first_nonempty, header_prev_idx=None)
 
     first_idx = best["first_idx"]
     header_prev_idx = best["header_prev_idx"]
