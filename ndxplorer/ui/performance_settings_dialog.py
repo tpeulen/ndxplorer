@@ -9,7 +9,7 @@ from typing import Dict, Any
 from qtpy import QtWidgets, QtCore
 import json
 
-from .glyphs import Glyphs, label
+from .glyphs import Glyphs, label as glyph_label
 from pathlib import Path
 
 from ..logging_config import logging
@@ -75,17 +75,17 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         # Add buttons
         button_layout = QtWidgets.QHBoxLayout()
         
-        self.reset_btn = QtWidgets.QPushButton(label(Glyphs.RESET, "Reset to Defaults"))
+        self.reset_btn = QtWidgets.QPushButton(glyph_label(Glyphs.RESET, "Reset to Defaults"))
         self.reset_btn.clicked.connect(self._reset_to_defaults)
         self.reset_btn.setToolTip("Reset all performance settings to their default values")
 
-        self.cancel_btn = QtWidgets.QPushButton(label(Glyphs.CLOSE, "Cancel"))
+        self.cancel_btn = QtWidgets.QPushButton(glyph_label(Glyphs.CLOSE, "Cancel"))
         self.cancel_btn.clicked.connect(self.reject)
 
-        self.apply_btn = QtWidgets.QPushButton(label(Glyphs.CHECK, "Apply"))
+        self.apply_btn = QtWidgets.QPushButton(glyph_label(Glyphs.CHECK, "Apply"))
         self.apply_btn.clicked.connect(self._apply_settings)
 
-        self.ok_btn = QtWidgets.QPushButton(label(Glyphs.CHECK, "OK"))
+        self.ok_btn = QtWidgets.QPushButton(glyph_label(Glyphs.CHECK, "OK"))
         self.ok_btn.clicked.connect(self._ok_clicked)
         self.ok_btn.setDefault(True)
         

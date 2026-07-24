@@ -6,7 +6,7 @@ from ..logging_config import logging
 from qtpy import QtCore
 from qtpy import QtGui, QtWidgets
 
-from .glyphs import Glyphs, label
+from .glyphs import Glyphs, label as glyph_label
 
 
 class ColumnSelectionDialog(QtWidgets.QDialog):
@@ -93,10 +93,10 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
 
         # Add select all / deselect all buttons
         buttons_layout = QtWidgets.QHBoxLayout()
-        select_all_button = QtWidgets.QPushButton(label(Glyphs.CHECKBOX_ON, "Select All"))
+        select_all_button = QtWidgets.QPushButton(glyph_label(Glyphs.CHECKBOX_ON, "Select All"))
         select_all_button.setAccessibleDescription("Selects every column in the list.")
         select_all_button.clicked.connect(self.select_all)
-        deselect_all_button = QtWidgets.QPushButton(label(Glyphs.CHECKBOX_OFF, "Deselect All"))
+        deselect_all_button = QtWidgets.QPushButton(glyph_label(Glyphs.CHECKBOX_OFF, "Deselect All"))
         deselect_all_button.setAccessibleDescription("Clears every selected column.")
         deselect_all_button.clicked.connect(self.deselect_all)
         buttons_layout.addWidget(select_all_button)
@@ -168,8 +168,11 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
             focused_checkbox = self.visible_checkboxes[self.current_focus_index]
             focused_checkbox.setStyleSheet("QCheckBox { background-color: lightblue; }")
 
-            # Ensure the focused checkbox is visible in the scroll area
-            self.scroll_area.ensureWidgetVisible(focused_checkbox)
+            # Ensure the focused checkbox is visible in the scroll area.
+            # Only scroll once the scroll area is realised — calling this during
+            # __init__ (before the dialog is shown) can crash the Qt backend.
+            if self.scroll_area.isVisible():
+                self.scroll_area.ensureWidgetVisible(focused_checkbox)
 
     def keyPressEvent(self, event):
         """Handle keyboard navigation"""

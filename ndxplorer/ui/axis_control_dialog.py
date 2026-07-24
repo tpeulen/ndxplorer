@@ -10,7 +10,7 @@ import yaml
 import pathlib
 from qtpy import QtCore, QtGui, QtWidgets
 
-from .glyphs import Glyphs, label
+from .glyphs import Glyphs, label as glyph_label
 
 from ..logging_config import logging
 
@@ -325,7 +325,7 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.font_title_bold = QtWidgets.QCheckBox("Bold titles")
         self.font_title_bold.setChecked(True)
         # Title color picker
-        self.font_title_color_btn = QtWidgets.QPushButton(label(Glyphs.PALETTE, "Pick Title Color"))
+        self.font_title_color_btn = QtWidgets.QPushButton(glyph_label(Glyphs.PALETTE, "Pick Title Color"))
         self._font_title_color = "#000000"
         def _update_color_btn():
             try:
@@ -411,12 +411,20 @@ class AxisControlDialog(QtWidgets.QDialog):
             self.plot_2d_left.setChecked(self.parent.g_2dplot.axis_enabled('yLeft'))
             self.plot_2d_right.setChecked(self.parent.g_2dplot.axis_enabled('yRight'))
 
-            # Overlay Plot
-            if hasattr(self.parent, 'overlay_plot'):
-                self.overlay_plot_bottom.setChecked(self.parent.overlay_plot.axisEnabled("bottom"))
-                self.overlay_plot_top.setChecked(self.parent.overlay_plot.axisEnabled("top"))
-                self.overlay_plot_left.setChecked(self.parent.overlay_plot.axisEnabled("left"))
-                self.overlay_plot_right.setChecked(self.parent.overlay_plot.axisEnabled("right"))
+            # Overlay Plot — only a real plot exposes axisEnabled; the overlay is
+            # now a DrawingOverlayWidget (no axes), so guard and disable the
+            # overlay-axis checkboxes when there is nothing to reflect.
+            overlay = getattr(self.parent, 'overlay_plot', None)
+            overlay_checks = (self.overlay_plot_bottom, self.overlay_plot_top,
+                              self.overlay_plot_left, self.overlay_plot_right)
+            if overlay is not None and hasattr(overlay, 'axisEnabled'):
+                self.overlay_plot_bottom.setChecked(overlay.axisEnabled("bottom"))
+                self.overlay_plot_top.setChecked(overlay.axisEnabled("top"))
+                self.overlay_plot_left.setChecked(overlay.axisEnabled("left"))
+                self.overlay_plot_right.setChecked(overlay.axisEnabled("right"))
+            else:
+                for chk in overlay_checks:
+                    chk.setEnabled(False)
 
             # Load axis label settings
             if hasattr(self.parent, 'axis_label_settings'):

@@ -13,7 +13,7 @@ import pandas as pd
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from .glyphs import Glyphs, label
+from .glyphs import Glyphs, label as glyph_label
 
 
 class DataFrameEditor(QtWidgets.QDialog):
@@ -95,16 +95,16 @@ class DataFrameEditor(QtWidgets.QDialog):
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
 
-        self._btn_reset = QtWidgets.QPushButton(label(Glyphs.RESET, "Reset"))
+        self._btn_reset = QtWidgets.QPushButton(glyph_label(Glyphs.RESET, "Reset"))
         self._btn_reset.clicked.connect(self._on_reset)
         btn_layout.addWidget(self._btn_reset)
 
-        self._btn_apply = QtWidgets.QPushButton(label(Glyphs.CHECK, "Apply"))
+        self._btn_apply = QtWidgets.QPushButton(glyph_label(Glyphs.CHECK, "Apply"))
         self._btn_apply.clicked.connect(self._on_apply)
         self._btn_apply.setDefault(True)
         btn_layout.addWidget(self._btn_apply)
 
-        self._btn_cancel = QtWidgets.QPushButton(label(Glyphs.CLOSE, "Cancel"))
+        self._btn_cancel = QtWidgets.QPushButton(glyph_label(Glyphs.CLOSE, "Cancel"))
         self._btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self._btn_cancel)
 
@@ -272,7 +272,7 @@ class DataFrameEditor(QtWidgets.QDialog):
     def _on_context_menu(self, pos: QtCore.QPoint):
         menu = QtWidgets.QMenu(self)
 
-        copy_action = menu.addAction(label(Glyphs.COPY, "Copy"))
+        copy_action = menu.addAction(glyph_label(Glyphs.COPY, "Copy"))
         copy_action.setShortcut(QtGui.QKeySequence.Copy)
         copy_action.triggered.connect(self._copy_selection)
 
@@ -282,7 +282,7 @@ class DataFrameEditor(QtWidgets.QDialog):
 
         menu.addSeparator()
 
-        select_all_action = menu.addAction(label(Glyphs.CHECKBOX_ON, "Select All"))
+        select_all_action = menu.addAction(glyph_label(Glyphs.CHECKBOX_ON, "Select All"))
         select_all_action.setShortcut(QtGui.QKeySequence.SelectAll)
         select_all_action.triggered.connect(self._table.selectAll)
 

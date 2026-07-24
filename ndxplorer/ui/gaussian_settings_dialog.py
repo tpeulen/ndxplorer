@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 from qtpy import QtWidgets, QtCore
 
-from .glyphs import Glyphs, label
+from .glyphs import Glyphs, label as glyph_label
 
 import json
 from ..logging_config import logging
@@ -132,7 +132,7 @@ class GaussianSettingsDialog(QtWidgets.QDialog):
             parent=self
         )
         # Add explicit Save button (saves without closing)
-        self.btn_save = QtWidgets.QPushButton(label(Glyphs.SAVE, "Save"), self)
+        self.btn_save = QtWidgets.QPushButton(glyph_label(Glyphs.SAVE, "Save"), self)
         btn_box.addButton(self.btn_save, QtWidgets.QDialogButtonBox.ActionRole)
         self.btn_save.setToolTip("Save settings to your user folder without closing this dialog")
         self.btn_save.clicked.connect(self.on_save_clicked)
