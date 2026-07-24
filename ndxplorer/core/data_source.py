@@ -457,16 +457,39 @@ def compute_values(
             pre, data_refs, const_refs = _preprocess_equation(expr)
             parsed.append((out_key, expr, pre, data_refs, const_refs))
 
+    # Resolvability (early exit): decide once, from the header names alone, which
+    # equation outputs can *ever* be computed — every data reference must resolve
+    # to an existing column or to another resolvable output, and every constant
+    # reference must exist. Equations that can't (e.g. ALEX/PIE columns with no
+    # source data in this dataset) are skipped outright instead of being
+    # re-attempted — and re-logged — on every recompute.
+    resolvable: Set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for (ok, _e, _p, dref, cref) in parsed:
+            okl = str(ok).lower()
+            if okl in resolvable or not (cref <= consts_lower):
+                continue
+            if all(
+                ref in cols_lower_exact
+                or _normalize_left(ref).lower() in cols_lower_left
+                or ref in resolvable
+                for ref in dref
+            ):
+                resolvable.add(okl)
+                grew = True
+    if len(resolvable) < len(parsed):
+        skipped = sorted({str(ok) for (ok, *_r) in parsed if str(ok).lower() not in resolvable})
+        logging.debug("compute_values: skipping %d un-computable equation(s): %s", len(skipped), skipped)
+
     # Targeted recompute: when only a few constants changed, recompute just the
-    # equations that (transitively) depend on them instead of all ~100. A full
-    # recompute of every derived column on every parameter edit froze the GUI.
-    to_compute = None  # None => recompute everything (initial load / no filter)
+    # (resolvable) equations that transitively depend on them instead of all ~100.
     if changed_constants:
         changed_lower = {str(x).lower() for x in changed_constants}
         affected = {
             str(ok).lower() for (ok, _e, _p, _d, cref) in parsed if cref & changed_lower
         }
-        # Propagate to equations that read an affected (recomputed) output column.
         grew = True
         while grew:
             grew = False
@@ -475,14 +498,19 @@ def compute_values(
                 if okl not in affected and (dref & affected):
                     affected.add(okl)
                     grew = True
-        to_compute = affected
+        to_compute = affected & resolvable
+    else:
+        to_compute = resolvable
 
     computed_keys: List[str] = []
     for out_key, expr, pre, data_refs, const_refs in parsed:
-        if to_compute is not None and str(out_key).lower() not in to_compute:
-            # Unaffected column: keep its existing values, but register it as
-            # available so downstream equations that reference it still resolve.
-            available_cols_exact.add(str(out_key).lower())
+        okl = str(out_key).lower()
+        if okl not in resolvable:
+            continue  # can never be computed from the available columns — skip
+        if okl not in to_compute:
+            # Resolvable but not part of this targeted recompute: keep existing
+            # values, register as available so downstream refs still resolve.
+            available_cols_exact.add(okl)
             available_cols_left.add(_normalize_left(out_key).lower())
             continue
         try:
