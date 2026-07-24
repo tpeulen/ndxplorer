@@ -56,44 +56,49 @@ def compute_histograms_sync(
             # Use boost-histogram for maximum performance
             try:
                 import boost_histogram as bh
-                
-                # Compute 1D histograms using boost-histogram
-                x_hist = bh.Histogram(bh.axis.Regular(histogram_params['x_bins'], *histogram_params['x_range']))
-                if weights is not None:
-                    x_hist.fill(x_data, weight=weights)
+
+                # Resolve the fill thread count once. boost's multi-threaded fill
+                # is ~3x faster on the multi-million-point arrays NDXplorer shows;
+                # only worth it above a point threshold (thread setup dominates for
+                # small data). histogram_threads <= 0 means "use all cores".
+                cfg_threads = getattr(config, "histogram_threads", -1)
+                if x_data.size >= 200_000:
+                    import os
+                    threads = cfg_threads if cfg_threads and cfg_threads > 0 else (os.cpu_count() or 1)
                 else:
-                    x_hist.fill(x_data)
-                result['x'] = (x_hist.axes[0].edges, x_hist.values())
-                
-                y_hist = bh.Histogram(bh.axis.Regular(histogram_params['y_bins'], *histogram_params['y_range']))
-                if weights is not None:
-                    y_hist.fill(y_data, weight=weights)
-                else:
-                    y_hist.fill(y_data)
-                result['y'] = (y_hist.axes[0].edges, y_hist.values())
-                
-                # Compute Z histogram if available
-                if z_data is not None:
-                    z_hist = bh.Histogram(bh.axis.Regular(histogram_params['z_bins'], *histogram_params['z_range']))
+                    threads = 1
+
+                def _fill(hist, *cols):
                     if weights is not None:
-                        z_hist.fill(z_data, weight=weights)
+                        hist.fill(*cols, weight=weights, threads=threads)
                     else:
-                        z_hist.fill(z_data)
+                        hist.fill(*cols, threads=threads)
+                    return hist
+
+                # Compute 1D histograms using boost-histogram
+                x_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['x_bins'], *histogram_params['x_range'])), x_data)
+                result['x'] = (x_hist.axes[0].edges, x_hist.values())
+
+                y_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['y_bins'], *histogram_params['y_range'])), y_data)
+                result['y'] = (y_hist.axes[0].edges, y_hist.values())
+
+                # Compute Z histogram only when a Z axis is active (lazy)
+                if z_data is not None:
+                    z_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['z_bins'], *histogram_params['z_range'])), z_data)
                     result['z'] = (z_hist.axes[0].edges, z_hist.values())
-                
+
                 # Compute 2D histogram using boost-histogram
-                h2d = bh.Histogram(
-                    bh.axis.Regular(histogram_params['x_bins_2d'], *histogram_params['x_range']),
-                    bh.axis.Regular(histogram_params['y_bins_2d'], *histogram_params['y_range'])
+                h2d = _fill(
+                    bh.Histogram(
+                        bh.axis.Regular(histogram_params['x_bins_2d'], *histogram_params['x_range']),
+                        bh.axis.Regular(histogram_params['y_bins_2d'], *histogram_params['y_range']),
+                    ),
+                    x_data, y_data,
                 )
-                if weights is not None:
-                    h2d.fill(x_data, y_data, weight=weights)
-                else:
-                    h2d.fill(x_data, y_data)
                 # boost returns values shaped (nx, ny); downstream Histogram2D
                 # expects (ny, nx) — transpose to match the numpy/fast branches.
                 result['2d'] = (h2d.values().T, h2d.axes[0].edges, h2d.axes[1].edges)
-                
+
             except ImportError:
                 logging.warning("boost-histogram not available, falling back to numpy")
                 config.use_boost_histogram = False
