@@ -2000,17 +2000,39 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             self._histogram_worker.computation_started.connect(self._on_computation_started)
             self._histogram_worker.progress_update.connect(self._on_computation_progress)
     
+    #: Point count below which histograms are computed synchronously on the GUI
+    #: thread instead of via the background worker. The boost/fast synchronous
+    #: compute is well under a frame at these sizes (~10 ms at 2M, ~30 ms at 5M),
+    #: whereas the per-event QThread create/teardown + blocking ``wait()`` adds
+    #: ~150-500 ms of latency for the *same* result (measured headlessly). The
+    #: worker only pays off for genuinely heavy computes above this threshold.
+    SYNC_HISTOGRAM_THRESHOLD = 6_000_000
+
     def compute_histograms_background(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
         """Compute histograms in background thread if enabled, otherwise compute immediately."""
         logging.debug(f"compute_histograms_background called, enabled={self._background_computation_enabled}")
         if not self._background_computation_enabled:
             logging.debug("Background computation disabled, using immediate computation")
             return self._compute_histograms_immediate(histogram_params, weights)
-            
+
         if not hasattr(self.parent, 'data_source'):
             logging.warning("No data source available, cannot compute histograms")
             return
-        
+
+        # Fast path: for datasets the synchronous boost/fast compute handles in
+        # well under a frame, skip the background worker entirely — its per-event
+        # thread setup/teardown costs far more latency than the compute itself and
+        # blocks the GUI thread on wait() anyway.
+        n_points = histogram_params.get('valid_idx_count')
+        if n_points is None:
+            try:
+                n_points = self.parent.data_source.size
+            except Exception:
+                n_points = 0
+        if n_points <= self.SYNC_HISTOGRAM_THRESHOLD:
+            logging.debug("Synchronous histogram path (%s pts <= %s)", n_points, self.SYNC_HISTOGRAM_THRESHOLD)
+            return self._compute_histograms_immediate(histogram_params, weights)
+
         # Check if computation is already pending
         if self._background_computation_pending:
             logging.debug("Background computation already pending, skipping duplicate request")

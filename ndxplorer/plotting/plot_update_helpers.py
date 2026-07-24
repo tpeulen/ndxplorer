@@ -111,7 +111,18 @@ def update_histograms(ndxplorer) -> None:
                     valid_indices = np.flatnonzero(~mask)
                     histogram_params['valid_indices'] = valid_indices
                     histogram_params['valid_idx_count'] = int(valid_indices.size)
-                    histogram_params['valid_idx_hash'] = hash(valid_indices.tobytes())
+                    # Cheap change token instead of hashing the whole index array
+                    # (hash(tobytes()) over ~2M indices cost ~10 ms on *every*
+                    # interaction). Count + endpoints + a strided sample of 64
+                    # indices detects any realistic filter change in O(1).
+                    n = valid_indices.size
+                    if n:
+                        sample = valid_indices[:: max(1, n // 64)]
+                        histogram_params['valid_idx_hash'] = hash(
+                            (n, int(valid_indices[0]), int(valid_indices[-1]), sample.tobytes())
+                        )
+                    else:
+                        histogram_params['valid_idx_hash'] = 0
             except Exception as exc:
                 logging.debug("Could not compute valid_indices for background histograms: %s", exc)
 
@@ -627,7 +638,9 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         _autoscale_horizontal_hist(ndxplorer.g_zplot, z_bin_edges, z_counts)
         ndxplorer.g_zplot.replot()
 
-    ndxplorer.update_spinbox_limits()
+    # Histograms were just computed above; don't recompute them here (that
+    # doubled the per-interaction histogram work).
+    ndxplorer.update_spinbox_limits(recompute=False)
     ndxplorer.update_2d_plot()
     ndxplorer.g_2dplot.replot()
 

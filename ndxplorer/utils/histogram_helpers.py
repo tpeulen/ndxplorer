@@ -165,12 +165,21 @@ def extract_histogram_params(ndxplorer: "NDXplorer") -> HistogramParams:
     y_bins_1d_arr, y_bins_2d_arr = ndxplorer.get_y_bins()
     z_bins_1d_arr, _ = ndxplorer.get_z_bins()
     
-    # Convert bins to strings only for cache key consistency
-    x_bins_1d = str(x_bins_1d_arr)
-    y_bins_1d = str(y_bins_1d_arr)
-    z_bins_1d = str(z_bins_1d_arr) if z_enabled else None
-    x_bins_2d = str(x_bins_2d_arr)
-    y_bins_2d = str(y_bins_2d_arr)
+    # Compact cache-key token for a bin-edge array. `str(numpy_array)` triggers a
+    # full array2string formatting pass (~5-7 ms across five arrays per update)
+    # and, worse, *truncates* long arrays with "..." so distinct bin sets could
+    # collide. (count, first, last) uniquely identifies uniform bins and is O(1).
+    def _bins_key(arr) -> str:
+        a = np.asarray(arr)
+        if a.size == 0:
+            return "0"
+        return f"{a.size}:{float(a[0]):.8g}:{float(a[-1]):.8g}"
+
+    x_bins_1d = _bins_key(x_bins_1d_arr)
+    y_bins_1d = _bins_key(y_bins_1d_arr)
+    z_bins_1d = _bins_key(z_bins_1d_arr) if z_enabled else None
+    x_bins_2d = _bins_key(x_bins_2d_arr)
+    y_bins_2d = _bins_key(y_bins_2d_arr)
     
     # Data-change token for cache invalidation. Use the O(1) monotonic version
     # counter on the data source instead of md5-hashing tens of MB of the array

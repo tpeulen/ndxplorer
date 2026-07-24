@@ -1688,7 +1688,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._cancel_scheduled_plot_update()
         self.update_plots(skip_clustering=skip_clustering)
 
-    def update_spinbox_limits(self, low_pct=0.1, high_pct=99):
+    def update_spinbox_limits(self, low_pct=0.1, high_pct=99, recompute=True):
         plot_update_helpers.update_spinbox_limits(self, low_pct=low_pct, high_pct=high_pct)
 
         # --- 2) Guard: are our selected column indices valid? ---
@@ -1703,8 +1703,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         if not (0 <= p1_idx < n_rows and 0 <= p2_idx < n_rows and 0 <= p3_idx < n_rows):
             return
 
-        # 1) Recompute the 2D histogram
-        self.update_histograms()
+        # 1) Ensure a 2D histogram is available. When called from update_plots the
+        #    histograms were just computed, so skip the (expensive) recompute —
+        #    this previously doubled the histogram work on every interaction.
+        h2 = self._histogram.get("2d")
+        has_hist = hasattr(h2, "H") or (isinstance(h2, tuple) and len(h2) == 3)
+        if recompute or not has_hist:
+            self.update_histograms()
         try:
             hist_2d = self._histogram["2d"]
             # Extract data from 2D histogram (handle both old tuple and new clean formats)
