@@ -6,6 +6,8 @@ from ..logging_config import logging
 from qtpy import QtCore
 from qtpy import QtGui, QtWidgets
 
+from .glyphs import Glyphs, label
+
 
 class ColumnSelectionDialog(QtWidgets.QDialog):
     """
@@ -91,10 +93,10 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
 
         # Add select all / deselect all buttons
         buttons_layout = QtWidgets.QHBoxLayout()
-        select_all_button = QtWidgets.QPushButton("Select All")
+        select_all_button = QtWidgets.QPushButton(label(Glyphs.CHECKBOX_ON, "Select All"))
         select_all_button.setAccessibleDescription("Selects every column in the list.")
         select_all_button.clicked.connect(self.select_all)
-        deselect_all_button = QtWidgets.QPushButton("Deselect All")
+        deselect_all_button = QtWidgets.QPushButton(label(Glyphs.CHECKBOX_OFF, "Deselect All"))
         deselect_all_button.setAccessibleDescription("Clears every selected column.")
         deselect_all_button.clicked.connect(self.deselect_all)
         buttons_layout.addWidget(select_all_button)

@@ -17,6 +17,8 @@ from datetime import datetime
 import numpy as np
 from qtpy import QtCore, QtWidgets
 
+from ..ui.glyphs import Glyphs, label
+
 
 
 class GaussianMixtureFixedEM:
@@ -239,9 +241,9 @@ class GaussianFit(QtCore.QObject):
         m = self.main
         # Button row: Fit + Clear + Select + Selection σ + Settings
         btn_row = QtWidgets.QHBoxLayout()
-        m.btnFit2DGauss = QtWidgets.QToolButton(m); m.btnFit2DGauss.setText("Fit")
-        m.btnClearGaussians = QtWidgets.QToolButton(m); m.btnClearGaussians.setText("Clear")
-        m.btnSelectGaussian = QtWidgets.QToolButton(m); m.btnSelectGaussian.setText("Select")
+        m.btnFit2DGauss = QtWidgets.QToolButton(m); m.btnFit2DGauss.setText(label(Glyphs.TARGET, "Fit"))
+        m.btnClearGaussians = QtWidgets.QToolButton(m); m.btnClearGaussians.setText(label(Glyphs.CLEAR, "Clear"))
+        m.btnSelectGaussian = QtWidgets.QToolButton(m); m.btnSelectGaussian.setText(label(Glyphs.SEARCH, "Select"))
         # Selection height (number of sigmas) next to Select button
         lblSigma = QtWidgets.QLabel("Selection σ:", m)
         m.spinSelectionSigma = QtWidgets.QDoubleSpinBox(m)
@@ -258,7 +260,7 @@ class GaussianFit(QtCore.QObject):
         m.checkBoxGaussFitLog.setChecked(False)
         m.checkBoxGaussFitLog.setToolTip("Log Gauss: when enabled, fit Gaussians in log scale (both X and Y; positive values only). When disabled, fit in linear scale.")
         # New: GMM Settings button
-        m.btnGMMSettings = QtWidgets.QToolButton(m); m.btnGMMSettings.setText("Settings")
+        m.btnGMMSettings = QtWidgets.QToolButton(m); m.btnGMMSettings.setText(label(Glyphs.SETTINGS, "Settings"))
         m.btnGMMSettings.setToolTip("Configure built-in GMM (EM) parameters and save them to your user settings.")
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
@@ -305,8 +307,8 @@ class GaussianFit(QtCore.QObject):
         options_row.addWidget(m.checkBoxShowMarginals)
         options_row.addWidget(m.checkBoxGaussFitLog)
         # Save/Load in same row as checkboxes
-        m.btnSaveGaussians = QtWidgets.QToolButton(m); m.btnSaveGaussians.setText("Save")
-        m.btnLoadGaussians = QtWidgets.QToolButton(m); m.btnLoadGaussians.setText("Load")
+        m.btnSaveGaussians = QtWidgets.QToolButton(m); m.btnSaveGaussians.setText(label(Glyphs.SAVE, "Save"))
+        m.btnLoadGaussians = QtWidgets.QToolButton(m); m.btnLoadGaussians.setText(label(Glyphs.OPEN, "Load"))
         options_row.addWidget(m.btnSaveGaussians)
         options_row.addWidget(m.btnLoadGaussians)
         options_row.addStretch(1)

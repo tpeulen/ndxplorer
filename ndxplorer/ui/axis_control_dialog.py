@@ -10,6 +10,8 @@ import yaml
 import pathlib
 from qtpy import QtCore, QtGui, QtWidgets
 
+from .glyphs import Glyphs, label
+
 from ..logging_config import logging
 
 # Import settings functions
@@ -323,7 +325,7 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.font_title_bold = QtWidgets.QCheckBox("Bold titles")
         self.font_title_bold.setChecked(True)
         # Title color picker
-        self.font_title_color_btn = QtWidgets.QPushButton("Pick Title Color")
+        self.font_title_color_btn = QtWidgets.QPushButton(label(Glyphs.PALETTE, "Pick Title Color"))
         self._font_title_color = "#000000"
         def _update_color_btn():
             try:

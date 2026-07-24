@@ -13,6 +13,8 @@ from ..logging_config import logging
 from qtpy import QtCore
 from qtpy import QtGui, QtWidgets
 
+from .glyphs import Glyphs, label
+
 from ..ui.column_selection_dialog import ColumnSelectionDialog
 from .feedback import ProgressPane, FriendlyErrorPresenter
 
@@ -215,25 +217,25 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Create button to select columns for clustering
         self.pushButtonSelectColumns = QtWidgets.QPushButton()
-        self.pushButtonSelectColumns.setText("Select Columns (Recommended)")
+        self.pushButtonSelectColumns.setText(label(Glyphs.GRID, "Select Columns (Recommended)"))
         self.pushButtonSelectColumns.setToolTip("It is highly recommended to select specific columns for clustering to get better results.")
         self.pushButtonSelectColumns.setStyleSheet("background-color: #e6f2ff; font-weight: bold;")
         self.pushButtonSelectColumns.clicked.connect(self.on_select_columns)
 
         # Create button to apply clustering
         self.pushButtonApplyClustering = QtWidgets.QPushButton()
-        self.pushButtonApplyClustering.setText("Apply Clustering")
+        self.pushButtonApplyClustering.setText(label(Glyphs.RUN, "Apply Clustering"))
         self.pushButtonApplyClustering.clicked.connect(self.on_apply_clustering)
 
         # Create cancel button (initially hidden)
         self.pushButtonCancelClustering = QtWidgets.QPushButton()
-        self.pushButtonCancelClustering.setText("Cancel Clustering")
+        self.pushButtonCancelClustering.setText(label(Glyphs.STOP, "Cancel Clustering"))
         self.pushButtonCancelClustering.clicked.connect(self.on_cancel_clustering)
         self.pushButtonCancelClustering.setVisible(False)
 
         # Create save button
         self.pushButtonSaveClustering = QtWidgets.QPushButton()
-        self.pushButtonSaveClustering.setText("Save Clustering Data")
+        self.pushButtonSaveClustering.setText(label(Glyphs.SAVE, "Save Clustering Data"))
         self.pushButtonSaveClustering.clicked.connect(self.on_save_clustering_data)
         self.pushButtonSaveClustering.setEnabled(False)  # Initially disabled until clustering is done
 
@@ -262,11 +264,11 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Create UMAP action buttons
         self.pushButtonComputeUMAP = QtWidgets.QPushButton()
-        self.pushButtonComputeUMAP.setText("Compute UMAP")
+        self.pushButtonComputeUMAP.setText(label(Glyphs.RUN, "Compute UMAP"))
         self.pushButtonComputeUMAP.clicked.connect(self.on_compute_umap)
         
         self.pushButtonPlotUMAP = QtWidgets.QPushButton()
-        self.pushButtonPlotUMAP.setText("Plot UMAP")
+        self.pushButtonPlotUMAP.setText(label(Glyphs.CHART, "Plot UMAP"))
         self.pushButtonPlotUMAP.clicked.connect(self.on_plot_umap)
 
         # Add everything to the UMAP layout
@@ -418,9 +420,9 @@ class ClusteringDialog(QtWidgets.QDialog):
                 # Update button text to show number of selected columns
                 num_selected = len(self._cluster_columns)
                 if num_selected > 0:
-                    self.pushButtonSelectColumns.setText(f"Select Columns ({num_selected})")
+                    self.pushButtonSelectColumns.setText(label(Glyphs.GRID, f"Select Columns ({num_selected})"))
                 else:
-                    self.pushButtonSelectColumns.setText("Select Columns (#selected)")
+                    self.pushButtonSelectColumns.setText(label(Glyphs.GRID, "Select Columns (#selected)"))
 
     def on_apply_clustering(self):
         """
@@ -533,7 +535,7 @@ class ClusteringDialog(QtWidgets.QDialog):
             self.parent().cancel_clustering()
 
         # Update UI
-        self.pushButtonCancelClustering.setText("Cancelling...")
+        self.pushButtonCancelClustering.setText(label(Glyphs.PENDING, "Cancelling..."))
         self.pushButtonCancelClustering.setEnabled(False)
 
     def on_save_clustering_data(self):
@@ -684,7 +686,7 @@ class ClusteringDialog(QtWidgets.QDialog):
         self.pushButtonSelectColumns.setEnabled(True)
         self.comboBoxClusteringMethod.setEnabled(True)
         self.pushButtonCancelClustering.setVisible(False)
-        self.pushButtonCancelClustering.setText("Cancel Clustering")
+        self.pushButtonCancelClustering.setText(label(Glyphs.STOP, "Cancel Clustering"))
         self.pushButtonCancelClustering.setEnabled(True)
         if self.progress_pane:
             if success:
