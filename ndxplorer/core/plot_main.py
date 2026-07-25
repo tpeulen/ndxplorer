@@ -613,6 +613,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             logging.debug(f"Could not connect screenshot button: {e}")
 
+        # Add the publication-quality export button next to the screenshot one.
+        try:
+            from ..ui.publication_export_dialog import add_publication_export_button
+            add_publication_export_button(self)
+        except Exception as e:
+            logging.debug(f"Could not add publication export button: {e}")
+
         # Make Fit action checkable and wire it to the Fit dock visibility
         self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
         self.dockWidget_Fit.visibilityChanged.connect(self._on_fit_dock_visibility_changed)
