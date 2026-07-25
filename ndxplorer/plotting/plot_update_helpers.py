@@ -485,7 +485,15 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         return
     logging.debug("update_plots(skip_clustering=%s, skip_cache_invalidation=%s)", skip_clustering, skip_cache_invalidation)
     if not skip_cache_invalidation:
-        ndxplorer.invalidate_values_cache()
+        # Selective invalidation: the value/mask/filtered/axis caches now self-guard
+        # on data_source.data_version and on the full selection/view key, so a blanket
+        # clear is only needed when the underlying data actually changed. View-only
+        # updates (pan/zoom, colormap, axis toggles) reuse the caches instead of
+        # recomputing the mask + filtered slice on every interaction.
+        data_version = ndxplorer.data_source.data_version
+        if getattr(ndxplorer, "_last_invalidated_data_version", None) != data_version:
+            ndxplorer.invalidate_values_cache()
+            ndxplorer._last_invalidated_data_version = data_version
 
     # Use the data_source property which handles both _data_source and data_manager
     data_source = ndxplorer.data_source

@@ -73,13 +73,20 @@ def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.nda
         and ndxplorer.plot_control._frame_param is not None
     )
     frame_number = (
-        ndxplorer.plot_control.spinBoxFrameNumber.value() 
+        ndxplorer.plot_control.spinBoxFrameNumber.value()
         if frame_single_mode and hasattr(ndxplorer.plot_control, 'spinBoxFrameNumber')
         else None
     )
 
+    # Monotonic data version — the one thing the selection/view key below cannot
+    # observe on its own. Including it makes the cache self-guarding: a data
+    # change (load or targeted equation recompute) bumps the version and misses
+    # the cache without relying on an external invalidate_values_cache() call.
+    data_version = ndxplorer.data_source.data_version
+
     cache_is_valid = (
         getattr(ndxplorer, "_cached_values", None) is not None
+        and getattr(ndxplorer, "_cached_values_data_version", None) == data_version
         and ndxplorer._cached_values_selections == selections
         and ndxplorer._cached_values_p13 == p13
         and ndxplorer._cached_values_mask_inf == mask_inf
@@ -151,6 +158,7 @@ def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.nda
             logging.debug("Single frame mode: %s points in frame %s", points_in_frame, frame_number)
 
     ndxplorer._cached_values = mask
+    ndxplorer._cached_values_data_version = data_version
     ndxplorer._cached_values_selections = selections
     ndxplorer._cached_values_p13 = p13
     ndxplorer._cached_values_mask_inf = mask_inf

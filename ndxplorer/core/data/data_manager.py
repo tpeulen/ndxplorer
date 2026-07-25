@@ -130,13 +130,18 @@ class DataManager:
         if mask_nan is None:
             mask_nan = self.selection.mask_nan
             
-        # Check cache
+        # Check cache — guarded by the source's monotonic data_version so a data
+        # change (load or targeted equation recompute) misses without relying on
+        # an external cache invalidation.
+        data_version = self.data_source.data_version
         cached_inf = self.cache.get_cache_value('values_mask_inf')
         cached_nan = self.cache.get_cache_value('values_mask_nan')
         cached_values = self.cache.get_cache_value('filtered_values')
-        
-        if (cached_values is not None and 
-            cached_inf == mask_inf and 
+        cached_version = self.cache.get_cache_value('values_data_version')
+
+        if (cached_values is not None and
+            cached_version == data_version and
+            cached_inf == mask_inf and
             cached_nan == mask_nan):
             logging.debug("DataManager: Using cached filtered values")
             return cached_values
@@ -155,9 +160,10 @@ class DataManager:
             
         # Cache result
         self.cache.set_cache_value('filtered_values', values)
+        self.cache.set_cache_value('values_data_version', data_version)
         self.cache.set_cache_value('values_mask_inf', mask_inf)
         self.cache.set_cache_value('values_mask_nan', mask_nan)
-        
+
         return values
         
     def get_axis_values(self, 
@@ -181,14 +187,16 @@ class DataManager:
         if axis not in ('x', 'y', 'z'):
             raise ValueError(f"Invalid axis: {axis}")
             
-        # Check cache
+        # Check cache — guard on data_version so a data change invalidates the
+        # per-axis slice as well, not just the shared filtered_values.
+        data_version = self.data_source.data_version
         cached_values = self.cache.get_cache_value(f'{axis}_values')
         cached_idx = self.cache.get_cache_value(f'{axis}_param_idx')
-        mask_id = self.cache.get_cache_value('values_mask_id')
-        
-        if (cached_values is not None and 
-            cached_idx == param_idx and 
-            mask_id is not None):
+        cached_version = self.cache.get_cache_value(f'{axis}_data_version')
+
+        if (cached_values is not None and
+            cached_idx == param_idx and
+            cached_version == data_version):
             logging.debug(f"DataManager: Using cached {axis} values")
             return cached_values
             
@@ -204,7 +212,8 @@ class DataManager:
         # Cache result
         self.cache.set_cache_value(f'{axis}_values', axis_values)
         self.cache.set_cache_value(f'{axis}_param_idx', param_idx)
-        
+        self.cache.set_cache_value(f'{axis}_data_version', data_version)
+
         return axis_values
         
     def get_value_mask(self) -> np.ndarray:
