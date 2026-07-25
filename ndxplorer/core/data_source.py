@@ -257,30 +257,28 @@ class CaseInsensitiveDict:
         self._build_cache()
 
     def _build_cache(self):
-        """Build optimized lookup cache for column access."""
+        """Build optimized lookup cache for column access.
+
+        Only exact (case-insensitive) and left-of-pipe keys are cached; there is
+        deliberately no prefix cache — a prefix fallback binds "Fr" to whatever
+        column happens to start with "fr" and is a correctness hazard.
+        """
         self._column_cache = {}
         self._column_cache['exact'] = {}
         self._column_cache['left_pipe'] = {}
-        self._column_cache['prefix'] = {}
-        
+
         for col in self.data.columns:
             col_str = str(col)
             col_lower = col_str.lower()
             left = col_str.split('|', 1)[0].strip().lower()
-            
+
             # Store exact matches
             self._column_cache['exact'][col_lower] = col
-            
+
             # Store left-of-pipe matches
             if left not in self._column_cache['left_pipe']:
                 self._column_cache['left_pipe'][left] = col
-            
-            # Store prefix matches (for fallback)
-            for prefix_len in range(1, min(10, len(col_lower)) + 1):
-                prefix = col_lower[:prefix_len]
-                if prefix not in self._column_cache['prefix']:
-                    self._column_cache['prefix'][prefix] = col
-        
+
         self._cache_valid = True
 
     def __getitem__(self, key: Any):
@@ -301,14 +299,16 @@ class CaseInsensitiveDict:
                 col = self._column_cache['left_pipe'][k_lower]
                 val = self.data[col]
                 return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
-            
-            # Fallback: prefix match
-            if k_lower in self._column_cache['prefix']:
-                col = self._column_cache['prefix'][k_lower]
-                val = self.data[col]
-                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
-            
-            # Let pandas raise if nothing matched
+
+            # No prefix fallback: matching "Fr" to the first column that merely
+            # STARTS with "fr" (e.g. "FRET-2CDE") silently binds an equation to an
+            # unrelated column. Worse, the once-built cache reflects the column set
+            # at construction, so the same name resolved to different columns
+            # during the initial compute (raw columns) vs a later recompute (all
+            # derived columns present) — making equations non-idempotent and the
+            # plot jump on the first parameter edit. Fall through to an exact
+            # pandas lookup on the live frame instead (this also picks up columns
+            # added after the cache was built), and let it raise if truly missing.
             return self.data[key]
         return self.data[key]
 
