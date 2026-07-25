@@ -1,389 +1,545 @@
-"""
-DataFrameEditor — Feature-rich table editor for pandas DataFrames.
+"""DataFrameEditor — spreadsheet-style editor for pandas DataFrames.
 
-Provides sortable columns, type-aware editing, search, copy/paste,
-and keyboard navigation, matching the usability of guidata's DataFrameEditor.
+Uses ChiSurf's ``chitable`` widget family when ChiSurf is importable, and falls
+back to a self-contained local implementation otherwise, the same arrangement
+:mod:`ndxplorer.ui.parameter_editor` uses. ndXplorer installs standalone (it does
+not depend on ChiSurf), so the fallback has to stay; when ChiSurf *is* present
+the shared widget brings sorting, per-column filters, value colouring, a column
+picker and CSV export that the local version does not have.
+
+Either way the public surface is identical — ``DataFrameEditor(df, parent)``,
+``.dataframe``, ``.exec_()`` and ``edit_dataframe()`` — so call sites do not care
+which branch is live.
 """
 
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List
+from typing import Any, List, Optional
+
 import numpy as np
 import pandas as pd
-
 from qtpy import QtCore, QtGui, QtWidgets
 
 from .glyphs import Glyphs, label as glyph_label
 
+try:
+    from chisurf.gui.widgets.chitable import ChiTableDialog, DataFrameSource
 
-class DataFrameEditor(QtWidgets.QDialog):
-    """Modal dialog for viewing and editing a pandas DataFrame."""
+    HAS_CHISURF = True
+except ImportError:  # pragma: no cover - exercised only without ChiSurf
+    HAS_CHISURF = False
 
-    def __init__(self, df: pd.DataFrame, parent=None):
-        super().__init__(parent)
-        self._original = df.copy()
-        self._df = df
-        self._clipboard: Optional[List[List[str]]] = None
-        self._sort_column: Optional[int] = None
-        self._sort_order: QtCore.Qt.SortOrder = QtCore.Qt.AscendingOrder
-        self._setup_ui()
-        self._populate()
 
-    # ------------------------------------------------------------------ UI
+if HAS_CHISURF:
 
-    def _setup_ui(self):
-        self.setWindowTitle("DataFrame Editor")
-        self.resize(900, 600)
-        self.setMinimumSize(500, 300)
+    class DataFrameEditor(ChiTableDialog):
+        """Modal editor backed by ChiSurf's chitable dialog.
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(4)
-        layout.setContentsMargins(6, 6, 6, 6)
+        Edits are staged and written to ``df`` in place when the user accepts,
+        which is the contract the previous implementation had.
 
-        # --- Search bar ---
-        search_layout = QtWidgets.QHBoxLayout()
-        search_layout.setSpacing(4)
-        self._search_edit = QtWidgets.QLineEdit()
-        self._search_edit.setPlaceholderText("Search...")
-        self._search_edit.setClearButtonEnabled(True)
-        self._search_edit.textChanged.connect(self._on_search)
-        search_layout.addWidget(self._search_edit)
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            The frame to edit. Mutated in place on accept.
+        parent : qtpy.QtWidgets.QWidget, optional
+            Parent widget.
+        """
 
-        self._search_label = QtWidgets.QLabel()
-        search_layout.addWidget(self._search_label)
-        layout.addLayout(search_layout)
+        def __init__(self, df: pd.DataFrame, parent=None):
+            super().__init__(
+                source=DataFrameSource(df, editable=True),
+                title="DataFrame Editor",
+                parent=parent,
+            )
 
-        # --- Table ---
-        self._table = QtWidgets.QTableWidget()
-        self._table.setAlternatingRowColors(True)
-        self._table.setSortingEnabled(True)
-        self._table.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectItems
-        )
-        self._table.setSelectionMode(
-            QtWidgets.QAbstractItemView.ContiguousSelection
-        )
-        self._table.horizontalHeader().setSectionsMovable(True)
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.verticalHeader().setDefaultSectionSize(24)
-        self._table.horizontalHeader().setDefaultSectionSize(100)
-        self._table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._on_context_menu)
-        self._table.cellChanged.connect(self._on_cell_changed)
+        @staticmethod
+        def edit_dataframe(
+            df: pd.DataFrame, parent=None
+        ) -> Optional[pd.DataFrame]:
+            """Show the editor and return the edited copy, or ``None``.
 
-        # Keyboard shortcuts
-        self._table.installEventFilter(self)
+            Parameters
+            ----------
+            df : pandas.DataFrame
+                The frame to edit; never mutated.
+            parent : qtpy.QtWidgets.QWidget, optional
+                Parent widget.
 
-        layout.addWidget(self._table)
+            Returns
+            -------
+            pandas.DataFrame or None
+            """
+            working = df.copy()
+            dlg = DataFrameEditor(working, parent)
+            if dlg.exec_() == QtWidgets.QDialog.Accepted:
+                return working
+            return None
 
-        # --- Stats bar ---
-        stats_layout = QtWidgets.QHBoxLayout()
-        stats_layout.setSpacing(12)
+else:
 
-        self._stats_label = QtWidgets.QLabel()
-        stats_layout.addWidget(self._stats_label)
-        stats_layout.addStretch()
+    class DataFrameEditor(QtWidgets.QDialog):  # type: ignore[no-redef]
+        """Standalone editor used when ChiSurf is not installed.
 
-        self._modified_label = QtWidgets.QLabel()
-        self._modified_label.setStyleSheet("color: #cc7000;")
-        self._modified_label.setVisible(False)
-        stats_layout.addWidget(self._modified_label)
+        Provides sortable columns, type-aware editing, search, copy/paste and
+        keyboard navigation over a ``QTableWidget``.
 
-        layout.addLayout(stats_layout)
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            The frame to edit. Mutated in place as cells are changed.
+        parent : qtpy.QtWidgets.QWidget, optional
+            Parent widget.
+        """
 
-        # --- Buttons ---
-        btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.addStretch()
+        def __init__(self, df: pd.DataFrame, parent=None):
+            super().__init__(parent)
+            self._original = df.copy()
+            self._df = df
+            #: Source row index of each displayed row, indexed by view row. The
+            #: table is filtered and sorted independently of ``_df``, so an edit
+            #: must never use the view row as a frame position.
+            self._source_rows: List[int] = list(range(len(df.index)))
+            self._setup_ui()
+            self._populate()
 
-        self._btn_reset = QtWidgets.QPushButton(glyph_label(Glyphs.RESET, "Reset"))
-        self._btn_reset.clicked.connect(self._on_reset)
-        btn_layout.addWidget(self._btn_reset)
+        # ------------------------------------------------------------ UI
 
-        self._btn_apply = QtWidgets.QPushButton(glyph_label(Glyphs.CHECK, "Apply"))
-        self._btn_apply.clicked.connect(self._on_apply)
-        self._btn_apply.setDefault(True)
-        btn_layout.addWidget(self._btn_apply)
+        def _setup_ui(self):
+            """Build the search bar, table, statistics line and buttons."""
+            self.setWindowTitle("DataFrame Editor")
+            self.resize(900, 600)
+            self.setMinimumSize(500, 300)
 
-        self._btn_cancel = QtWidgets.QPushButton(glyph_label(Glyphs.CLOSE, "Cancel"))
-        self._btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(self._btn_cancel)
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.setSpacing(4)
+            layout.setContentsMargins(6, 6, 6, 6)
 
-        layout.addLayout(btn_layout)
+            search_layout = QtWidgets.QHBoxLayout()
+            search_layout.setSpacing(4)
+            self._search_edit = QtWidgets.QLineEdit()
+            self._search_edit.setPlaceholderText("Search...")
+            self._search_edit.setClearButtonEnabled(True)
+            self._search_edit.textChanged.connect(self._on_search)
+            search_layout.addWidget(self._search_edit)
 
-        self._update_stats()
+            self._search_label = QtWidgets.QLabel()
+            search_layout.addWidget(self._search_label)
+            layout.addLayout(search_layout)
 
-    # ------------------------------------------------------------------ Populate
+            self._table = QtWidgets.QTableWidget()
+            self._table.setAlternatingRowColors(True)
+            self._table.setSortingEnabled(True)
+            self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectItems)
+            self._table.setSelectionMode(QtWidgets.QAbstractItemView.ContiguousSelection)
+            self._table.horizontalHeader().setSectionsMovable(True)
+            self._table.horizontalHeader().setStretchLastSection(True)
+            self._table.verticalHeader().setDefaultSectionSize(24)
+            self._table.horizontalHeader().setDefaultSectionSize(100)
+            self._table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self._table.customContextMenuRequested.connect(self._on_context_menu)
+            self._table.cellChanged.connect(self._on_cell_changed)
+            self._table.installEventFilter(self)
+            layout.addWidget(self._table)
 
-    def _populate(self, df: Optional[pd.DataFrame] = None):
-        """Fill the table widget from a DataFrame."""
-        df = df if df is not None else self._df
-        self._table.blockSignals(True)
-        self._table.setSortingEnabled(False)
+            stats_layout = QtWidgets.QHBoxLayout()
+            stats_layout.setSpacing(12)
+            self._stats_label = QtWidgets.QLabel()
+            stats_layout.addWidget(self._stats_label)
+            stats_layout.addStretch()
+            self._modified_label = QtWidgets.QLabel()
+            self._modified_label.setStyleSheet("color: #cc7000;")
+            self._modified_label.setVisible(False)
+            stats_layout.addWidget(self._modified_label)
+            layout.addLayout(stats_layout)
 
-        nrows, ncols = df.shape
-        self._table.setRowCount(nrows)
-        self._table.setColumnCount(ncols)
+            btn_layout = QtWidgets.QHBoxLayout()
+            btn_layout.addStretch()
+            self._btn_reset = QtWidgets.QPushButton(glyph_label(Glyphs.RESET, "Reset"))
+            self._btn_reset.clicked.connect(self._on_reset)
+            btn_layout.addWidget(self._btn_reset)
+            self._btn_apply = QtWidgets.QPushButton(glyph_label(Glyphs.CHECK, "Apply"))
+            self._btn_apply.clicked.connect(self.accept)
+            self._btn_apply.setDefault(True)
+            btn_layout.addWidget(self._btn_apply)
+            self._btn_cancel = QtWidgets.QPushButton(glyph_label(Glyphs.CLOSE, "Cancel"))
+            self._btn_cancel.clicked.connect(self.reject)
+            btn_layout.addWidget(self._btn_cancel)
+            layout.addLayout(btn_layout)
 
-        # Headers
-        self._table.setHorizontalHeaderLabels(list(df.columns))
-        self._table.setVerticalHeaderLabels([str(i) for i in df.index])
+            self._update_stats()
 
-        # Column types for cell rendering
-        self._col_dtypes = [df.iloc[:, j].dtype for j in range(ncols)]
+        # ------------------------------------------------------- Populate
 
-        for j in range(ncols):
-            dtype = self._col_dtypes[j]
-            # ``pd.api.types.is_numeric_dtype`` understands pandas extension dtypes
-            # (e.g. the nullable ``Float64Dtype`` the pyarrow reader produces);
-            # ``np.issubdtype`` raises ``TypeError`` on those.
+        @staticmethod
+        def _is_numeric(dtype) -> bool:
+            """Return whether a column dtype holds numbers.
+
+            ``pandas.api.types.is_numeric_dtype`` understands extension dtypes
+            (the nullable ``Float64`` the pyarrow reader produces);
+            ``numpy.issubdtype`` raises ``TypeError`` on them.
+
+            Parameters
+            ----------
+            dtype : object
+                A numpy or pandas dtype.
+
+            Returns
+            -------
+            bool
+            """
             try:
-                is_numeric = bool(pd.api.types.is_numeric_dtype(dtype))
-            except Exception:
-                is_numeric = False
+                return bool(pd.api.types.is_numeric_dtype(dtype))
+            except (TypeError, ValueError):
+                return False
 
-            for i in range(nrows):
-                val = df.iloc[i, j]
-                item = QtWidgets.QTableWidgetItem()
-                if pd.isna(val):
-                    item.setText("")
-                    item.setForeground(QtGui.QColor("#999999"))
-                    item.setToolTip("NaN")
-                elif is_numeric:
-                    if isinstance(val, (float, np.floating)):
-                        item.setText(f"{val:.6g}")
+        def _populate(self, df: Optional[pd.DataFrame] = None, source_rows=None):
+            """Fill the table widget from a frame.
+
+            Parameters
+            ----------
+            df : pandas.DataFrame, optional
+                Frame to display; defaults to the full edited frame.
+            source_rows : sequence of int, optional
+                Positional index in ``self._df`` of each displayed row. Defaults
+                to the identity mapping.
+            """
+            df = df if df is not None else self._df
+            self._source_rows = (
+                list(source_rows) if source_rows is not None else list(range(len(df.index)))
+            )
+            self._table.blockSignals(True)
+            self._table.setSortingEnabled(False)
+
+            nrows, ncols = df.shape
+            self._table.setRowCount(nrows)
+            self._table.setColumnCount(ncols)
+            self._table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+            self._table.setVerticalHeaderLabels([str(i) for i in df.index])
+
+            self._col_dtypes = [df.iloc[:, j].dtype for j in range(ncols)]
+
+            for j in range(ncols):
+                is_numeric = self._is_numeric(self._col_dtypes[j])
+                for i in range(nrows):
+                    val = df.iloc[i, j]
+                    item = QtWidgets.QTableWidgetItem()
+                    # The source row travels with the item, so an edit stays
+                    # correct after the table has been filtered *or* sorted.
+                    item.setData(QtCore.Qt.UserRole, int(self._source_rows[i]))
+                    if pd.isna(val):
+                        item.setText("")
+                        item.setForeground(QtGui.QColor("#999999"))
+                        item.setToolTip("NaN")
+                    elif is_numeric:
+                        if isinstance(val, (float, np.floating)):
+                            item.setText(f"{val:.6g}")
+                        else:
+                            item.setText(str(val))
+                        item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                     else:
                         item.setText(str(val))
-                    item.setTextAlignment(
-                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
-                    )
-                    item.setFlags(
-                        item.flags() | QtCore.Qt.ItemIsEditable
-                    )
-                else:
-                    item.setText(str(val))
-                    item.setFlags(
-                        item.flags() | QtCore.Qt.ItemIsEditable
-                    )
-                self._table.setItem(i, j, item)
+                    item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
+                    self._table.setItem(i, j, item)
 
-        self._table.setSortingEnabled(True)
-        self._table.blockSignals(False)
-        self._resize_columns()
-        self._update_stats()
+            self._table.setSortingEnabled(True)
+            self._table.blockSignals(False)
+            self._resize_columns()
+            self._update_stats()
 
-    def _resize_columns(self):
-        """Smart column sizing — content-based with sensible limits."""
-        header = self._table.horizontalHeader()
-        for j in range(self._table.columnCount()):
+        def _resize_columns(self):
+            """Size columns to their content, clamped to sane bounds."""
+            header = self._table.horizontalHeader()
             header.resizeSections(QtWidgets.QHeaderView.ResizeToContents)
-        # Enforce min/max
-        for j in range(self._table.columnCount()):
-            w = self._table.columnWidth(j)
-            w = max(60, min(w + 20, 350))
-            self._table.setColumnWidth(j, w)
-        self._table.horizontalHeader().setStretchLastSection(True)
+            for j in range(self._table.columnCount()):
+                w = self._table.columnWidth(j)
+                self._table.setColumnWidth(j, max(60, min(w + 20, 350)))
+            header.setStretchLastSection(True)
 
-    # ------------------------------------------------------------------ Search
+        # --------------------------------------------------------- Search
 
-    def _on_search(self, text: str):
-        """Filter rows to those matching the search text."""
-        if not text:
-            self._populate()
-            return
+        def _on_search(self, text: str):
+            """Show only rows containing ``text`` in any column.
 
-        text_lower = text.lower()
-        df = self._original if hasattr(self, '_original') else self._df
-
-        mask = df.map(
-            lambda v: text_lower in str(v).lower() if pd.notna(v) else False
-        ).any(axis=1)
-
-        filtered = df[mask]
-        self._search_label.setText(
-            f"{len(filtered)} / {len(df)} rows"
-            if len(filtered) < len(df) else ""
-        )
-        self._populate(filtered)
-
-    # ------------------------------------------------------------------ Editing
-
-    def _on_cell_changed(self, row: int, col: int):
-        """Validate and apply cell edits."""
-        item = self._table.item(row, col)
-        if item is None:
-            return
-
-        raw = item.text().strip()
-        dtype = self._col_dtypes[col]
-
-        # Validate numeric columns
-        if np.issubdtype(dtype, np.number) if hasattr(dtype, 'kind') else False:
-            try:
-                if raw == "":
-                    val = np.nan
-                elif "." in raw or "e" in raw.lower() or "nan" in raw.lower():
-                    val = float(raw)
-                else:
-                    val = int(raw)
-            except (ValueError, TypeError):
-                QtWidgets.QMessageBox.warning(
-                    self, "Invalid Value",
-                    f"Column '{self._df.columns[col]}' expects a numeric value."
-                )
-                # Restore original value
-                orig = self._df.iloc[row, col]
-                item.setText(f"{orig:.6g}" if isinstance(orig, float) else str(orig))
+            Parameters
+            ----------
+            text : str
+                Case-insensitive search string.
+            """
+            if not text:
+                self._search_label.setText("")
+                self._populate()
                 return
 
-            item.setText(f"{val:.6g}" if isinstance(val, (float, np.floating)) else str(val))
+            needle = text.lower()
+            df = self._df
+            mask = df.map(
+                lambda v: needle in str(v).lower() if pd.notna(v) else False
+            ).any(axis=1)
+            positions = np.flatnonzero(mask.to_numpy())
+            self._search_label.setText(
+                f"{len(positions)} / {len(df)} rows" if len(positions) < len(df) else ""
+            )
+            self._populate(df.iloc[positions], source_rows=positions)
 
-        self._df.iloc[row, col] = self._parse_cell(raw, dtype)
-        self._mark_modified()
+        # -------------------------------------------------------- Editing
 
-    @staticmethod
-    def _parse_cell(raw: str, dtype) -> Any:
-        """Parse a string cell value to the appropriate type."""
-        raw = raw.strip()
-        if raw == "" or raw.lower() == "nan":
-            return np.nan
-        if np.issubdtype(dtype, np.number) if hasattr(dtype, 'kind') else False:
+        def _source_row_of(self, row: int, col: int) -> int:
+            """Return the frame row a displayed cell belongs to.
+
+            Parameters
+            ----------
+            row : int
+                View row index.
+            col : int
+                Column index.
+
+            Returns
+            -------
+            int
+                ``-1`` when the cell carries no source mapping.
+            """
+            item = self._table.item(row, col)
+            if item is None:
+                return -1
+            stored = item.data(QtCore.Qt.UserRole)
+            return int(stored) if stored is not None else -1
+
+        def _on_cell_changed(self, row: int, col: int):
+            """Validate an edited cell and write it to the frame.
+
+            Parameters
+            ----------
+            row : int
+                View row index.
+            col : int
+                Column index.
+            """
+            item = self._table.item(row, col)
+            src = self._source_row_of(row, col)
+            if item is None or src < 0:
+                return
+
+            raw = item.text().strip()
+            dtype = self._col_dtypes[col]
+
+            if self._is_numeric(dtype):
+                try:
+                    value = self._parse_cell(raw, dtype)
+                except (ValueError, TypeError):
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Invalid Value",
+                        f"Column '{self._df.columns[col]}' expects a numeric value.",
+                    )
+                    orig = self._df.iloc[src, col]
+                    self._table.blockSignals(True)
+                    item.setText(
+                        f"{orig:.6g}" if isinstance(orig, (float, np.floating)) else str(orig)
+                    )
+                    self._table.blockSignals(False)
+                    return
+                self._table.blockSignals(True)
+                item.setText(
+                    f"{value:.6g}" if isinstance(value, (float, np.floating)) else str(value)
+                )
+                self._table.blockSignals(False)
+            else:
+                value = raw
+
+            self._df.iloc[src, col] = value
+            self._mark_modified()
+
+        @staticmethod
+        def _parse_cell(raw: str, dtype) -> Any:
+            """Convert a cell string to the column's type.
+
+            Parameters
+            ----------
+            raw : str
+                Text as typed.
+            dtype : object
+                The column's dtype.
+
+            Returns
+            -------
+            object
+
+            Raises
+            ------
+            ValueError
+                If a numeric column receives non-numeric text.
+            """
+            raw = raw.strip()
+            if raw == "" or raw.lower() in ("nan", "none"):
+                return np.nan
+            try:
+                numeric = bool(pd.api.types.is_numeric_dtype(dtype))
+            except (TypeError, ValueError):
+                numeric = False
+            if not numeric:
+                return raw
             if "." in raw or "e" in raw.lower():
                 return float(raw)
             return int(raw)
-        return raw
 
-    def _mark_modified(self):
-        self._modified_label.setText("Modified")
-        self._modified_label.setVisible(True)
+        def _mark_modified(self):
+            """Show the "Modified" marker."""
+            self._modified_label.setText("Modified")
+            self._modified_label.setVisible(True)
 
-    def _on_reset(self):
-        """Reset to original data."""
-        self._df = self._original.copy()
-        self._modified_label.setVisible(False)
-        self._search_edit.clear()
-        self._populate()
+        def _on_reset(self):
+            """Restore the frame to its state when the dialog opened."""
+            self._df = self._original.copy()
+            self._modified_label.setVisible(False)
+            self._search_edit.clear()
+            self._populate()
 
-    def _on_apply(self):
-        """Accept changes."""
-        self.accept()
+        # --------------------------------------------------- Context menu
 
-    # ------------------------------------------------------------------ Context menu
+        def _on_context_menu(self, pos: QtCore.QPoint):
+            """Show the cell context menu.
 
-    def _on_context_menu(self, pos: QtCore.QPoint):
-        menu = QtWidgets.QMenu(self)
+            Parameters
+            ----------
+            pos : qtpy.QtCore.QPoint
+                Position in viewport coordinates.
+            """
+            menu = QtWidgets.QMenu(self)
+            copy_action = menu.addAction(glyph_label(Glyphs.COPY, "Copy"))
+            copy_action.setShortcut(QtGui.QKeySequence.Copy)
+            copy_action.triggered.connect(self._copy_selection)
+            paste_action = menu.addAction("Paste")
+            paste_action.setShortcut(QtGui.QKeySequence.Paste)
+            paste_action.triggered.connect(self._paste_selection)
+            menu.addSeparator()
+            select_all_action = menu.addAction(glyph_label(Glyphs.CHECKBOX_ON, "Select All"))
+            select_all_action.setShortcut(QtGui.QKeySequence.SelectAll)
+            select_all_action.triggered.connect(self._table.selectAll)
+            menu.exec_(self._table.viewport().mapToGlobal(pos))
 
-        copy_action = menu.addAction(glyph_label(Glyphs.COPY, "Copy"))
-        copy_action.setShortcut(QtGui.QKeySequence.Copy)
-        copy_action.triggered.connect(self._copy_selection)
+        def _copy_selection(self):
+            """Copy the selected cells to the clipboard as TSV."""
+            selected = self._table.selectedRanges()
+            if not selected:
+                return
+            rng = selected[0]
+            rows = []
+            for i in range(rng.topRow(), rng.bottomRow() + 1):
+                cells = []
+                for j in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    item = self._table.item(i, j)
+                    cells.append(item.text() if item else "")
+                rows.append("\t".join(cells))
+            QtWidgets.QApplication.clipboard().setText("\n".join(rows))
 
-        paste_action = menu.addAction("Paste")
-        paste_action.setShortcut(QtGui.QKeySequence.Paste)
-        paste_action.triggered.connect(self._paste_selection)
+        def _paste_selection(self):
+            """Paste tab-separated clipboard text into the selection."""
+            text = QtWidgets.QApplication.clipboard().text()
+            selected = self._table.selectedRanges()
+            if not text or not selected:
+                return
+            rows_data = [line.split("\t") for line in text.splitlines()]
+            rng = selected[0]
+            for i, row_vals in enumerate(rows_data):
+                for j, val in enumerate(row_vals):
+                    row, col = rng.topRow() + i, rng.leftColumn() + j
+                    if row >= self._table.rowCount() or col >= self._table.columnCount():
+                        break
+                    item = self._table.item(row, col)
+                    if item is not None and item.flags() & QtCore.Qt.ItemIsEditable:
+                        item.setText(val.strip())
 
-        menu.addSeparator()
+        # -------------------------------------------------- Event filter
 
-        select_all_action = menu.addAction(glyph_label(Glyphs.CHECKBOX_ON, "Select All"))
-        select_all_action.setShortcut(QtGui.QKeySequence.SelectAll)
-        select_all_action.triggered.connect(self._table.selectAll)
+        def eventFilter(self, obj, event):  # noqa: N802 (Qt override)
+            """Handle clipboard and reset shortcuts on the table.
 
-        menu.exec_(self._table.viewport().mapToGlobal(pos))
+            Parameters
+            ----------
+            obj : qtpy.QtCore.QObject
+                Object the event was sent to.
+            event : qtpy.QtCore.QEvent
+                The event.
 
-    def _copy_selection(self):
-        """Copy selected cells as TSV."""
-        selected = self._table.selectedRanges()
-        if not selected:
-            return
+            Returns
+            -------
+            bool
+                ``True`` when the event was consumed.
+            """
+            if obj is self._table and event.type() == QtCore.QEvent.KeyPress:
+                key, mod = event.key(), event.modifiers()
+                if mod == QtCore.Qt.ControlModifier:
+                    if key == QtCore.Qt.Key_C:
+                        self._copy_selection()
+                        return True
+                    if key == QtCore.Qt.Key_V:
+                        self._paste_selection()
+                        return True
+                    if key == QtCore.Qt.Key_A:
+                        self._table.selectAll()
+                        return True
+                    if key == QtCore.Qt.Key_Z:
+                        self._on_reset()
+                        return True
+                if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                    self._table.edit(self._table.currentIndex())
+                    return True
+            return super().eventFilter(obj, event)
 
-        rng = selected[0]
-        rows = []
-        for i in range(rng.topRow(), rng.bottomRow() + 1):
-            row_vals = []
-            for j in range(rng.leftColumn(), rng.rightColumn() + 1):
-                item = self._table.item(i, j)
-                row_vals.append(item.text() if item else "")
-            rows.append("\t".join(row_vals))
+        # ---------------------------------------------------------- Stats
 
-        QtWidgets.QApplication.clipboard().setText("\n".join(rows))
+        def _update_stats(self):
+            """Refresh the row/column count line."""
+            self._stats_label.setText(
+                f"{self._table.rowCount()} rows × {self._table.columnCount()} columns"
+            )
 
-    def _paste_selection(self):
-        """Paste TSV data from clipboard into selected cells."""
-        text = QtWidgets.QApplication.clipboard().text()
-        if not text:
-            return
+        # --------------------------------------------------------- Access
 
-        rows_data = [line.split("\t") for line in text.splitlines()]
-        if not rows_data:
-            return
+        @property
+        def dataframe(self) -> pd.DataFrame:
+            """Return the edited frame.
 
-        selected = self._table.selectedRanges()
-        if not selected:
-            return
+            Returns
+            -------
+            pandas.DataFrame
+            """
+            return self._df
 
-        rng = selected[0]
-        start_row = rng.topRow()
-        start_col = rng.leftColumn()
+        @staticmethod
+        def edit_dataframe(df: pd.DataFrame, parent=None) -> Optional[pd.DataFrame]:
+            """Show the editor and return the edited copy, or ``None``.
 
-        for i, row_vals in enumerate(rows_data):
-            for j, val in enumerate(row_vals):
-                row = start_row + i
-                col = start_col + j
-                if row >= self._table.rowCount() or col >= self._table.columnCount():
-                    break
-                item = self._table.item(row, col)
-                if item is not None and item.flags() & QtCore.Qt.ItemIsEditable:
-                    item.setText(val.strip())
-                    self._on_cell_changed(row, col)
+            Parameters
+            ----------
+            df : pandas.DataFrame
+                The frame to edit; never mutated.
+            parent : qtpy.QtWidgets.QWidget, optional
+                Parent widget.
 
-    # ------------------------------------------------------------------ Event filter (keyboard shortcuts)
+            Returns
+            -------
+            pandas.DataFrame or None
+            """
+            dlg = DataFrameEditor(df.copy(), parent)
+            if dlg.exec_() == QtWidgets.QDialog.Accepted:
+                return dlg.dataframe
+            return None
 
-    def eventFilter(self, obj, event):
-        if obj is self._table and event.type() == QtCore.QEvent.KeyPress:
-            key = event.key()
-            mod = event.modifiers()
 
-            if mod == QtCore.Qt.ControlModifier and key == QtCore.Qt.Key_C:
-                self._copy_selection()
-                return True
-            if mod == QtCore.Qt.ControlModifier and key == QtCore.Qt.Key_V:
-                self._paste_selection()
-                return True
-            if mod == QtCore.Qt.ControlModifier and key == QtCore.Qt.Key_A:
-                self._table.selectAll()
-                return True
-            if mod == QtCore.Qt.ControlModifier and key == QtCore.Qt.Key_Z:
-                self._on_reset()
-                return True
+def edit_dataframe(df: pd.DataFrame, parent=None) -> Optional[pd.DataFrame]:
+    """Show the editor and return the edited copy, or ``None`` if cancelled.
 
-            # Arrow-key navigation across cells
-            if key in (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down,
-                       QtCore.Qt.Key_Left, QtCore.Qt.Key_Right,
-                       QtCore.Qt.Key_Tab, QtCore.Qt.Key_Backtab):
-                return False  # Let QTableWidget handle normally
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The frame to edit; never mutated.
+    parent : qtpy.QtWidgets.QWidget, optional
+        Parent widget.
 
-            # Enter to edit current cell
-            if key == QtCore.Qt.Key_Return or key == QtCore.Qt.Key_Enter:
-                self._table.edit(self._table.currentIndex())
-                return True
-
-        return super().eventFilter(obj, event)
-
-    # ------------------------------------------------------------------ Stats
-
-    def _update_stats(self):
-        nrows = self._table.rowCount()
-        ncols = self._table.columnCount()
-        self._stats_label.setText(f"{nrows} rows × {ncols} columns")
-
-    # ------------------------------------------------------------------ Access
-
-    @property
-    def dataframe(self) -> pd.DataFrame:
-        return self._df
-
-    @staticmethod
-    def edit_dataframe(df: pd.DataFrame, parent=None) -> Optional[pd.DataFrame]:
-        """Convenience: show editor, return edited copy or None if cancelled."""
-        dlg = DataFrameEditor(df, parent)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            return dlg.dataframe
-        return None
+    Returns
+    -------
+    pandas.DataFrame or None
+    """
+    return DataFrameEditor.edit_dataframe(df, parent)
