@@ -92,10 +92,19 @@ def compute_histograms_sync(
                         hist.fill(*cols, threads=threads)
                     return hist
 
+                from .fast_histogram import _uniform_edges_range
+
                 def _axis(edges, count, rng):
-                    # Variable axis honours arbitrary (e.g. log-spaced) edges;
-                    # Regular is the fast uniform fallback.
+                    # A Regular axis bins with O(1) arithmetic; a Variable axis
+                    # binary-searches every point (~6x slower at millions of
+                    # points). So use Variable ONLY for genuinely non-uniform
+                    # (log-spaced) edges; uniform edges — the common linear case —
+                    # collapse back to a fast Regular axis.
                     if edges is not None:
+                        uniform = _uniform_edges_range(edges)
+                        if uniform is not None:
+                            lo, hi, n_bins = uniform
+                            return bh.axis.Regular(n_bins, lo, hi)
                         return bh.axis.Variable(edges)
                     return bh.axis.Regular(count, *rng)
 

@@ -75,5 +75,32 @@ def test_log_binning_is_not_crushed_into_lowest_bin():
     assert lowest_frac(r_log) < 0.15
 
 
+def test_uniform_edges_collapse_to_regular():
+    """Uniform edge arrays must bin identically to count+range (both Regular).
+
+    Guards the perf fix: a uniform edge array must not fall onto the slow boost
+    Variable axis — it should give the exact same histogram as passing a bin
+    count + range (a Regular axis).
+    """
+    rng = np.random.default_rng(3)
+    x = rng.normal(3.0, 0.6, 5000)
+    y = np.clip(rng.normal(0.4, 0.15, 5000), 0.0, 1.0)
+    ds = _DS(np.vstack([x, y]))
+
+    x_edges = np.linspace(1.0, 6.0, 41)
+    y_edges = np.linspace(0.0, 1.0, 31)
+
+    p_edges = _params(x_edges, y_edges)
+    p_count = _params(x_edges, y_edges)
+    p_count["x_bins_1d_arr"] = p_count["y_bins_1d_arr"] = None
+    p_count["x_bins_2d_arr"] = p_count["y_bins_2d_arr"] = None
+
+    r_edges = compute_histograms_sync(ds, p_edges)
+    r_count = compute_histograms_sync(ds, p_count)
+
+    np.testing.assert_allclose(r_edges["2d"][0], r_count["2d"][0])
+    np.testing.assert_allclose(r_edges["x"][1], r_count["x"][1])
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
