@@ -1707,12 +1707,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update_plots(skip_clustering=skip_clustering)
 
     def _schedule_parameter_recompute(self):
-        """Debounce parameter-table edits into one targeted recompute.
+        """Throttle parameter-table edits into live, targeted recomputes.
 
         Diffs the current constants against the previous snapshot to learn which
-        constant(s) changed, accumulates them, and (re)starts a short timer so a
-        burst of edits (e.g. mouse-wheel ticks) collapses into a single recompute
-        of only the affected derived columns.
+        constant(s) changed and accumulates them. Rather than debouncing (which
+        only updates after the user stops), this *throttles*: while a value keeps
+        changing — mouse-wheel scrolling or dragging — the plot is refreshed
+        periodically so it tracks the parameter live. The interval adapts to the
+        measured recompute+redraw cost (``_recompute_interval_ms``), so it stays
+        live on small data and does not thrash on very large data.
         """
         try:
             new_constants = dict(self.parameter_control.dict)
@@ -1733,21 +1736,35 @@ class NDXplorer(QtWidgets.QMainWindow):
             self._parameter_recompute_timer = QtCore.QTimer(self)
             self._parameter_recompute_timer.setSingleShot(True)
             self._parameter_recompute_timer.timeout.connect(self._flush_parameter_recompute)
-        self._parameter_recompute_timer.start(120)
+        # Throttle, not debounce: only (re)arm when idle, so a continuous stream
+        # of edits fires the update every interval instead of resetting the wait.
+        if not self._parameter_recompute_timer.isActive():
+            self._parameter_recompute_timer.start(getattr(self, "_recompute_interval_ms", 33))
 
     def _flush_parameter_recompute(self):
-        """Run the debounced targeted recompute for accumulated constant edits."""
+        """Run one targeted recompute for accumulated constant edits, live."""
+        import time
         changed = self._pending_changed_constants
         self._pending_changed_constants = set()
-        try:
-            self.data_source.compute_columns(
-                constants=self.constants,
-                equations=self.equations,
-                changed_constants=changed or None,
-            )
-        except Exception as exc:
-            logging.warning("Parameter recompute failed: %s", exc)
+        t0 = time.perf_counter()
+        if changed:
+            try:
+                self.data_source.compute_columns(
+                    constants=self.constants,
+                    equations=self.equations,
+                    changed_constants=changed,
+                )
+            except Exception as exc:
+                logging.warning("Parameter recompute failed: %s", exc)
         self.update_plots()
+        # Size the next throttle window to one update's cost, clamped to a live
+        # range: ~30 fps on cheap data, backing off (never below ~6 fps) so a
+        # slow redraw on huge data doesn't monopolise the event loop.
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        self._recompute_interval_ms = int(min(160.0, max(16.0, elapsed_ms)))
+        # A change may have arrived while this update ran; keep tracking live.
+        if self._pending_changed_constants and not self._parameter_recompute_timer.isActive():
+            self._parameter_recompute_timer.start(self._recompute_interval_ms)
 
     def update_spinbox_limits(self, low_pct=0.1, high_pct=99, recompute=True):
         plot_update_helpers.update_spinbox_limits(self, low_pct=low_pct, high_pct=high_pct)
