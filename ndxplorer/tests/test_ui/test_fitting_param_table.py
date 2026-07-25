@@ -135,5 +135,48 @@ def test_live_crosslink_follows_and_signals_recompute(qapp):
         pc._unregister_group()
 
 
+def test_add_parameter_appends_constant_and_fires_callback(qapp, monkeypatch):
+    """The ➕ button adds a new constant without hand-editing JSON."""
+    from qtpy import QtWidgets
+
+    from ndxplorer.ui.parameter_editor import ParameterEditor
+
+    ed = ParameterEditor(json_file=_constants_json())
+    try:
+        assert ed._group is not None
+        fired = {"n": 0}
+        ed.set_callback(lambda: fired.__setitem__("n", fired["n"] + 1))
+
+        # Simulate the two input dialogs the button opens.
+        monkeypatch.setattr(
+            QtWidgets.QInputDialog, "getText",
+            staticmethod(lambda *a, **k: ("my_new_const", True)),
+        )
+        monkeypatch.setattr(
+            QtWidgets.QInputDialog, "getDouble",
+            staticmethod(lambda *a, **k: (3.14, True)),
+        )
+        ed._add_parameter()
+
+        assert "my_new_const" in ed._group.parameters_all_dict
+        assert ed.dict["my_new_const"] == pytest.approx(3.14)
+        assert fired["n"] >= 1  # host recomputes / picks up the new constant
+
+        # A duplicate name is rejected (no second row, no crash).
+        monkeypatch.setattr(
+            QtWidgets.QInputDialog, "getText",
+            staticmethod(lambda *a, **k: ("my_new_const", True)),
+        )
+        monkeypatch.setattr(
+            QtWidgets.QMessageBox, "information",
+            staticmethod(lambda *a, **k: None),
+        )
+        n_before = len(ed._group.parameters_all)
+        ed._add_parameter()
+        assert len(ed._group.parameters_all) == n_before
+    finally:
+        ed._unregister_group()
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

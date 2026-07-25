@@ -113,6 +113,46 @@ class _Entry:
         self.const_refs = const_refs    # ref names that are constants
 
 
+def validate_equation(
+    expr: str,
+    known_columns: Sequence[str] = (),
+    known_constants: Sequence[str] = (),
+    known_outputs: Sequence[str] = (),
+) -> Tuple[bool, Optional[str]]:
+    """Validate a single equation expression for a GUI editor.
+
+    Checks the expression parses under the arithmetic whitelist and that every
+    quoted reference resolves to a known column (exact or left-of-``|``), a known
+    constant, or another equation output. Returns ``(ok, message)`` — ``message``
+    is a short human-readable reason when ``ok`` is False, else ``None``.
+    """
+    text = "" if expr is None else str(expr).strip()
+    if not text:
+        return False, "empty expression"
+    try:
+        _code, refs = _parse_expression(text)
+    except SyntaxError as exc:
+        return False, f"syntax error: {exc.msg}"
+    except Exception as exc:  # disallowed node / function
+        return False, str(exc)
+
+    cols = {str(c).lower() for c in known_columns}
+    cols_left = {_normalize_left(c).lower() for c in known_columns}
+    outs = {str(o).lower() for o in known_outputs}
+    consts = {str(k).lower() for k in known_constants}
+
+    unresolved = []
+    for ref in refs:
+        rl = ref.lower()
+        if rl in cols or _normalize_left(ref).lower() in cols_left or rl in outs or rl in consts:
+            continue
+        unresolved.append(ref)
+    if unresolved:
+        seen = sorted(dict.fromkeys(unresolved))  # de-dup, keep order-ish
+        return False, "unknown name(s): " + ", ".join(repr(u) for u in seen)
+    return True, None
+
+
 class EquationGraph:
     """Parsed, dependency-ordered equation set for a given column/constant schema."""
 
@@ -320,4 +360,4 @@ def compute_values_ast(
     return graph.compute(d, constants, changed_constants=changed_constants)
 
 
-__all__ = ["EquationGraph", "compute_values_ast"]
+__all__ = ["EquationGraph", "compute_values_ast", "validate_equation"]

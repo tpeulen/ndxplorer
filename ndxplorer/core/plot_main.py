@@ -75,6 +75,7 @@ from ..plotting import colormaps as plot_colormaps
 from ..analysis.umap_progress import UMAPProgressDialog
 
 from ndxplorer.widgets.code_editor import CodeEditor
+from ndxplorer.widgets.equation_editor import EquationEditor
 
 from .data_source import DataSource, RectangularDataSelection, MaskDataSelection
 from .data import DataManager
@@ -586,7 +587,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.current_weight_param = "None"
 
         self.plot_control = SurfacePlotWidget(self)
-        self.equation_editor = CodeEditor(parent=self)
+
+        def _equation_names():
+            """(column names, constant names) the equation editor can reference."""
+            ds = getattr(self, "data_source", None)
+            if ds is not None and not ds.empty:
+                cols = list(ds.data.columns)
+            else:
+                cols = list(getattr(ds, "parameter_names", []) or [])
+            consts = list(self.constants.keys()) if getattr(self, "constants", None) else []
+            return cols, consts
+
+        self.equation_editor = EquationEditor(parent=self, names_provider=_equation_names)
         self.curve_overlay_widget = CurveOverlayWidget(self)
         self.curve_evaluator = CurveEvaluator()
         self.curve_items = []  # List to store curve items
@@ -641,9 +653,22 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.curve_overlay_widget.curvesChanged.connect(self.update_curve_overlays)
 
         def save_cb():
-            logging.info( "Save CB")
-            json_str = self.equation_editor.text()
-            self.equations = yaml.load(json_str)
+            logging.info("Save CB")
+            # Prefer the structured rows (no YAML round-trip); fall back to the
+            # serialised text for the legacy CodeEditor surface.
+            if hasattr(self.equation_editor, "equations"):
+                self.equations = self.equation_editor.equations()
+            else:
+                self.equations = yaml.load(self.equation_editor.text())
+            # Equations changed wholesale -> recompute every derived column, redraw.
+            try:
+                self.data_source.compute_columns(
+                    constants=self.constants,
+                    equations=self.equations,
+                )
+            except Exception as exc:
+                logging.warning("Equation recompute failed: %s", exc)
+            self.update_plots()
         self.equation_editor.save_callback = save_cb
 
         self.populate_colormap_combobox()

@@ -72,9 +72,9 @@ if HAS_CHISURF:
 
             data = self._load_data(json_file)
 
-            layout = QtWidgets.QGridLayout(self)
+            layout = QtWidgets.QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(0)
+            layout.setSpacing(2)
 
             try:
                 from ..core import constants_group as _cg
@@ -89,7 +89,17 @@ if HAS_CHISURF:
                     parent=self,
                     on_change=self._on_change,
                 )
-                layout.addWidget(self._table)
+                layout.addWidget(self._table, 1)
+                # Add-parameter affordance so a new constant can be created
+                # without hand-editing the JSON.
+                add_bar = QtWidgets.QHBoxLayout()
+                btn_add = QtWidgets.QToolButton()
+                btn_add.setText("➕ parameter")
+                btn_add.setToolTip("Add a new constant (name + value)")
+                btn_add.clicked.connect(self._add_parameter)
+                add_bar.addWidget(btn_add)
+                add_bar.addStretch(1)
+                layout.addLayout(add_bar)
                 self._register_group()
                 self._subscribe_external()
             except Exception as exc:
@@ -241,6 +251,31 @@ if HAS_CHISURF:
             self._callback = cb
             if self._cs_editor is not None:
                 self._cs_editor.callback = cb
+
+        def _add_parameter(self):
+            """Prompt for a new constant (name + value) and append it to the group."""
+            if self._group is None:
+                return
+            name, ok = QtWidgets.QInputDialog.getText(self, "Add parameter", "Parameter name:")
+            name = (name or "").strip()
+            if not ok or not name:
+                return
+            if name in self._group.parameters_all_dict:
+                QtWidgets.QMessageBox.information(
+                    self, "Add parameter", f"A parameter named '{name}' already exists."
+                )
+                return
+            value, ok = QtWidgets.QInputDialog.getDouble(
+                self, "Add parameter", f"Value for '{name}':", 0.0, -1e12, 1e12, 6
+            )
+            if not ok:
+                return
+            self._cg.apply_value_dict(self._group, {name: float(value)})
+            try:
+                self._table.set_params(self._group.parameters_all)
+            except Exception:
+                self._refresh_table()
+            self._on_change()  # host re-diffs constants -> recompute + names update
 
         # -- public data surface ------------------------------------------
         @property

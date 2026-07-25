@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ndxplorer.core.equation_graph import EquationGraph, compute_values_ast
+from ndxplorer.core.equation_graph import (
+    EquationGraph,
+    compute_values_ast,
+    validate_equation,
+)
 
 
 def test_topological_order_handles_out_of_declaration_order():
@@ -74,6 +78,48 @@ def test_graph_reports_resolvable_and_order():
     g = EquationGraph(eqs, columns=["x"], constant_keys=[])
     out_order = [e.out_key for e in g._ordered]
     assert out_order == ["A", "B"]
+
+
+def test_validate_equation_accepts_known_names():
+    ok, msg = validate_equation(
+        "'Sg' - 'Bg'", known_columns=["Sg"], known_constants=["Bg"]
+    )
+    assert ok and msg is None
+
+
+def test_validate_equation_accepts_left_of_pipe_column():
+    # Column headers can carry a "Name | unit" suffix; the left side resolves.
+    ok, msg = validate_equation("'Green Count Rate' * 2", known_columns=["Green Count Rate | kHz"])
+    assert ok, msg
+
+
+def test_validate_equation_accepts_forward_output_reference():
+    ok, _ = validate_equation("'E' + 1", known_outputs=["E"])
+    assert ok
+
+
+def test_validate_equation_flags_unknown_name():
+    ok, msg = validate_equation("'nope' + 1", known_columns=["x"])
+    assert not ok
+    assert "nope" in msg
+
+
+def test_validate_equation_flags_syntax_error():
+    ok, msg = validate_equation("'x' +", known_columns=["x"])
+    assert not ok
+    assert "syntax" in msg.lower()
+
+
+def test_validate_equation_flags_disallowed_node():
+    ok, msg = validate_equation("'x'.__class__", known_columns=["x"])
+    assert not ok
+    assert "disallowed" in msg.lower()
+
+
+def test_validate_equation_flags_empty():
+    ok, msg = validate_equation("   ", known_columns=["x"])
+    assert not ok
+    assert "empty" in msg.lower()
 
 
 if __name__ == "__main__":  # pragma: no cover
