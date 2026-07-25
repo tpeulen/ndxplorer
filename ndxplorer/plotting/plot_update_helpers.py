@@ -157,20 +157,27 @@ def update_histograms(ndxplorer) -> None:
 
 
 def _update_histograms_immediate(ndxplorer) -> None:
-    """Immediate histogram computation using clean histogram manager."""
-    from ..utils.histogram_manager import get_histogram_manager, HistogramParams
+    """Immediate histogram computation.
+
+    Shares the same fast (bincount) / NumPy engine as the background path's
+    ``compute_histograms_sync`` via :func:`fast_histogram_1d` /
+    :func:`fast_histogram_2d`, instead of a separate NumPy-only manager. The
+    fast helpers accept explicit bin-edge arrays and fall back to NumPy for
+    non-uniform (e.g. log-spaced) edges, so log scale, weights and density are
+    preserved while uniform bins get the bincount fast path.
+    """
     from ..core.histograms import Histogram1D, Histogram2D
+    from ..utils.fast_histogram import fast_histogram_1d, fast_histogram_2d
     from ..utils.histogram_helpers import (
         extract_histogram_params,
         is_data_ready,
         resolve_weights,
         sanitize_bins,
     )
-    
+
     # Extract parameters using clean helper
     params, params_dict = extract_histogram_params(ndxplorer)
-    manager = get_histogram_manager()
-    
+
     # Always compute live histograms (no caching)
     
     # Compute new histograms
@@ -210,23 +217,14 @@ def _update_histograms_immediate(ndxplorer) -> None:
         density_z = ndxplorer.plot_control.normed_hist_z
         logging.debug(f"[HELPERS] Density settings - X: {density_x}, Y: {density_y}, Z: {density_z}")
         
-        # Compute 1D histograms using clean manager
-        hist_x = manager.compute_histogram_1d(
-            d1, x_bins_1d, weights=weights,
-            density=density_x,
-            params=params
-        )
-        
-        hist_y = manager.compute_histogram_1d(
-            d2, y_bins_1d, weights=weights,
-            density=density_y,
-            params=params
-        )
-        
+        # Compute 1D histograms on the shared fast/NumPy engine.
+        x_edges, x_counts = fast_histogram_1d(d1, x_bins_1d, weights=weights, density=density_x)
+        y_edges, y_counts = fast_histogram_1d(d2, y_bins_1d, weights=weights, density=density_y)
+
         # Store clean histograms
-        ndxplorer._histogram["x"] = hist_x
-        ndxplorer._histogram["y"] = hist_y
-        
+        ndxplorer._histogram["x"] = Histogram1D(edges=x_edges, counts=x_counts)
+        ndxplorer._histogram["y"] = Histogram1D(edges=y_edges, counts=y_counts)
+
         # Z histogram if enabled
         if params.z_enabled:
             z_weights = None
@@ -235,24 +233,23 @@ def _update_histograms_immediate(ndxplorer) -> None:
                 z_param = ndxplorer.plot_control.z_label
                 if weight_param != z_param:
                     z_weights = weights
-            
+
             logging.debug(f"[HELPERS] Computing Z histogram with density: {density_z}")
-            hist_z = manager.compute_histogram_1d(
-                d3, z_bins_1d, weights=z_weights,
-                density=density_z,
-                params=params
-            )
-            ndxplorer._histogram["z"] = hist_z
+            z_edges, z_counts = fast_histogram_1d(d3, z_bins_1d, weights=z_weights, density=density_z)
+            ndxplorer._histogram["z"] = Histogram1D(edges=z_edges, counts=z_counts)
         else:
             ndxplorer._histogram.pop("z", None)
-        
-        # Compute 2D histogram using clean manager
-        hist_2d = manager.compute_histogram_2d(
-            d1, d2, x_bins_2d, y_bins_2d, weights=weights, params=params
+
+        # Compute 2D histogram on the same engine. fast_histogram_2d returns H as
+        # (n_x, n_y) like numpy.histogram2d; Histogram2D stores (n_y, n_x), so
+        # transpose to match the boost/fast branch in compute_histograms_sync.
+        H2d, xe_2d, ye_2d = fast_histogram_2d(
+            d1, d2, [x_bins_2d, y_bins_2d], weights=weights
         )
-        
+        hist_2d = Histogram2D(H=H2d.T, x_edges=xe_2d, y_edges=ye_2d)
+
         logging.debug(f"[HELPERS] Freshly computed 2D histogram: H shape={hist_2d.H.shape}, validation={hist_2d.validate()}")
-        
+
         # Store clean histogram
         ndxplorer._histogram["2d"] = hist_2d
         
