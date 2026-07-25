@@ -19,7 +19,6 @@ from __future__ import annotations
 import abc
 import json
 import sys
-import re
 from typing import Dict, List, Optional, Iterable, Any, Set, Tuple
 from collections import OrderedDict
 
@@ -238,82 +237,6 @@ def _fast_to_numeric(df: pd.DataFrame, use_float32: bool = True) -> pd.DataFrame
 
 
 # ---------------------------
-# Case-insensitive DataFrame accessor
-# ---------------------------
-
-class CaseInsensitiveDict:
-    """
-    A very small wrapper that allows case-insensitive access to a pandas.DataFrame
-    via indexing (d['ColName']). For columns with suffixes like 'Name | 0-2048',
-    the matcher also compares the left part before the first '|'.
-    
-    Optimized for large datasets with cached column lookups.
-    """
-
-    def __init__(self, data: pd.DataFrame):
-        self.data = data
-        self._column_cache = {}
-        self._cache_valid = False
-        self._build_cache()
-
-    def _build_cache(self):
-        """Build optimized lookup cache for column access.
-
-        Only exact (case-insensitive) and left-of-pipe keys are cached; there is
-        deliberately no prefix cache — a prefix fallback binds "Fr" to whatever
-        column happens to start with "fr" and is a correctness hazard.
-        """
-        self._column_cache = {}
-        self._column_cache['exact'] = {}
-        self._column_cache['left_pipe'] = {}
-
-        for col in self.data.columns:
-            col_str = str(col)
-            col_lower = col_str.lower()
-            left = col_str.split('|', 1)[0].strip().lower()
-
-            # Store exact matches
-            self._column_cache['exact'][col_lower] = col
-
-            # Store left-of-pipe matches
-            if left not in self._column_cache['left_pipe']:
-                self._column_cache['left_pipe'][left] = col
-
-        self._cache_valid = True
-
-    def __getitem__(self, key: Any):
-        if isinstance(key, str) and isinstance(self.data, pd.DataFrame):
-            if not self._cache_valid:
-                self._build_cache()
-                
-            k_lower = key.lower().strip()
-            
-            # Try exact match first
-            if k_lower in self._column_cache['exact']:
-                col = self._column_cache['exact'][k_lower]
-                val = self.data[col]
-                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
-            
-            # Try left-of-pipe match
-            if k_lower in self._column_cache['left_pipe']:
-                col = self._column_cache['left_pipe'][k_lower]
-                val = self.data[col]
-                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
-
-            # No prefix fallback: matching "Fr" to the first column that merely
-            # STARTS with "fr" (e.g. "FRET-2CDE") silently binds an equation to an
-            # unrelated column. Worse, the once-built cache reflects the column set
-            # at construction, so the same name resolved to different columns
-            # during the initial compute (raw columns) vs a later recompute (all
-            # derived columns present) — making equations non-idempotent and the
-            # plot jump on the first parameter edit. Fall through to an exact
-            # pandas lookup on the live frame instead (this also picks up columns
-            # added after the cache was built), and let it raise if truly missing.
-            return self.data[key]
-        return self.data[key]
-
-
-# ---------------------------
 # Equation application
 # ---------------------------
 
@@ -333,11 +256,6 @@ def _load_equations_file(path: str) -> List[Dict[str, str]]:
         return yaml.safe_load(text)  # type: ignore
     # As a last resort, try JSON
     return json.loads(text, object_pairs_hook=OrderedDict)
-
-
-# Cache of compiled equation code objects, keyed by preprocessed expression, so
-# repeated recomputes skip re-parsing the (stable) equation strings.
-_EQ_CODE_CACHE: Dict[str, Any] = {}
 
 
 def compute_values(
@@ -373,197 +291,24 @@ def compute_values(
     - The preprocessor will auto-wrap quoted names not already written
       as d['...'] or c['...'] into the appropriate form (favoring data columns).
     """
-    c = constants
-
-    if equations is None and equation_json_fn:
+    equations = equations or []
+    if not equations and equation_json_fn:
         try:
             equations = _load_equations_file(equation_json_fn)
         except Exception as e:
             logging.warning(f"compute_values: Failed to load equations from {equation_json_fn}: {e}")
             equations = []
 
-    equations = equations or []
+    # Delegate to the AST dependency-graph engine: quoted names resolve by exact
+    # (case-insensitive / left-of-pipe) match, equations evaluate in topological
+    # order on NumPy arrays, and a changed constant recomputes exactly its
+    # transitive dependents. Idempotent by construction and faster than the old
+    # string-preprocess + eval pipeline.
+    from .equation_graph import compute_values_ast
 
-    # Collect lowercase keys defined by equations to enable forward references
-    eq_keys_lower = {str(k).lower() for m in equations for k in m.keys()}
-
-    # Precompute lookups
-    def _normalize_left(s: str) -> str:
-        return str(s).split('|', 1)[0].strip()
-
-    cols_lower_exact = {str(col).lower() for col in d.columns}
-    cols_lower_left = {_normalize_left(col).lower() for col in d.columns}
-    consts_lower = {str(name).lower() for name in c.keys()}
-
-    def _preprocess_equation(eq_str: str) -> Tuple[str, Set[str], Set[str]]:
-        """
-        Replace occurrences of 'name' / "name" with d['name'] or c['name'] depending on
-        whether it's a column/equation key or constant, unless already inside d[...] or c[...].
-        """
-        if not isinstance(eq_str, str) or not eq_str:
-            return eq_str, set(), set()
-
-        out, i = [], 0
-        data_refs: Set[str] = set()
-        const_refs: Set[str] = set()
-        for m in re.finditer(r"(['\"])\s*(.*?)\s*\1", eq_str):
-            s, e = m.span()
-            name = m.group(2)
-            out.append(eq_str[i:s])
-
-            # Check if already wrapped as d['...'] or c['...']
-            j = s - 1
-            while j >= 0 and eq_str[j].isspace():
-                j -= 1
-            is_wrapped = False
-            if j >= 0 and eq_str[j] == '[':
-                k = j - 1
-                while k >= 0 and eq_str[k].isspace():
-                    k -= 1
-                if k >= 0 and eq_str[k] in ('d', 'c'):
-                    is_wrapped = True
-
-            if is_wrapped:
-                out.append(eq_str[s:e])
-                ref_type = eq_str[k]
-                lname = name.lower()
-                if ref_type == 'd':
-                    data_refs.add(lname)
-                elif ref_type == 'c':
-                    const_refs.add(lname)
-            else:
-                lname = name.lower()
-                lname_left = _normalize_left(name).lower()
-                if (lname in cols_lower_exact) or (lname_left in cols_lower_left) or (lname in eq_keys_lower):
-                    out.append(f"d['{name}']")
-                    data_refs.add(lname)
-                elif lname in consts_lower:
-                    out.append(f"c['{name}']")
-                    const_refs.add(lname)
-                else:
-                    # Treat unknown quoted names as data references to force failure if missing
-                    out.append(f"d['{name}']")
-                    data_refs.add(lname)
-
-            i = e
-
-        out.append(eq_str[i:])
-        return ''.join(out), data_refs, const_refs
-
-    d_ci = CaseInsensitiveDict(d)
-    available_cols_exact = set(cols_lower_exact)
-    available_cols_left = set(cols_lower_left)
-
-    # Pre-parse every equation once so we can both (a) build a dependency graph
-    # for targeted recompute and (b) evaluate in declaration order.
-    parsed = []  # (out_key, expr, pre, data_refs, const_refs)
-    for mapping in equations:
-        for out_key, expr in mapping.items():
-            pre, data_refs, const_refs = _preprocess_equation(expr)
-            parsed.append((out_key, expr, pre, data_refs, const_refs))
-
-    # Resolvability (early exit): decide once, from the header names alone, which
-    # equation outputs can *ever* be computed — every data reference must resolve
-    # to an existing column or to another resolvable output, and every constant
-    # reference must exist. Equations that can't (e.g. ALEX/PIE columns with no
-    # source data in this dataset) are skipped outright instead of being
-    # re-attempted — and re-logged — on every recompute.
-    resolvable: Set[str] = set()
-    grew = True
-    while grew:
-        grew = False
-        for (ok, _e, _p, dref, cref) in parsed:
-            okl = str(ok).lower()
-            if okl in resolvable or not (cref <= consts_lower):
-                continue
-            if all(
-                ref in cols_lower_exact
-                or _normalize_left(ref).lower() in cols_lower_left
-                or ref in resolvable
-                for ref in dref
-            ):
-                resolvable.add(okl)
-                grew = True
-    if len(resolvable) < len(parsed):
-        skipped = sorted({str(ok) for (ok, *_r) in parsed if str(ok).lower() not in resolvable})
-        logging.debug("compute_values: skipping %d un-computable equation(s): %s", len(skipped), skipped)
-
-    # Targeted recompute: when only a few constants changed, recompute just the
-    # (resolvable) equations that transitively depend on them instead of all ~100.
-    if changed_constants:
-        changed_lower = {str(x).lower() for x in changed_constants}
-        affected = {
-            str(ok).lower() for (ok, _e, _p, _d, cref) in parsed if cref & changed_lower
-        }
-        grew = True
-        while grew:
-            grew = False
-            for (ok, _e, _p, dref, _c) in parsed:
-                okl = str(ok).lower()
-                if okl not in affected and (dref & affected):
-                    affected.add(okl)
-                    grew = True
-        to_compute = affected & resolvable
-    else:
-        to_compute = resolvable
-
-    computed_keys: List[str] = []
-    for out_key, expr, pre, data_refs, const_refs in parsed:
-        okl = str(out_key).lower()
-        if okl not in resolvable:
-            continue  # can never be computed from the available columns — skip
-        if okl not in to_compute:
-            # Resolvable but not part of this targeted recompute: keep existing
-            # values, register as available so downstream refs still resolve.
-            available_cols_exact.add(okl)
-            available_cols_left.add(_normalize_left(out_key).lower())
-            continue
-        try:
-            missing_cols = []
-            for ref in data_refs:
-                if (
-                    ref not in available_cols_exact
-                    and _normalize_left(ref).lower() not in available_cols_left
-                    and ref not in eq_keys_lower
-                ):
-                    missing_cols.append(ref)
-            missing_consts = [ref for ref in const_refs if ref not in consts_lower]
-            if missing_cols or missing_consts:
-                missing_desc = []
-                if missing_cols:
-                    missing_desc.append(f"columns={sorted(set(missing_cols))}")
-                if missing_consts:
-                    missing_desc.append(f"constants={sorted(set(missing_consts))}")
-                # debug, not info: this fires per equation on *every* recompute
-                # (the missing columns don't change between calls).
-                logging.debug(
-                    "compute_values: Skipping '%s' due to missing %s",
-                    out_key,
-                    "; ".join(missing_desc),
-                )
-                continue
-            # Plain compiled eval is ~140x faster than pd.eval(engine='python')
-            # for these arithmetic-only expressions (d['col'] / c['const'] with
-            # + - * / **, no function calls) and gives identical results. The code
-            # object is cached so repeated recomputes skip re-parsing. pd.eval
-            # remains the fallback for anything plain eval can't handle.
-            try:
-                code = _EQ_CODE_CACHE.get(pre)
-                if code is None:
-                    code = compile(pre, '<equation>', 'eval')
-                    _EQ_CODE_CACHE[pre] = code
-                d[out_key] = eval(code, {}, {'d': d_ci, 'c': c})
-            except Exception:
-                d[out_key] = pd.eval(pre, local_dict={'d': d_ci, 'c': c}, engine=engine)
-            lower_key = str(out_key).lower()
-            available_cols_exact.add(lower_key)
-            available_cols_left.add(_normalize_left(out_key).lower())
-            computed_keys.append(out_key)
-        except Exception as e:
-            # debug, not warning: repeats every recompute and eagerly formats.
-            logging.debug("compute_values: Could not compute '%s': %s", out_key, e)
-
-    return computed_keys
+    return compute_values_ast(
+        d, constants or {}, equations, changed_constants=changed_constants
+    )
 
 
 # ---------------------------

@@ -10,7 +10,7 @@ derived columns present), so the plot jumped on the first edit.
 import numpy as np
 import pandas as pd
 
-from ndxplorer.core.data_source import compute_values, _EQ_CODE_CACHE
+from ndxplorer.core.data_source import compute_values
 
 
 def _frame():
@@ -25,7 +25,6 @@ def _frame():
 def test_reference_resolves_exactly_not_by_prefix():
     df = _frame()
     eqs = [{"Fr": "'a' * 2"}, {"ratio": "'a' / 'Fr'"}]
-    _EQ_CODE_CACHE.clear()
     compute_values(df, constants={}, equations=eqs)
     # ratio = a / (2a) = 0.5, NOT a / FRET-2CDE (which would be -1.0).
     assert np.allclose(df["ratio"].to_numpy(), 0.5)
@@ -34,7 +33,6 @@ def test_reference_resolves_exactly_not_by_prefix():
 def test_compute_is_idempotent_on_already_derived_frame():
     df = _frame()
     eqs = [{"Fr": "'a' * 2"}, {"ratio": "'a' / 'Fr'"}]
-    _EQ_CODE_CACHE.clear()
     compute_values(df, constants={}, equations=eqs)
     first = df["ratio"].to_numpy().copy()
     # Recomputing on a frame that already holds the derived columns must give
@@ -47,7 +45,6 @@ def test_left_of_pipe_lookup_still_works():
     """The legitimate 'Name | suffix' -> 'Name' resolution is preserved."""
     df = pd.DataFrame({"S prompt green (kHz) | 0-2048": np.arange(1, 6, dtype=float)})
     eqs = [{"out": "'S prompt green (kHz)' * 2"}]
-    _EQ_CODE_CACHE.clear()
     compute_values(df, constants={}, equations=eqs)
     assert np.allclose(df["out"].to_numpy(), np.arange(1, 6) * 2)
 
@@ -60,7 +57,6 @@ def test_constant_edit_only_perturbs_dependents():
         {"Fr": "'Sr' - 'Bg'"},
         {"ratio": "'Fg' / 'Fr'"},
     ]
-    _EQ_CODE_CACHE.clear()
     compute_values(df, constants={"Bg": 1.2}, equations=eqs)
     r0 = df["ratio"].to_numpy().copy()
     compute_values(df, constants={"Bg": 1.212}, equations=eqs, changed_constants={"Bg"})
