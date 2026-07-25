@@ -61,5 +61,22 @@ def test_no_free_parameters_error():
     assert not res.ok
 
 
+def test_build_marginal_fit_constant_is_fixed_by_default():
+    from ndxplorer.analysis.marginal_fit import build_marginal_fit
+
+    x, y = _gauss_hist()
+    mf = build_marginal_fit(
+        "a*exp(-(x-mu)**2/(2*sig**2)) + Bg", x, y,
+        initial={"a": 500.0, "mu": 0.5, "sig": 0.2, "Bg": 5.0},
+        constant_names=["Bg"],
+    )
+    fixed = {p.name: bool(p.fixed) for p in mf.parameters}
+    assert fixed["Bg"] is True
+    assert fixed["a"] is False and fixed["mu"] is False and fixed["sig"] is False
+    res = mf.run()
+    assert res.ok
+    assert res.params["Bg"] == pytest.approx(5.0, abs=1e-6)  # held during the fit
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

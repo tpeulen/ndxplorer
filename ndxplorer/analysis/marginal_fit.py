@@ -2,25 +2,38 @@
 
 An overlay curve in ndXplorer is a parameterised function of the current axis.
 This module lets that curve be **fitted** to the axis's 1-D marginal histogram
-(bin centres → counts) instead of being dialled in by hand: it wraps the model
-equation in a ChiSurf ``ParseModel`` and runs ChiSurf's least-squares ``Fit``,
-so the same safe formula that draws the overlay also drives the fit.
+(bin centres → counts): it wraps the model equation in a ChiSurf ``ParseModel``
+and runs ChiSurf's least-squares ``Fit``, so the same safe formula that draws the
+overlay also drives the fit.
 
-It is Qt-free and headless-testable. ChiSurf is imported lazily so ndXplorer
-still starts (without fitting) when ChiSurf is not on the path.
+The model's parameters *are* the fitting group. When ChiSurf is present they are
+rendered in the fitting-parameter table (fix/free/bounds per parameter); the fit
+optimises every **free** parameter and holds the **fixed** ones. Parameters that
+name an ndXplorer constant are seeded from the constant table and **fixed by
+default** — free them to fit them.
+
+:class:`MarginalFit` is the persistent handle the GUI dialog drives (build once,
+edit fix/free, ``run`` repeatedly). :func:`fit_equation_to_marginal` is the
+one-shot convenience used by the no-dialog / no-ChiSurf path and the tests.
+
+Qt-free and headless-testable; ChiSurf is imported lazily.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 
+class MarginalFitError(RuntimeError):
+    """Raised when a marginal-fit model cannot be built (bad equation, no params)."""
+
+
 @dataclass
 class MarginalFitResult:
-    """Outcome of :func:`fit_equation_to_marginal`.
+    """Outcome of a marginal fit.
 
     Attributes
     ----------
@@ -52,55 +65,118 @@ def bin_centers(edges: Sequence[float]) -> np.ndarray:
     return 0.5 * (e[:-1] + e[1:])
 
 
-def fit_equation_to_marginal(
+class MarginalFit:
+    """A built ChiSurf ``ParseModel`` fit of an equation to a marginal histogram.
+
+    Build it with :func:`build_marginal_fit`, edit the parameters' fix/free/bounds
+    (directly or through the fitting table), then call :meth:`run` — as often as
+    you like. The parameters returned by :attr:`parameters` are the live
+    ``FittingParameter`` objects, suitable for a ``ParameterGroupTableWidget``.
+    """
+
+    def __init__(self, fit: Any, model: Any, reserved: Sequence[str]) -> None:
+        self._fit = fit
+        self._model = model
+        self._reserved = {str(r) for r in reserved}
+
+    @property
+    def model(self) -> Any:
+        """The underlying ``ParseModel``."""
+        return self._model
+
+    @property
+    def parameters(self) -> List[Any]:
+        """The free/fixed ``FittingParameter`` objects (excluding ``x``)."""
+        return [
+            p
+            for p in getattr(self._model, "_parameters_equation", [])
+            if getattr(p, "name", None) not in self._reserved
+        ]
+
+    def values(self) -> Dict[str, float]:
+        """Return the current ``{name: value}`` for every parameter."""
+        return {p.name: float(p.value) for p in self.parameters}
+
+    def set_fixed(self, name: str, fixed: bool) -> None:
+        """Fix or free a parameter by name."""
+        for p in self.parameters:
+            if p.name == name:
+                p.fixed = bool(fixed)
+
+    def run(self) -> MarginalFitResult:
+        """Optimise every free parameter (holding the fixed ones); return the result."""
+        free = [p for p in self.parameters if not getattr(p, "fixed", False)]
+        if not free:
+            return MarginalFitResult(False, message="all parameters are fixed")
+        try:
+            self._model.update_model()
+            self._fit.run()
+        except Exception as exc:
+            return MarginalFitResult(False, message=f"fit failed: {exc}")
+        params = self.values()
+        y_fit = (
+            np.asarray(self._model.y, dtype=float)
+            if getattr(self._model, "y", None) is not None
+            else None
+        )
+        try:
+            chi2r = float(self._fit.chi2r)
+        except Exception:
+            chi2r = float("nan")
+        return MarginalFitResult(True, params=params, chi2r=chi2r, y_fit=y_fit)
+
+
+def build_marginal_fit(
     equation: str,
-    initial: Dict[str, float],
     x: Sequence[float],
     counts: Sequence[float],
     *,
+    initial: Optional[Dict[str, float]] = None,
+    constant_names: Sequence[str] = (),
     fixed: Sequence[str] = (),
     reserved: Sequence[str] = ("x",),
     fit_range: Optional[Tuple[int, int]] = None,
-) -> MarginalFitResult:
-    """Fit ``y = f(x; params)`` to a 1-D histogram via ChiSurf least-squares.
+) -> MarginalFit:
+    """Build a :class:`MarginalFit` for ``equation`` over a marginal histogram.
 
     Parameters
     ----------
     equation
-        A ``ParseModel`` formula in ``x`` and named parameters, e.g.
-        ``"a*exp(-(x-mu)**2/(2*sig**2))"``.
-    initial
-        Starting ``{name: value}`` for the parameters (missing names keep the
-        model default).
+        A ``ParseModel`` formula in ``x`` and named parameters.
     x, counts
         The marginal histogram: bin centres and their counts (equal length).
+    initial
+        Starting ``{name: value}`` for the parameters.
+    constant_names
+        Parameter names that are ndXplorer constants — **fixed by default**
+        (seed their value via ``initial``).
     fixed
-        Names held constant during the fit.
+        Additional names to hold fixed.
     reserved
         Names that are not parameters (the independent variable ``x``).
     fit_range
         ``(start, stop)`` index range to fit; defaults to the whole histogram.
 
-    Returns
-    -------
-    MarginalFitResult
-        Fitted parameters, reduced chi-square and the fitted curve, or an error.
+    Raises
+    ------
+    MarginalFitError
+        If ChiSurf is unavailable, the histogram is too small, the equation does
+        not parse, or it has no free parameters.
     """
     try:
         import chisurf.core.fitting.fit as fit_mod
         from chisurf.core.data import DataCurve
         from chisurf.core.models.parse import ParseModel
     except Exception as exc:  # pragma: no cover - depends on environment
-        return MarginalFitResult(False, message=f"ChiSurf fitting is not available: {exc}")
+        raise MarginalFitError(f"ChiSurf fitting is not available: {exc}") from exc
 
     x = np.asarray(x, dtype=float)
     counts = np.asarray(counts, dtype=float)
     if x.size < 3 or counts.size != x.size:
-        return MarginalFitResult(False, message="need at least 3 matching histogram points")
+        raise MarginalFitError("need at least 3 matching histogram points")
 
     data = DataCurve(x=x.copy(), y=counts.copy())
-    # Poisson counting weights so chi-square is meaningful (floor empty bins).
-    try:
+    try:  # Poisson counting weights so chi-square is meaningful (floor empty bins)
         data.ey = np.sqrt(np.maximum(counts, 1.0))
     except Exception:
         pass
@@ -110,49 +186,64 @@ def fit_equation_to_marginal(
     try:
         model.func = str(equation)
     except Exception as exc:
-        return MarginalFitResult(False, message=f"cannot parse equation: {exc}")
+        raise MarginalFitError(f"cannot parse equation: {exc}") from exc
 
-    keys = list(getattr(model, "_keys", []))
     reserved_set = {str(r) for r in reserved}
-    keys = [k for k in keys if k not in reserved_set]
-    if not keys:
-        return MarginalFitResult(False, message="equation has no free parameters")
-
+    constant_set = {str(c) for c in constant_names}
     fixed_set = {str(f) for f in fixed}
-    for k in keys:
-        p = model.parameter_dict.get(k)
-        if p is None:
-            continue
-        if k in initial:
-            try:
-                p.value = float(initial[k])
-            except (TypeError, ValueError):
-                pass
-        p.fixed = k in fixed_set
+    initial = initial or {}
 
-    fit.fit_range = fit_range or (0, len(x) - 1)
-    try:
-        model.update_model()
-        fit.run()
-    except Exception as exc:
-        return MarginalFitResult(False, message=f"fit failed: {exc}")
+    names = [n for n in getattr(model, "_keys", []) if n not in reserved_set]
+    if not names:
+        raise MarginalFitError("equation has no free parameters")
 
-    # Read back from the equation's parameter objects (parameter_dict may expose
-    # only the free parameters, dropping the ones we fixed).
-    params: Dict[str, float] = {}
     for p in getattr(model, "_parameters_equation", []):
         name = getattr(p, "name", None)
-        if name and name not in reserved_set:
-            params[name] = float(p.value)
-    for k in keys:  # fall back to parameter_dict for anything not seen
-        if k not in params and k in model.parameter_dict:
-            params[k] = float(model.parameter_dict[k].value)
-    y_fit = np.asarray(model.y, dtype=float) if getattr(model, "y", None) is not None else None
+        if name is None or name in reserved_set:
+            continue
+        if name in initial:
+            try:
+                p.value = float(initial[name])
+            except (TypeError, ValueError):
+                pass
+        # Constants join the fit fixed-by-default; explicit `fixed` also holds.
+        p.fixed = (name in constant_set) or (name in fixed_set)
+
+    fit.fit_range = fit_range or (0, len(x) - 1)
+    return MarginalFit(fit, model, reserved_set)
+
+
+def fit_equation_to_marginal(
+    equation: str,
+    initial: Dict[str, float],
+    x: Sequence[float],
+    counts: Sequence[float],
+    *,
+    fixed: Sequence[str] = (),
+    constant_names: Sequence[str] = (),
+    reserved: Sequence[str] = ("x",),
+    fit_range: Optional[Tuple[int, int]] = None,
+) -> MarginalFitResult:
+    """One-shot fit of ``y = f(x; params)`` to a 1-D histogram (never raises).
+
+    A thin wrapper over :func:`build_marginal_fit` + :meth:`MarginalFit.run` for
+    callers that just want the result (the no-dialog / no-ChiSurf path and tests).
+    """
     try:
-        chi2r = float(fit.chi2r)
-    except Exception:
-        chi2r = float("nan")
-    return MarginalFitResult(True, params=params, chi2r=chi2r, y_fit=y_fit)
+        mf = build_marginal_fit(
+            equation, x, counts, initial=initial, fixed=fixed,
+            constant_names=constant_names, reserved=reserved, fit_range=fit_range,
+        )
+    except MarginalFitError as exc:
+        return MarginalFitResult(False, message=str(exc))
+    return mf.run()
 
 
-__all__ = ["MarginalFitResult", "fit_equation_to_marginal", "bin_centers"]
+__all__ = [
+    "MarginalFit",
+    "MarginalFitError",
+    "MarginalFitResult",
+    "build_marginal_fit",
+    "fit_equation_to_marginal",
+    "bin_centers",
+]

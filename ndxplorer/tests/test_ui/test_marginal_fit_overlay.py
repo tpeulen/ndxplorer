@@ -41,10 +41,15 @@ def test_function_names_are_not_parameters(qapp):
 
 def test_fit_button_fits_to_marginal(qapp, monkeypatch):
     import ndxplorer.plotting.histograms as H
+    import ndxplorer.ui.marginal_fit_dialog as D
     from ndxplorer.core.plot_main import NDXplorer
 
     y, edges = _gauss_marginal(mu=0.6, sig=0.08)
     monkeypatch.setattr(H, "plot_histogram", lambda nd, dim="2d", **k: (y, edges))
+    # The handler opens a modal dialog; auto-run the fit and return instead of
+    # blocking on exec_() in the headless test.
+    monkeypatch.setattr(D.MarginalFitDialog, "exec_",
+                        lambda self: (self._do_fit(), 1)[1])
 
     ndx = NDXplorer()
     cw = ndx.curve_overlay_widget.add_curve(

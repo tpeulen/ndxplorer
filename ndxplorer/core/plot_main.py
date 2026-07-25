@@ -2521,7 +2521,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         parameters are written back into the curve (so the overlay redraws as the
         fitted curve) and into any matching entry of the parameter table.
         """
-        from ..analysis.marginal_fit import bin_centers, fit_equation_to_marginal
+        from ..analysis.marginal_fit import (
+            MarginalFitError,
+            bin_centers,
+            build_marginal_fit,
+            fit_equation_to_marginal,
+        )
         from ..plotting.histograms import plot_histogram
 
         if getattr(curve, "is_function", False):
@@ -2540,33 +2545,55 @@ class NDXplorer(QtWidgets.QMainWindow):
         edges = np.asarray(edges, dtype=float)
         centers = bin_centers(edges) if edges.size == counts.size + 1 else edges
 
-        res = fit_equation_to_marginal(equation, initial, centers, counts)
-        if not res.ok:
-            logging.warning("Fit to marginal failed: %s", res.message)
+        const_values = dict(self.constants) if isinstance(self.constants, dict) else {}
+
+        def _write_back(result):
+            if not result.ok:
+                return
+            ranges = {
+                k: [min(0.0, v * 1.5), max(10.0, abs(v) * 3.0 + 1.0)]
+                for k, v in result.params.items()
+            }
+            curve.set_parameters(result.params, ranges)
+            self.update_curve_overlays()
+            self._apply_fitted_params_to_constants(result.params)
+            logging.info("Fit to marginal: chi2r=%.4g, params=%s", result.chi2r, result.params)
+
+        # When ChiSurf's fitting table is available, open the interactive dialog:
+        # parameters live in a fitting-parameter table (fix/free/bounds) and any
+        # parameter that names an ndX constant starts fixed (seeded from the table).
+        try:
+            from ..ui.marginal_fit_dialog import HAS_FIT_TABLE, MarginalFitDialog
+        except Exception:
+            HAS_FIT_TABLE = False
+
+        if HAS_FIT_TABLE:
             try:
-                self.statusBar().showMessage(f"Fit failed: {res.message}", 5000)
-            except Exception:
-                pass
+                mf = build_marginal_fit(equation, centers, counts, initial=initial)
+            except MarginalFitError as exc:
+                logging.warning("Fit to marginal: %s", exc)
+                return
+            for p in mf.parameters:
+                if p.name in const_values:  # a constant -> seed + fix by default
+                    try:
+                        p.value = float(const_values[p.name])
+                    except (TypeError, ValueError):
+                        pass
+                    p.fixed = True
+            dlg = MarginalFitDialog(self, mf, on_applied=_write_back)
+            dlg.exec_()
             return
 
-        # Widen each parameter's slider range to bracket its fitted value, then
-        # write the values back so the overlay redraws as the fitted curve.
-        ranges = {
-            k: [min(0.0, v * 1.5), max(10.0, abs(v) * 3.0 + 1.0)]
-            for k, v in res.params.items()
-        }
-        curve.set_parameters(res.params, ranges)
-        self.update_curve_overlays()
-        self._apply_fitted_params_to_constants(res.params)
-        logging.info("Fit to marginal: chi2r=%.4g, params=%s", res.chi2r, res.params)
-        try:
-            self.statusBar().showMessage(
-                f"Fit χ²ᵣ={res.chi2r:.3g}: "
-                + ", ".join(f"{k}={v:.4g}" for k, v in res.params.items()),
-                8000,
-            )
-        except Exception:
-            pass
+        # No fitting table (ChiSurf absent): direct one-shot fit, all free.
+        constant_names = [k for k in const_values if k in equation]
+        res = fit_equation_to_marginal(
+            equation, initial, centers, counts,
+            constant_names=constant_names,
+        )
+        if not res.ok:
+            logging.warning("Fit to marginal failed: %s", res.message)
+            return
+        _write_back(res)
 
     def _apply_fitted_params_to_constants(self, params: "dict") -> None:
         """Push any fitted parameter that names an ndX constant into the table."""
