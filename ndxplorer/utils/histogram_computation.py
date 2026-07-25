@@ -47,7 +47,24 @@ def compute_histograms_sync(
                 weights = weights[valid_indices]
         
         result = {}
-        
+
+        # Prefer the precomputed bin EDGES over a uniform count+range. get_x_bins/
+        # get_y_bins build these via np.logspace for a log-scaled axis, so binning
+        # on them is what makes a log plot actually log-resolved. A uniform Regular
+        # axis silently ignored the scale, binned linearly and crushed the data
+        # into the lowest bins (and the log marginal / image then disagreed).
+        def _edges(key):
+            arr = histogram_params.get(key)
+            if arr is None:
+                return None
+            arr = np.asarray(arr, dtype=float)
+            return arr if arr.size > 1 else None
+        x_edges_1d = _edges('x_bins_1d_arr')
+        y_edges_1d = _edges('y_bins_1d_arr')
+        z_edges_1d = _edges('z_bins_1d_arr')
+        x_edges_2d = _edges('x_bins_2d_arr')
+        y_edges_2d = _edges('y_bins_2d_arr')
+
         # Check performance configuration for histogram backend
         from .performance_config import get_performance_config
         config = get_performance_config()
@@ -75,23 +92,30 @@ def compute_histograms_sync(
                         hist.fill(*cols, threads=threads)
                     return hist
 
+                def _axis(edges, count, rng):
+                    # Variable axis honours arbitrary (e.g. log-spaced) edges;
+                    # Regular is the fast uniform fallback.
+                    if edges is not None:
+                        return bh.axis.Variable(edges)
+                    return bh.axis.Regular(count, *rng)
+
                 # Compute 1D histograms using boost-histogram
-                x_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['x_bins'], *histogram_params['x_range'])), x_data)
+                x_hist = _fill(bh.Histogram(_axis(x_edges_1d, histogram_params['x_bins'], histogram_params['x_range'])), x_data)
                 result['x'] = (x_hist.axes[0].edges, x_hist.values())
 
-                y_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['y_bins'], *histogram_params['y_range'])), y_data)
+                y_hist = _fill(bh.Histogram(_axis(y_edges_1d, histogram_params['y_bins'], histogram_params['y_range'])), y_data)
                 result['y'] = (y_hist.axes[0].edges, y_hist.values())
 
                 # Compute Z histogram only when a Z axis is active (lazy)
                 if z_data is not None:
-                    z_hist = _fill(bh.Histogram(bh.axis.Regular(histogram_params['z_bins'], *histogram_params['z_range'])), z_data)
+                    z_hist = _fill(bh.Histogram(_axis(z_edges_1d, histogram_params['z_bins'], histogram_params['z_range'])), z_data)
                     result['z'] = (z_hist.axes[0].edges, z_hist.values())
 
                 # Compute 2D histogram using boost-histogram
                 h2d = _fill(
                     bh.Histogram(
-                        bh.axis.Regular(histogram_params['x_bins_2d'], *histogram_params['x_range']),
-                        bh.axis.Regular(histogram_params['y_bins_2d'], *histogram_params['y_range']),
+                        _axis(x_edges_2d, histogram_params['x_bins_2d'], histogram_params['x_range']),
+                        _axis(y_edges_2d, histogram_params['y_bins_2d'], histogram_params['y_range']),
                     ),
                     x_data, y_data,
                 )
@@ -132,10 +156,16 @@ def compute_histograms_sync(
             if y_range[0] == y_range[1]:
                 y_range = (y_range[0] - 0.5, y_range[1] + 0.5)
 
-            x_edges, x_hist = hist1d(x_data, histogram_params['x_bins'], weights=weights, data_range=x_range)
+            # Explicit edges (log-spaced when the axis is log) take precedence over
+            # a uniform bin count; the fast/NumPy helpers accept an edge array as
+            # ``bins`` and ignore the range in that case.
+            x_bins_arg = x_edges_1d if x_edges_1d is not None else histogram_params['x_bins']
+            y_bins_arg = y_edges_1d if y_edges_1d is not None else histogram_params['y_bins']
+
+            x_edges, x_hist = hist1d(x_data, x_bins_arg, weights=weights, data_range=x_range)
             result['x'] = (x_edges, x_hist)  # Store as (edges, counts)
 
-            y_edges, y_hist = hist1d(y_data, histogram_params['y_bins'], weights=weights, data_range=y_range)
+            y_edges, y_hist = hist1d(y_data, y_bins_arg, weights=weights, data_range=y_range)
             result['y'] = (y_edges, y_hist)  # Store as (edges, counts)
 
             # Compute Z histogram only when a Z axis is active (lazy: skip otherwise)
@@ -144,13 +174,17 @@ def compute_histograms_sync(
                 if z_range[0] == z_range[1]:
                     z_range = (z_range[0] - 0.5, z_range[1] + 0.5)
 
-                z_edges, z_hist = hist1d(z_data, histogram_params['z_bins'], weights=weights, data_range=z_range)
+                z_bins_arg = z_edges_1d if z_edges_1d is not None else histogram_params['z_bins']
+                z_edges, z_hist = hist1d(z_data, z_bins_arg, weights=weights, data_range=z_range)
                 result['z'] = (z_edges, z_hist)  # Store as (edges, counts)
 
             # Compute 2D histogram (reuses the same expanded x/y ranges)
             H, x_edges, y_edges = hist2d(
                 x_data, y_data,
-                bins=[histogram_params['x_bins_2d'], histogram_params['y_bins_2d']],
+                bins=[
+                    x_edges_2d if x_edges_2d is not None else histogram_params['x_bins_2d'],
+                    y_edges_2d if y_edges_2d is not None else histogram_params['y_bins_2d'],
+                ],
                 weights=weights,
                 x_range=x_range,
                 y_range=y_range,
