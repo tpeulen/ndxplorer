@@ -1008,7 +1008,7 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
                 else:
                     all_blank = non_null.astype(str).str.strip().eq("").all()
             if all_nan or all_blank:
-                logging.info("[read] Dropping trailing empty column '%s'", last_col_name)
+                logging.debug("[read] Dropping trailing empty column '%s'", last_col_name)
                 working = working.iloc[:, :-1]
                 continue
             break
@@ -1046,7 +1046,7 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
     before_drop_cols = df.shape[1]
     df = _drop_trailing_empty_columns(df)
     if df.shape[1] != before_drop_cols:
-        logging.info("[read] Width reduced from %d to %d after dropping empty column(s)",
+        logging.debug("[read] Width reduced from %d to %d after dropping empty column(s)",
                      before_drop_cols, df.shape[1])
 
     engine = kwargs.get("engine", "c")
@@ -1055,7 +1055,7 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
     if engine == "pyarrow":
         object_cols_before = df.select_dtypes(include=['object']).columns
         if len(object_cols_before) > 0:
-            logging.info("[read] PyArrow left %d object columns, attempting conversion", len(object_cols_before))
+            logging.debug("[read] PyArrow left %d object columns, attempting conversion", len(object_cols_before))
             
             # Pre-filter filename columns faster with vectorized operations
             filename_cols = []
@@ -1065,7 +1065,7 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
                 filename_mask = np.array([any(keyword in name for keyword in ['file', 'path', 'name', 'directory']) for name in col_names_lower])
                 filename_cols = list(object_cols_before[filename_mask])
                 if filename_cols:
-                    logging.info("[read] Skipping filename columns: %s", filename_cols)
+                    logging.debug("[read] Skipping filename columns: %s", filename_cols)
             
             # Convert only non-filename columns in batch for better performance
             cols_to_convert = [col for col in object_cols_before if col not in filename_cols]
@@ -1093,21 +1093,21 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
         filename_cols = [col for col in object_cols
                        if any(keyword in str(col).lower() for keyword in ['file', 'path', 'name', 'directory'])]
         if filename_cols:
-            logging.info("[read] Skipping filename columns in post-processing: %s", filename_cols)
+            logging.debug("[read] Skipping filename columns in post-processing: %s", filename_cols)
         
         # Only process non-filename columns
         cols_to_process = [col for col in object_cols if col not in filename_cols]
         if cols_to_process:
-            logging.info("[read] Running post-processing on %d object columns", len(cols_to_process))
+            logging.debug("[read] Running post-processing on %d object columns", len(cols_to_process))
             df = _normalize_msvc_tokens(df)
             df = _best_effort_numeric(df)
         else:
-            logging.info("[read] Skipping post-processing - only filename columns remain")
+            logging.debug("[read] Skipping post-processing - only filename columns remain")
     else:
-        logging.info("[read] Skipping post-processing - no object columns")
+        logging.debug("[read] Skipping post-processing - no object columns")
     t2 = _time.perf_counter()
     
-    logging.info("[read] %d rows, pd.read_csv=%.2fs, convert=%.2fs, post_process=%.2fs, object_cols=%d",
+    logging.debug("[read] %d rows, pd.read_csv=%.2fs, convert=%.2fs, post_process=%.2fs, object_cols=%d",
                  len(df), t1 - t0, t1_post_convert - t1, t2 - t2_start, len(df.select_dtypes(include=['object']).columns))
     
     return df
