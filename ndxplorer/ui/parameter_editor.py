@@ -285,6 +285,33 @@ if HAS_CHISURF:
                 return self._cg.group_to_value_dict(self._group)
             return self._cs_editor.dict
 
+        def apply_values(self, values):
+            """Set constants from a flat ``{name: value}`` mapping.
+
+            The write has to reach the parameter *table*, because the table is
+            what ``plot_main._schedule_parameter_recompute`` reads back into
+            ``plot_main.constants``. A caller that only updates the ``constants``
+            mapping has its values silently reverted on the next parameter event
+            — which is what happened to an automatic FRET calibration pushed in
+            from outside.
+
+            Names not yet in the group are appended, so a calibration may
+            introduce a constant the shipped table does not carry.
+
+            Parameters
+            ----------
+            values : Mapping[str, float]
+                Constant name to value.
+            """
+            if self._group is not None:
+                self._cg.apply_value_dict(self._group, values)
+                self._refresh_table()
+                return
+            editor = self._cs_editor
+            target = getattr(editor, "dict", None) if editor is not None else None
+            if isinstance(target, dict):
+                target.update({str(k): float(v) for k, v in dict(values).items()})
+
         def get_state(self):
             """Rich per-parameter state (value + bounds + fixed) for persistence."""
             if self._group is not None:
@@ -429,6 +456,32 @@ else:
                 return pt2dict(self._p, OrderedDict())
             else:
                 return self._dict
+
+        def apply_values(self, values):
+            """Set constants from a flat ``{name: value}`` mapping.
+
+            Mirrors the chisurf-backed editor's method so a caller (e.g. an
+            automatic FRET calibration) can write the table without knowing
+            which implementation is in use. Unknown names are added to the
+            backing dict.
+
+            Parameters
+            ----------
+            values : Mapping[str, float]
+                Constant name to value.
+            """
+            for key, value in dict(values).items():
+                key, value = str(key), float(value)
+                parameter = None
+                if self._p is not None:
+                    try:
+                        parameter = self._p.param(key)
+                    except Exception:
+                        parameter = None
+                if parameter is not None:
+                    parameter.setValue(value)
+                else:
+                    self._dict[key] = value
 
         @property
         def parameter_dict(self):
