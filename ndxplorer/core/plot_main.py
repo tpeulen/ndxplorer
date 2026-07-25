@@ -651,6 +651,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Connect curve overlay signals
         self.curve_overlay_widget.curvesChanged.connect(self.update_curve_overlays)
+        self.curve_overlay_widget.curveFitRequested.connect(self.on_fit_curve_to_marginal)
 
         def save_cb():
             logging.info("Save CB")
@@ -2511,6 +2512,85 @@ class NDXplorer(QtWidgets.QMainWindow):
     def on_auto_contrast(self):
         """Delegate auto-contrast adjustment to helper module."""
         plot_update_helpers.auto_contrast(self)
+
+    def on_fit_curve_to_marginal(self, curve):
+        """Fit an overlay curve's parameters to the current X-axis marginal.
+
+        Reuses ChiSurf's least-squares engine (via a ``ParseModel`` built from the
+        curve's equation): the marginal histogram becomes the data, the fitted
+        parameters are written back into the curve (so the overlay redraws as the
+        fitted curve) and into any matching entry of the parameter table.
+        """
+        from ..analysis.marginal_fit import bin_centers, fit_equation_to_marginal
+        from ..plotting.histograms import plot_histogram
+
+        if getattr(curve, "is_function", False):
+            logging.warning("Fit to marginal supports equation curves only.")
+            return
+        equation = curve.get_equation()
+        if not isinstance(equation, str) or not equation.strip():
+            return
+        initial = curve.get_parameters()
+        try:
+            counts, edges = plot_histogram(self, "x")
+        except Exception as exc:
+            logging.warning("Fit to marginal: no X histogram (%s)", exc)
+            return
+        counts = np.asarray(counts, dtype=float)
+        edges = np.asarray(edges, dtype=float)
+        centers = bin_centers(edges) if edges.size == counts.size + 1 else edges
+
+        res = fit_equation_to_marginal(equation, initial, centers, counts)
+        if not res.ok:
+            logging.warning("Fit to marginal failed: %s", res.message)
+            try:
+                self.statusBar().showMessage(f"Fit failed: {res.message}", 5000)
+            except Exception:
+                pass
+            return
+
+        # Widen each parameter's slider range to bracket its fitted value, then
+        # write the values back so the overlay redraws as the fitted curve.
+        ranges = {
+            k: [min(0.0, v * 1.5), max(10.0, abs(v) * 3.0 + 1.0)]
+            for k, v in res.params.items()
+        }
+        curve.set_parameters(res.params, ranges)
+        self.update_curve_overlays()
+        self._apply_fitted_params_to_constants(res.params)
+        logging.info("Fit to marginal: chi2r=%.4g, params=%s", res.chi2r, res.params)
+        try:
+            self.statusBar().showMessage(
+                f"Fit χ²ᵣ={res.chi2r:.3g}: "
+                + ", ".join(f"{k}={v:.4g}" for k, v in res.params.items()),
+                8000,
+            )
+        except Exception:
+            pass
+
+    def _apply_fitted_params_to_constants(self, params: "dict") -> None:
+        """Push any fitted parameter that names an ndX constant into the table."""
+        pc = getattr(self, "parameter_control", None)
+        group = getattr(pc, "_group", None)
+        if group is None:
+            return
+        try:
+            pdict = group.parameters_all_dict
+        except Exception:
+            return
+        changed = False
+        for name, value in params.items():
+            p = pdict.get(name)
+            if p is not None:
+                p.value = float(value)
+                if isinstance(self.constants, dict):
+                    self.constants[name] = float(value)
+                changed = True
+        if changed:
+            try:
+                pc._table.set_params(group.parameters_all)
+            except Exception:
+                pass
 
     def update_curve_overlays(self):
         """Update the curve overlays on the 2D histogram."""

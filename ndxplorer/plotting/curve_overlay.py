@@ -13,6 +13,19 @@ from qtpy import QtCore, QtWidgets, QtGui
 from qtpy.QtCore import Qt
 from ..widgets import ParameterSlider
 
+# Names that appear in an equation but are NOT free parameters: the independent
+# variables and the maths functions/constants the evaluator provides. Without
+# this, a regex that harvests identifiers turns ``exp``/``sqrt``/``pi`` into
+# spurious parameter sliders and corrupts the "filled" equation display.
+_NON_PARAMETER_NAMES: Set[str] = {
+    "x", "y", "pi", "e", "inf", "nan",
+    "exp", "expm1", "log", "log2", "log10", "log1p", "sqrt", "cbrt", "square",
+    "abs", "sign", "power", "hypot", "mod", "fmod", "sin", "cos", "tan",
+    "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh",
+    "deg2rad", "rad2deg", "floor", "ceil", "trunc", "round", "clip", "where",
+    "minimum", "maximum", "heaviside", "nan_to_num", "sinc", "erf",
+}
+
 
 class CurveWidget(QtWidgets.QGroupBox):
     """
@@ -22,6 +35,7 @@ class CurveWidget(QtWidgets.QGroupBox):
     equationChanged = QtCore.Signal()
     deleteRequested = QtCore.Signal()
     colorChanged = QtCore.Signal()
+    fitRequested = QtCore.Signal()
 
     def __init__(self, name="Curve", equation_or_function="x", parent=None, is_function=False):
         super().__init__(name, parent)
@@ -72,6 +86,12 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.color_button.clicked.connect(self._choose_color)
         color_layout.addWidget(self.color_button)
         color_layout.addStretch(1)
+        # Fit this curve's parameters to the current X-axis marginal histogram.
+        self.fit_button = QtWidgets.QPushButton("🎯 Fit")
+        self.fit_button.setToolTip("Fit this curve's parameters to the X-axis marginal histogram")
+        self.fit_button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.fit_button.setVisible(not self.is_function)  # equation curves only (v1)
+        color_layout.addWidget(self.fit_button, 0, Qt.AlignRight)
         self.delete_button = QtWidgets.QPushButton("Delete")
         self.delete_button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         color_layout.addWidget(self.delete_button, 0, Qt.AlignRight)
@@ -90,6 +110,7 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.toggled.connect(self._on_toggled)
         self.equation_edit.editingFinished.connect(self._equation_changed)
         self.delete_button.clicked.connect(self.deleteRequested)
+        self.fit_button.clicked.connect(self.fitRequested)
 
         # Parse initial equation and update filled equation
         self._parse_equation()
@@ -143,8 +164,9 @@ class CurveWidget(QtWidgets.QGroupBox):
             # Find all parameters (variables that are not x or y)
             param_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
             params = set(re.findall(param_pattern, equation_or_function))
-            params.discard('x')
-            params.discard('y')
+            # Drop independent variables + maths functions/constants so only the
+            # genuine free parameters get sliders.
+            params -= _NON_PARAMETER_NAMES
 
         # Remove parameters that are no longer in the equation or function
         for param in list(self.parameters.keys()):
@@ -334,6 +356,8 @@ class CurveOverlayWidget(QtWidgets.QWidget):
     Widget for managing curve overlays on the 2D histogram.
     """
     curvesChanged = QtCore.Signal()
+    #: Emitted with the CurveWidget whose "Fit" button was pressed.
+    curveFitRequested = QtCore.Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -500,6 +524,9 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         curve_widget.visibilityChanged.connect(self.curvesChanged)
         curve_widget.equationChanged.connect(self.curvesChanged)
         curve_widget.colorChanged.connect(self.curvesChanged)
+        curve_widget.fitRequested.connect(
+            lambda cw=curve_widget: self.curveFitRequested.emit(cw)
+        )
         curve_widget.deleteRequested.connect(lambda: self.remove_curve(curve_widget))
 
         self.scroll_layout.addWidget(curve_widget)
