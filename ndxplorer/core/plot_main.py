@@ -862,7 +862,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         # default) and the first edit applied the whole table at once, producing
         # a large jump for what looked like a 1% parameter tweak.
         self._prev_constants = dict(self.parameter_control.dict)
-        self.constants = dict(self.parameter_control.dict)
+        # self.constants is a LIVE mapping over the fitting-parameter group when
+        # available, so a constant crosslinked to a fit parameter reads the
+        # linked value at recompute time. Falls back to a plain snapshot.
+        mapping = getattr(self.parameter_control, "constants_mapping", None)
+        self.constants = mapping if mapping is not None else dict(self.parameter_control.dict)
+        # A fit-driven change to a linked constant asks for a targeted recompute.
+        sig = getattr(self.parameter_control, "constantsChangedExternally", None)
+        if sig is not None:
+            try:
+                sig.connect(self._schedule_parameter_recompute)
+            except Exception:
+                pass
         self.verticalLayout_4.addWidget(self.parameter_control)
 
         # Actions
@@ -1730,9 +1741,17 @@ class NDXplorer(QtWidgets.QMainWindow):
             if new_constants.get(k) != prev.get(k)
         }
         self._prev_constants = new_constants
-        self.constants = new_constants
+        # When self.constants is the live mapping over the fitting-parameter group
+        # leave it alone (it already reflects edits and crosslinks); only the
+        # snapshot-dict fallback needs refreshing.
+        if getattr(self.parameter_control, "constants_mapping", None) is None:
+            self.constants = new_constants
         if changed:
             self._pending_changed_constants |= changed
+        elif not self._pending_changed_constants:
+            # Nothing changed and nothing pending (e.g. an unrelated fit event) —
+            # don't arm a recompute+redraw for a no-op.
+            return
 
         if self._parameter_recompute_timer is None:
             from qtpy import QtCore

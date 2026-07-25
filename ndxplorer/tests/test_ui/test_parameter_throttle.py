@@ -32,7 +32,8 @@ def _make_ndx():
 
 def test_schedule_does_not_restart_an_active_timer(qapp):
     ndx = _make_ndx()
-    ndx._pending_changed_constants = set()
+    # A real pending change, so the (no-op-guarded) scheduler actually arms.
+    ndx._pending_changed_constants = {"Bg"}
 
     ndx._schedule_parameter_recompute()  # creates + arms the timer
     timer = ndx._parameter_recompute_timer

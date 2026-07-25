@@ -4,7 +4,7 @@ Uses chisurf's ParameterEditor if chisurf is available,
 otherwise falls back to the local pyqtgraph-based implementation.
 """
 from typing import Dict, List
-from qtpy import QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 import re
 import json
 import sys
@@ -41,6 +41,14 @@ if HAS_CHISURF:
         (``dict``, ``set_callback``, ``json_file``) so ``plot_main`` is untouched.
         """
 
+        #: Emitted (on the GUI thread) when a constant's value changed outside a
+        #: local table edit — e.g. a fit moved a parameter this constant is
+        #: linked to. plot_main connects it to its recompute throttle.
+        constantsChangedExternally = QtCore.Signal()
+        #: Internal, thread-safe hop: fit-client callbacks may fire off the GUI
+        #: thread; emitting this (queued) marshals onto the GUI thread.
+        _externalEvent = QtCore.Signal()
+
         def __init__(
                 self,
                 json_file=None,  # type: str
@@ -54,6 +62,13 @@ if HAS_CHISURF:
             self._table = None
             self._cs_editor = None      # legacy fallback editor
             self._registered = False
+            self._mapping = None
+            self._subscribed = False
+            self._reg_cb = None
+            self._fc_cb = None
+
+            # Marshal off-GUI-thread external events onto the GUI thread.
+            self._externalEvent.connect(self._on_external_gui, QtCore.Qt.QueuedConnection)
 
             data = self._load_data(json_file)
 
@@ -76,6 +91,7 @@ if HAS_CHISURF:
                 )
                 layout.addWidget(self._table)
                 self._register_group()
+                self._subscribe_external()
             except Exception as exc:
                 # Degrade gracefully to the legacy dict editor.
                 logging.warning(
@@ -139,8 +155,79 @@ if HAS_CHISURF:
             self._registered = False
 
         def closeEvent(self, event):  # noqa: N802 (Qt override)
+            self._unsubscribe_external()
             self._unregister_group()
             super().closeEvent(event)
+
+        # -- live mapping (Phase 2) ---------------------------------------
+        @property
+        def constants_mapping(self):
+            """Live ``name -> float`` view over the group (follows crosslinks).
+
+            Reading a linked constant returns its master's current value, so the
+            equation engine always computes against the up-to-date value.
+            Falls back to the legacy editor's dict when the fitting table is not
+            in use.
+            """
+            if self._group is not None:
+                if self._mapping is None:
+                    self._mapping = self._cg.ConstantsMapping(self._group)
+                return self._mapping
+            return self._cs_editor.dict if self._cs_editor is not None else {}
+
+        # -- external (fit-driven) change subscription --------------------
+        def _subscribe_external(self):
+            """Recompute when a fit moves a parameter a constant is linked to."""
+            try:
+                from chisurf.core import parameter_group_registry as reg
+                reg.subscribe(self._on_external_event)
+                self._reg_cb = self._on_external_event
+            except Exception:
+                self._reg_cb = None
+            try:
+                from chisurf.gui.widgets.fitting.fitting_client import get_fitting_client
+                fc = get_fitting_client()
+                if fc is not None:
+                    cb = lambda *a, **k: self._on_external_event()  # noqa: E731
+                    fc.subscribe("parameter.", cb)
+                    fc.subscribe("fit.", cb)
+                    self._fc_cb = (fc, cb)
+            except Exception:
+                self._fc_cb = None
+            self._subscribed = True
+
+        def _unsubscribe_external(self):
+            if not self._subscribed:
+                return
+            self._subscribed = False
+            try:
+                if self._reg_cb is not None:
+                    from chisurf.core import parameter_group_registry as reg
+                    reg.unsubscribe(self._reg_cb)
+            except Exception:
+                pass
+            try:
+                if self._fc_cb is not None:
+                    fc, cb = self._fc_cb
+                    fc.unsubscribe("parameter.", cb)
+                    fc.unsubscribe("fit.", cb)
+            except Exception:
+                pass
+            self._reg_cb = self._fc_cb = None
+
+        def _on_external_event(self, *args, **kwargs):
+            # May arrive on an RPC thread — hop to the GUI thread via a queued
+            # signal before touching widgets.
+            try:
+                self._externalEvent.emit()
+            except Exception:
+                pass
+
+        def _on_external_gui(self):
+            # GUI thread: refresh the table (a link may have changed a shown
+            # value) and tell plot_main to re-diff + recompute.
+            self._refresh_table()
+            self.constantsChangedExternally.emit()
 
         # -- edit signal ---------------------------------------------------
         def _on_change(self):

@@ -102,5 +102,38 @@ def test_group_registered_then_unregistered(qapp):
     assert "ndxplorer" not in owners2
 
 
+def test_live_crosslink_follows_and_signals_recompute(qapp):
+    """self.constants follows a crosslink live; a fit event signals a recompute."""
+    from ndxplorer.core.plot_main import NDXplorer
+    from chisurf.core.fitting.parameter import FittingParameter
+
+    ndx = NDXplorer()
+    ndx._deferred_init()
+    pc = ndx.parameter_control
+    try:
+        # self.constants is the live mapping over the group.
+        assert ndx.constants["Bg"] == 1.2
+
+        fired = {"n": 0}
+        pc.constantsChangedExternally.connect(lambda: fired.__setitem__("n", fired["n"] + 1))
+
+        master = FittingParameter(name="fit_bg", value=5.0)
+        pc._group.parameters_all_dict["Bg"].link = master
+        assert ndx.constants["Bg"] == 5.0  # linked value read live
+
+        master.value = 2.5
+        assert ndx.constants["Bg"] == 2.5
+
+        # A fit-driven event (arriving on any thread) is marshalled to the GUI
+        # thread and re-emitted as constantsChangedExternally -> recompute.
+        pc._on_external_event()
+        for _ in range(20):
+            qapp.processEvents()
+        assert fired["n"] >= 1
+    finally:
+        pc._unsubscribe_external()
+        pc._unregister_group()
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
