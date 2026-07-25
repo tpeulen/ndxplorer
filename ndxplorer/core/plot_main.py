@@ -854,7 +854,15 @@ class NDXplorer(QtWidgets.QMainWindow):
             json_file=str(settings_path / "mfd.constants.json"),
             callback=parameter_update
         )
+        # Seed self.constants from the parameter table NOW, so the initial
+        # (background) column computation derives Bg/gamma/PhiA-dependent columns
+        # — FRET efficiency, Fg, ... — with the SAME constants the table shows.
+        # Previously self.constants stayed empty until the first edit, so the
+        # initial plot was computed with no constants (those columns missing or
+        # default) and the first edit applied the whole table at once, producing
+        # a large jump for what looked like a 1% parameter tweak.
         self._prev_constants = dict(self.parameter_control.dict)
+        self.constants = dict(self.parameter_control.dict)
         self.verticalLayout_4.addWidget(self.parameter_control)
 
         # Actions
