@@ -25,6 +25,35 @@ if False:  # pragma: no cover - type checking hints without runtime import
     from ..core.plot_main import NDXplorer
 
 
+def _as_1d_arrays(hist_data) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Normalise a stored 1D histogram to ``(edges, counts)``.
+
+    ``ndxplorer._histogram[dim]`` may hold either a :class:`Histogram1D`
+    (immediate path) or an ``(edges, counts)`` tuple (the background /
+    ``compute_histograms_sync`` path stores ``result['x'] = (edges, counts)``).
+    Returns ``None`` for anything unrecognised.
+    """
+    if isinstance(hist_data, Histogram1D):
+        return hist_data.edges, hist_data.counts
+    if isinstance(hist_data, (tuple, list)) and len(hist_data) == 2:
+        return np.asarray(hist_data[0]), np.asarray(hist_data[1])
+    return None
+
+
+def _as_2d_arrays(hist_data) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Normalise a stored 2D histogram to ``(H, x_edges, y_edges)``.
+
+    Accepts either a :class:`Histogram2D` (immediate path) or an
+    ``(H, x_edges, y_edges)`` tuple (the sync/background path, already
+    transposed to ``H`` shaped ``(n_y, n_x)``). Returns ``None`` otherwise.
+    """
+    if isinstance(hist_data, Histogram2D):
+        return hist_data.H, hist_data.x_edges, hist_data.y_edges
+    if isinstance(hist_data, (tuple, list)) and len(hist_data) == 3:
+        return np.asarray(hist_data[0]), np.asarray(hist_data[1]), np.asarray(hist_data[2])
+    return None
+
+
 def plot_histogram(
     ndxplorer: "NDXplorer",
     dimension: str = "2d",
@@ -50,28 +79,28 @@ def plot_histogram(
     """
     if not is_data_ready(ndxplorer):
         logging.warning("Data not ready for histogram plotting")
-        return np.array([0]), np.array([0, 1])
-    
+        return np.array([0, 1]), np.array([0])
+
     if dimension not in ndxplorer._histogram:
         logging.warning(f"No histogram data available for dimension '{dimension}'")
-        return np.array([0]), np.array([0, 1])
+        return np.array([0, 1]), np.array([0])
     
     hist_data = ndxplorer._histogram[dimension]
-    
+
     if dimension == "2d":
-        # 2D histogram returns Histogram2D object
-        if isinstance(hist_data, Histogram2D):
-            return hist_data.H, (hist_data.x_edges, hist_data.y_edges)
-        else:
-            logging.error("Invalid 2D histogram data format")
-            return np.array([[0]]), (np.array([0, 1]), np.array([0, 1]))
+        arrs = _as_2d_arrays(hist_data)
+        if arrs is not None:
+            H, x_edges, y_edges = arrs
+            return H, (x_edges, y_edges)
+        logging.error("Invalid 2D histogram data format")
+        return np.array([[0]]), (np.array([0, 1]), np.array([0, 1]))
     else:
-        # 1D histogram returns Histogram1D object
-        if isinstance(hist_data, Histogram1D):
-            return hist_data.edges, hist_data.counts
-        else:
-            logging.error(f"Invalid {dimension} histogram data format")
-            return np.array([0, 1]), np.array([0])
+        arrs = _as_1d_arrays(hist_data)
+        if arrs is not None:
+            edges, counts = arrs
+            return edges, counts
+        logging.error(f"Invalid {dimension} histogram data format")
+        return np.array([0, 1]), np.array([0])
 
 
 def compute_2d_histogram(
@@ -206,26 +235,30 @@ def get_histogram_statistics(
         return {}
     
     hist_data = ndxplorer._histogram[dimension]
-    
+
     if dimension == "2d":
-        if isinstance(hist_data, Histogram2D):
+        arrs = _as_2d_arrays(hist_data)
+        if arrs is not None:
+            H = np.asarray(arrs[0])
             return {
-                "count": np.sum(hist_data.H),
-                "mean": np.mean(hist_data.H),
-                "std": np.std(hist_data.H),
-                "min": np.min(hist_data.H),
-                "max": np.max(hist_data.H),
-                "shape": hist_data.shape
+                "count": np.sum(H),
+                "mean": np.mean(H),
+                "std": np.std(H),
+                "min": np.min(H),
+                "max": np.max(H),
+                "shape": H.shape,
             }
     else:
-        if isinstance(hist_data, Histogram1D):
+        arrs = _as_1d_arrays(hist_data)
+        if arrs is not None:
+            counts = np.asarray(arrs[1])
             return {
-                "count": np.sum(hist_data.counts),
-                "mean": np.mean(hist_data.counts),
-                "std": np.std(hist_data.counts),
-                "min": np.min(hist_data.counts),
-                "max": np.max(hist_data.counts),
-                "bins": hist_data.n_bins
+                "count": np.sum(counts),
+                "mean": np.mean(counts),
+                "std": np.std(counts),
+                "min": np.min(counts),
+                "max": np.max(counts),
+                "bins": len(counts),
             }
-    
+
     return {}
