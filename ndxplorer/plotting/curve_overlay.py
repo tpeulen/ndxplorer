@@ -606,6 +606,14 @@ class CurveOverlayWidget(QtWidgets.QWidget):
                 # Regular equation - use the generated x_values and the evaluated y_values
                 y_values = result
 
+            # A constant equation (e.g. "2") evaluates to a scalar; broadcast it to
+            # a horizontal line so the zip over (x, y) below does not choke on a
+            # non-iterable 0-d value (which silently dropped the curve).
+            x_values = np.atleast_1d(np.asarray(x_values, dtype=float))
+            y_values = np.asarray(y_values, dtype=float)
+            if y_values.ndim == 0:
+                y_values = np.full(x_values.shape, float(y_values))
+
             # Convert x and y values to bin coordinates for plotting
             # Note: The 2D histogram is rotated 90 degrees in the plot
             x_coords = []
