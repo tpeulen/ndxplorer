@@ -23,12 +23,46 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ..core.equation_graph import validate_equation
 
+# When ChiSurf is importable, ndXplorer uses its general, better-featured
+# equation editor (safe expression engine, functions/names reference, richer
+# validation). ndXplorer keeps its own quoted-name/case-insensitive/left-of-``|``
+# semantics by injecting ``equation_graph.validate_equation`` as the validator,
+# so the ✓/✗ feedback matches exactly what its compute engine will accept. When
+# ChiSurf is absent (standalone ndXplorer), the local table below is used.
+try:
+    from chisurf.gui.widgets.equation_editor import EquationTableEditor as _ChisurfEditor
+
+    _HAS_CHISURF_EDITOR = True
+except Exception:  # pragma: no cover - depends on environment
+    _ChisurfEditor = None
+    _HAS_CHISURF_EDITOR = False
+
+
+def _names_to_mapping(provider):
+    """Adapt an ndXplorer ``() -> (columns, constants)`` provider to a mapping."""
+    def _mapping():
+        if provider is None:
+            return {}
+        try:
+            cols, consts = provider()
+        except Exception:
+            return {}
+        return {"Constants": list(consts), "Columns": list(cols)}
+
+    return _mapping
+
+
+def _ndx_validator(expr, known, outputs):
+    """ndXplorer validation for the chisurf editor: quoted names + outputs."""
+    return validate_equation(expr, known_columns=known, known_outputs=outputs)
+
+
 _OK = "✓"    # ✓
 _BAD = "✗"   # ✗
 
 
-class EquationEditor(QtWidgets.QWidget):
-    """Table editor for ``[{name: expression}, ...]`` equations."""
+class _LocalEquationEditor(QtWidgets.QWidget):
+    """Standalone (no-ChiSurf) table editor for ``[{name: expression}, ...]``."""
 
     #: Fired (no args) after Apply, so the host can recompute + redraw.
     applied = QtCore.Signal()
@@ -258,6 +292,29 @@ class EquationEditor(QtWidgets.QWidget):
         if callable(self.save_callback):
             self.save_callback()
         self.applied.emit()
+
+
+if _HAS_CHISURF_EDITOR:
+
+    class EquationEditor(_ChisurfEditor):  # type: ignore[misc,valid-type]
+        """ndXplorer equation editor backed by the general ChiSurf editor.
+
+        Preserves ndXplorer's ``(parent, names_provider)`` constructor and the
+        ``(columns, constants)`` provider contract while delegating rendering and
+        the safe expression engine to ChiSurf. ndXplorer's own quoted-name
+        validation is injected so behaviour matches its compute engine.
+        """
+
+        def __init__(self, parent=None, names_provider=None):
+            super().__init__(
+                parent,
+                names_provider=_names_to_mapping(names_provider),
+                validator=_ndx_validator,
+                quote_names=True,
+            )
+
+else:  # pragma: no cover - exercised only when ChiSurf is absent
+    EquationEditor = _LocalEquationEditor
 
 
 __all__ = ["EquationEditor"]
