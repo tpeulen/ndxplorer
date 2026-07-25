@@ -20,7 +20,27 @@ except ImportError:
 
 
 if HAS_CHISURF:
+
+    _NDX_OWNER_ID = "ndxplorer"
+
+    class _CompactColumns:
+        """Section stub whitelisting the constant-relevant columns.
+
+        ``ParameterGroupTableWidget`` reads ``section.columns`` to decide which
+        columns to show; we hide the fit-``error`` column (no fit runs here).
+        """
+        columns = ("name", "value", "fixed", "bounds_lo", "bounds_hi", "bounds_on")
+
     class ParameterEditor(QtWidgets.QWidget):
+        """ndXplorer constants as a chisurf fitting-parameter table.
+
+        Renders the constants as ``FittingParameter``s (value/fixed/bounds + a
+        link menu) and registers the group so a constant can be crosslinked to a
+        chisurf fit's parameter. Falls back to the legacy dict editor if the
+        fitting-table stack is unavailable. Keeps the same public surface
+        (``dict``, ``set_callback``, ``json_file``) so ``plot_main`` is untouched.
+        """
+
         def __init__(
                 self,
                 json_file=None,  # type: str
@@ -29,34 +49,137 @@ if HAS_CHISURF:
         ):
             super(ParameterEditor, self).__init__(parent)
             self._json_file = json_file
-            
-            self._dict = OrderedDict()
-            if json_file is not None and pathlib.Path(json_file).exists():
-                with open(json_file, 'r') as fp:
-                    self._dict = json.load(fp, object_pairs_hook=OrderedDict)
-            else:
-                try:
-                    default_v = pathlib.Path(__file__).parent.parent / "settings" / "mfd.constants.json"
-                    if default_v.exists():
-                        with open(default_v, 'r') as fp:
-                            self._dict = json.load(fp, object_pairs_hook=OrderedDict)
-                except Exception:
-                    pass
+            self._callback = callback
+            self._group = None
+            self._table = None
+            self._cs_editor = None      # legacy fallback editor
+            self._registered = False
 
-            self.cs_editor = CSParameterEditor(target=self._dict, json_file=json_file, callback=callback)
-            
+            data = self._load_data(json_file)
+
             layout = QtWidgets.QGridLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
-            layout.addWidget(self.cs_editor)
+
+            try:
+                from ..core import constants_group as _cg
+                from chisurf.gui.autoform.sections.parameter_table import (
+                    ParameterGroupTableWidget,
+                )
+                self._cg = _cg
+                self._group = _cg.build_group_from_data(data)
+                self._table = ParameterGroupTableWidget(
+                    self._group.parameters_all,
+                    section=_CompactColumns(),
+                    parent=self,
+                    on_change=self._on_change,
+                )
+                layout.addWidget(self._table)
+                self._register_group()
+            except Exception as exc:
+                # Degrade gracefully to the legacy dict editor.
+                logging.warning(
+                    "Fitting-parameter table unavailable, using dict editor: %s", exc
+                )
+                self._group = None
+                self._table = None
+                backing = OrderedDict(self._values_only(data))
+                self._cs_editor = CSParameterEditor(
+                    target=backing, json_file=json_file, callback=callback
+                )
+                layout.addWidget(self._cs_editor)
+
             self.setWindowTitle("Configuration: %s" % self.json_file)
 
-        def set_callback(self, cb):
-            self.cs_editor.callback = cb
+        # -- loading -------------------------------------------------------
+        def _load_data(self, json_file):
+            """Return parsed JSON (flat or nested), falling back to the default."""
+            candidates = []
+            if json_file is not None:
+                candidates.append(pathlib.Path(json_file))
+            candidates.append(
+                pathlib.Path(__file__).parent.parent / "settings" / "mfd.constants.json"
+            )
+            for path in candidates:
+                try:
+                    if path.exists():
+                        with open(path, "r") as fp:
+                            return json.load(fp, object_pairs_hook=OrderedDict)
+                except Exception:
+                    continue
+            return OrderedDict()
 
+        @staticmethod
+        def _values_only(data):
+            try:
+                from ..core import constants_group as _cg
+                return _cg.values_from_data(data)
+            except Exception:
+                return OrderedDict(data) if isinstance(data, dict) else OrderedDict()
+
+        # -- crosslink registration ---------------------------------------
+        def _register_group(self):
+            try:
+                from chisurf.core.parameter_group_registry import register_parameter_group
+                register_parameter_group(
+                    self._group, owner_id=_NDX_OWNER_ID, label="ndXplorer"
+                )
+                self._registered = True
+            except Exception as exc:
+                logging.debug("Could not register constants group: %s", exc)
+
+        def _unregister_group(self):
+            if not self._registered:
+                return
+            try:
+                from chisurf.core.parameter_group_registry import unregister_parameter_group
+                unregister_parameter_group(_NDX_OWNER_ID)
+            except Exception:
+                pass
+            self._registered = False
+
+        def closeEvent(self, event):  # noqa: N802 (Qt override)
+            self._unregister_group()
+            super().closeEvent(event)
+
+        # -- edit signal ---------------------------------------------------
+        def _on_change(self):
+            if self._callback is not None:
+                try:
+                    self._callback()
+                except Exception:
+                    pass
+
+        def set_callback(self, cb):
+            self._callback = cb
+            if self._cs_editor is not None:
+                self._cs_editor.callback = cb
+
+        # -- public data surface ------------------------------------------
         @property
         def dict(self):
-            return self.cs_editor.dict
+            """Flat ``{name: value}`` snapshot (drives the throttle + seeding)."""
+            if self._group is not None:
+                return self._cg.group_to_value_dict(self._group)
+            return self._cs_editor.dict
+
+        def get_state(self):
+            """Rich per-parameter state (value + bounds + fixed) for persistence."""
+            if self._group is not None:
+                return self._cg.group_state(self._group)
+            return {"parameters": {k: {"value": v} for k, v in self.dict.items()}}
+
+        def set_state(self, state):
+            if self._group is not None:
+                self._cg.apply_group_state(self._group, state)
+                self._refresh_table()
+
+        def _refresh_table(self):
+            if self._table is not None:
+                try:
+                    self._table.sync()
+                except Exception:
+                    pass
 
         @property
         def json_file(self):
@@ -65,11 +188,15 @@ if HAS_CHISURF:
         @json_file.setter
         def json_file(self, v):
             self._json_file = v
-            if v is not None and pathlib.Path(v).exists():
-                with open(v, 'r') as fp:
-                    self._dict = json.load(fp, object_pairs_hook=OrderedDict)
-                self.cs_editor._dict = self._dict
-                self.cs_editor.update()
+            data = self._load_data(v)
+            if self._group is not None:
+                if self._cg.is_state_format(data):
+                    self._cg.apply_group_state(self._group, data)
+                else:
+                    self._cg.apply_value_dict(self._group, self._cg.values_from_data(data))
+                self._refresh_table()
+            elif self._cs_editor is not None:
+                self._cs_editor.json_file = v
 
 else:
     from pyqtgraph.parametertree import Parameter, ParameterTree

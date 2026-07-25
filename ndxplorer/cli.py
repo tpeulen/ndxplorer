@@ -36,8 +36,11 @@ def _load_settings_and_equations():
     constants_path = settings_path / "mfd.constants.json"
     if constants_path.exists():
         try:
+            from ndxplorer.core.constants_group import values_from_data
             with open(constants_path, "r", encoding="utf-8") as f:
-                constants = json.load(f)
+                # Accept both the legacy flat {name: value} file and the rich
+                # per-parameter state format the GUI now writes.
+                constants = dict(values_from_data(json.load(f)))
         except Exception as e:
             logging.warning(f"Failed to load constants: {e}")
             

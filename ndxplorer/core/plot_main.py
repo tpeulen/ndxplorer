@@ -1399,13 +1399,16 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Create the filename for the parameters
         param_filename = str(settings_path / "mfd.constants.json")
         
-        # Save the parameters
+        # Save the parameters. Persist the rich per-parameter state (value +
+        # bounds + fixed) when the editor is the fitting-parameter table; the
+        # loader accepts both this and the legacy flat {name: value} format.
+        payload = (
+            self.parameter_control.get_state()
+            if hasattr(self.parameter_control, "get_state")
+            else self.parameter_control.dict
+        )
         with open(param_filename, "w") as fp:
-            json.dump(
-                self.parameter_control.dict,
-                fp,
-                indent=4
-            )
+            json.dump(payload, fp, indent=4)
         
         logging.info( f"Parameters saved to {param_filename}")
     

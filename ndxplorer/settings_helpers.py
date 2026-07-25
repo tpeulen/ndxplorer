@@ -292,8 +292,10 @@ def load_settings(
         fn_constants = default_settings_dir / ndxplorer.settings["constants"]
     
     if fn_constants.exists():
+        from ndxplorer.core.constants_group import values_from_data
         with open(str(fn_constants), "r") as handle:
-            ndxplorer.constants.update(json.load(handle))
+            # Accept both legacy flat and rich per-parameter state formats.
+            ndxplorer.constants.update(values_from_data(json.load(handle)))
     else:
         logging.warning(f"Constants file not found: {fn_constants}")
 
