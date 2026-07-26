@@ -944,36 +944,59 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         except Exception as e:
             logging.warning(f"Failed to update marginal plots after clear selection: {e}")
 
+    def _selection_axes(self):
+        """The two parameter indices the current plane is drawn from."""
+        return (int(getattr(self.parent, "x_parameter_index", 0)),
+                int(getattr(self.parent, "y_parameter_index", 1)))
+
     def onSave_selection(self):
+        """Save every selection, whatever shape it is.
+
+        This used to dump ``selection.__dict__`` straight to JSON, which raises
+        ``TypeError: Object of type ndarray is not JSON serializable`` as soon as
+        a Gaussian or a painted selection is in the list — after the file has
+        already been truncated. Going through a ChiSurf region collection lets
+        each shape serialise itself.
+        """
+        from ..core.region_selection import save_selections
+
         logging.log(0, "onSave_selection")
-        l = [s.__dict__ for s in self.get_selections()]
         fn = QtWidgets.QFileDialog.getSaveFileName(
             None,
             "Selection JSON",
             self.parent.working_path,
             'All files (*.selection.json)'
         )[0]
-        with open(fn, "w") as fp:
-            json.dump(l, fp=fp, indent=4)
+        if not fn:
+            return
+        save_selections(self.get_selections(), fn, axes=self._selection_axes())
         logging.log(0, f"Selection saved to file: {fn}")
 
     def onLoad_selection(self):
+        """Load selections of any shape, and files written by the old saver.
+
+        The previous reader took ``parameter_idx``/``lower``/``upper`` off every
+        entry, so an ellipse or a painted population was dropped — silently, and
+        the analysis afterwards ran over a different set of points than the one
+        the file described.
+        """
+        from ..core.region_selection import RegionDataSelection, load_selections
+
         fn = QtWidgets.QFileDialog.getOpenFileName(
             None,
             "Selection JSON",
             self.parent.working_path,
             'All files (*.selection.json)'
         )[0]
-        with open(fn, "r") as fp:
-            d = json.load(fp)
-            for selection in d:
+        if not fn:
+            return
+        for selection in load_selections(fn, axes=self._selection_axes()):
+            if isinstance(selection, RegionDataSelection):
+                self.add_region_selection(selection)
+            else:
                 self.addSelection(
-                    selection['parameter_idx'],
-                    selection['lower'],
-                    selection['upper'],
-                    selection['invert'],
-                    selection['enabled'],
-                    selection['name']
+                    selection.parameter_idx, selection.lower, selection.upper,
+                    selection.invert, selection.enabled, selection.name,
                 )
         logging.log(0, f"Selections loaded from file: {fn}")
 
@@ -1211,6 +1234,66 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         finally:
             self._block_selection_item_changed = False
 
+    def add_region_selection(self, selection):
+        """Add a ChiSurf-region gate as a row in the selection table.
+
+        The region itself is kept in ``self._selections`` and the row carries its
+        ``selection_id``, the same way a painted mask is handled: a table cell
+        cannot hold a polygon, so the row is a handle and the object is the
+        truth.
+
+        Parameters
+        ----------
+        selection : ndxplorer.core.region_selection.RegionDataSelection
+        """
+        table = self.tableWidget
+        row = table.rowCount()
+        try:
+            self._block_selection_item_changed = True
+            table.setRowCount(row + 1)
+            self._selections.append(selection)
+
+            meta = {
+                "type": "Region",
+                "name": str(selection.name),
+                "idx1": int(selection.idx1),
+                "idx2": int(selection.idx2),
+                "invert": bool(selection.invert),
+                "enabled": bool(selection.enabled),
+                "selection_id": str(selection.selection_id),
+            }
+            item0 = QtWidgets.QTableWidgetItem(str(selection.name))
+            item0.setFlags(
+                QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEditable
+            )
+            item0.setData(1, int(selection.idx1))
+            meta_json = json.dumps(meta)
+            item0.setData(QtCore.Qt.UserRole, meta_json)
+            item0.setData(32, meta_json)
+            table.setItem(row, 0, item0)
+
+            # The bounds columns describe the shape rather than a range: a
+            # polygon has no "lower" and "upper" to type into.
+            for col, text in ((1, selection.shape), (2, "shape")):
+                cell = QtWidgets.QTableWidgetItem(text)
+                cell.setFlags(QtCore.Qt.ItemIsEnabled)
+                cell.setTextAlignment(QtCore.Qt.AlignCenter)
+                table.setItem(row, col, cell)
+
+            cb_invert = QtWidgets.QCheckBox(table)
+            table.setCellWidget(row, 3, cb_invert)
+            cb_invert.setChecked(bool(selection.invert))
+            cb_enable = QtWidgets.QCheckBox(table)
+            table.setCellWidget(row, 4, cb_enable)
+            cb_enable.setChecked(bool(selection.enabled))
+            cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
+            cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
+
+            self.parent.request_plot_update(skip_clustering=True)
+            logging.info(f"Added region selection row: {selection.name} ({selection.shape})")
+        finally:
+            self._block_selection_item_changed = False
+
     def onAddSelection(self):
         idx, name = self.p3
         xsel = self.parent.selection_z.get_range()
@@ -1341,6 +1424,25 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
                     logging.error(f"Error recreating G2D selection '{name}': {e}")
                     # NEVER fall through to rectangular for suspected G2D
                     continue
+
+            elif sel_type == "Region":
+                sel_id = meta.get('selection_id') if meta else None
+                recovered = next(
+                    (
+                        x for x in self._selections
+                        if getattr(x, 'selection_id', None) == sel_id
+                        and hasattr(x, 'roi')
+                    ),
+                    None,
+                )
+                if recovered is not None:
+                    recovered.enabled = enabled
+                    recovered.invert = invert
+                    recovered.name = name
+                    selections.append(recovered)
+                else:
+                    logging.warning(f"Region selection '{name}' has no stored region")
+                continue
 
             elif sel_type == "Mask":
                 try:
