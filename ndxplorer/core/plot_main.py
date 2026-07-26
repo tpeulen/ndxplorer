@@ -50,26 +50,12 @@ from ..plotting import api as plotting_api
 from ..plotting import histograms as plot_histograms
 
 
-class StandaloneZmqClient:
-    """A lightweight ZMQ client for communicating with ChiSurf JSON-RPC server."""
-    
-    def __init__(self, cmd_port: int = 8765, host: str = "127.0.0.1"):
-        import zmq
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect(f"tcp://{host}:{cmd_port}")
-        self.request_id = 0
+from ..rpc import LinesService, PhasorService, RpcError, ZmqRpcClient
 
-    def call(self, method: str, params: Optional[dict] = None) -> dict:
-        self.request_id += 1
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params or {},
-            "id": self.request_id
-        }
-        self.socket.send_json(msg)
-        return self.socket.recv_json()
+#: Backwards-compatible alias — the ad-hoc client was folded into the first-class
+#: ``ndxplorer.rpc`` subsystem (PRD-56). Existing callers keep working.
+StandaloneZmqClient = ZmqRpcClient
+
 from ..plotting import scatter as plot_scatter
 from ..plotting import colormaps as plot_colormaps
 from ..analysis.umap_progress import UMAPProgressDialog
@@ -513,13 +499,20 @@ class NDXplorer(QtWidgets.QMainWindow):
             zmq_cmd_port: Optional[int] = None,
             processed_data_id: Optional[str] = None,
             experiment_id: Optional[str] = None,
+            chisurf_rpc=None,
     ) -> None:
         super(NDXplorer, self).__init__(parent=parent)
-        
+
         self.zmq_cmd_port = zmq_cmd_port
         self.processed_data_id = processed_data_id
         self.experiment_id = experiment_id
-        self.zmq_client = None
+        # ChiSurf RPC (PRD-56): either an injected client (any object exposing
+        # ``call(method, params)`` — e.g. ChiSurf's in-process client) or, for
+        # headless/external use, a ``ZmqRpcClient`` built from ``zmq_cmd_port``.
+        self.chisurf_rpc = chisurf_rpc
+        self.zmq_client = chisurf_rpc  # backwards-compat attribute name
+        self.phasor_service = None
+        self.lines_service = None
 
         # Set default window size
         self.resize(900, 630)
@@ -968,16 +961,35 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             logging.debug(f"Could not render pending histograms: {e}")
 
-        # Connect to ZMQ and load database product if requested
-        if self.zmq_cmd_port is not None:
-            self._connect_and_load_zmq()
-        
-    def _connect_and_load_zmq(self) -> None:
+        # Establish the ChiSurf RPC link (PRD-56): use an injected client if given,
+        # otherwise build a ZMQ client from ``zmq_cmd_port``. Then load a database
+        # product if one was requested.
+        self._init_chisurf_rpc()
+        if self.chisurf_rpc is not None and self.processed_data_id:
+            self._load_burst_product()
+
+    def _init_chisurf_rpc(self) -> None:
+        """Attach the phasor facade to an injected or port-derived RPC client."""
+        if self.chisurf_rpc is None and self.zmq_cmd_port is not None:
+            try:
+                logging.info("Connecting to ChiSurf RPC on port %s...", self.zmq_cmd_port)
+                self.chisurf_rpc = ZmqRpcClient(cmd_port=self.zmq_cmd_port)
+            except Exception as exc:
+                logging.error("Could not create ChiSurf RPC client: %s", exc)
+                self.chisurf_rpc = None
+        self.zmq_client = self.chisurf_rpc  # keep the legacy attribute in sync
+        if self.chisurf_rpc is not None:
+            self.phasor_service = PhasorService(self.chisurf_rpc)
+            self.lines_service = LinesService(self.chisurf_rpc)
+            try:
+                from ..ui.phasor_toolbar import install_phasor_toolbar
+
+                install_phasor_toolbar(self)
+            except Exception:
+                logging.warning("Could not install ChiSurf phasor toolbar", exc_info=True)
+
+    def _load_burst_product(self) -> None:
         try:
-            logging.info(f"Connecting to ChiSurf ZMQ server on port {self.zmq_cmd_port}...")
-            self.zmq_client = StandaloneZmqClient(cmd_port=self.zmq_cmd_port)
-            logging.info("Connected to ZMQ server.")
-            
             if self.processed_data_id:
                 logging.info(f"Loading database product {self.processed_data_id} via ZMQ RPC...")
                 res = self.zmq_client.call("ndxplorer.load_burst_product", {"processed_data_id": self.processed_data_id})
@@ -2021,6 +2033,17 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             return
 
+        # Write the cluster columns into the table now that we are back on the
+        # GUI thread. The worker deliberately does not do this: assigning to
+        # data_source touches widgets, and doing that from a QThread deadlocks.
+        if self._cluster_probabilities is not None:
+            try:
+                clustering_helpers.store_clustering_result(
+                    self, self._cluster_labels, self._cluster_probabilities
+                )
+            except Exception:
+                logging.error("Could not store the clustering result", exc_info=True)
+
         # Adjust the spinBoxCluster range based on the number of clusters
         if self._cluster_labels is not None:
             # Get the unique cluster labels
@@ -2035,12 +2058,17 @@ class NDXplorer(QtWidgets.QMainWindow):
         if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
             self.clustering_dialog.clustering_completed(success=True)
 
-        # Display a message to the user that clustering is complete
-        QtWidgets.QMessageBox.information(
-            self,
-            "Clustering Complete",
-            f"Clustering using {self.clustering_dialog._cluster_method.upper()} has been completed successfully."
-        )
+        # Report completion without a modal dialog. A QMessageBox here blocks on
+        # its own event loop until someone clicks it, so any headless or
+        # automated run -- a test, a batch script, an offscreen render -- hangs
+        # here forever with no indication why.
+        method = getattr(self.clustering_dialog, "_cluster_method", "clustering")
+        message = f"Clustering using {str(method).upper()} completed successfully."
+        logging.info(message)
+        try:
+            self.statusBar().showMessage(message, 8000)
+        except Exception:  # pragma: no cover - no status bar in some hosts
+            logging.debug("no status bar to report clustering completion on")
 
 
     def perform_clustering(self, method=None, worker=None, **kwargs) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:

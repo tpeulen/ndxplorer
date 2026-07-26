@@ -96,11 +96,11 @@ def add_umap_columns(
     logging.info("Adding UMAP columns using: %s", columns)
     if not ensure_umap_available(ndxplorer):
         return False
-    if ndxplorer._data_source is None or ndxplorer._data_source.empty:
+    if ndxplorer.data_source is None or ndxplorer.data_source.empty:
         logging.error("No data available for UMAP transformation.")
         return False
 
-    df = ndxplorer._data_source.data
+    df = ndxplorer.data_source.data
     selected_data = []
     for column in columns:
         if column in df.columns:
@@ -143,7 +143,7 @@ def add_umap_columns(
         df[column_name] = projection
         logging.info("Added column '%s'", column_name)
 
-    ndxplorer._data_source.data = df
+    ndxplorer.data_source.data = df
     ndxplorer.refresh_axis_comboboxes_preserving_selection()
     return True
 
@@ -159,7 +159,7 @@ def create_umap_plot(
         parent=ndxplorer,
         columns=columns,
         params=params,
-        data_source=ndxplorer._data_source,
+        data_source=ndxplorer.data_source,
         x_values=ndxplorer.x_values,
         y_values=ndxplorer.y_values,
         z_values=ndxplorer.z_values,

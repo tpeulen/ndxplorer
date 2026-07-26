@@ -197,6 +197,24 @@ def apply_clustering(ndxplorer: "NDXplorer") -> None:
     ndxplorer.clustering_worker.start()
 
 
+def store_clustering_result(ndxplorer: "NDXplorer", labels, probabilities) -> None:
+    """Write cluster columns into the table and refresh the axis combo boxes.
+
+    **GUI thread only.** It assigns to ``data_source`` -- whose setter reaches
+    into the widgets that report how much data is loaded -- and then updates the
+    plot control, neither of which is safe from a worker thread.
+    """
+    df = ndxplorer.data_source.data
+    df["Cluster Label"] = labels
+    df["Cluster Probability"] = probabilities
+    ndxplorer.data_source.data = df
+    try:
+        ndxplorer.plot_control.update(update_comboboxes=True, update_plots=False)
+    except Exception:  # pragma: no cover - headless use may have no plot control
+        logging.debug("could not refresh the plot control", exc_info=True)
+    logging.info("Cluster columns added and axis combo boxes refreshed")
+
+
 def cancel_clustering(ndxplorer: "NDXplorer") -> None:
     """Request the worker to stop and update dialog state."""
     worker = getattr(ndxplorer, "clustering_worker", None)
@@ -218,9 +236,9 @@ def perform_clustering(
     Execute clustering via ClusteringManager and update ndxplorer state.
     """
     if not hasattr(ndxplorer, "_clustering_manager"):
-        ndxplorer._clustering_manager = ClusteringManager(ndxplorer._data_source)
+        ndxplorer._clustering_manager = ClusteringManager(ndxplorer.data_source)
     else:
-        ndxplorer._clustering_manager._data_source = ndxplorer._data_source
+        ndxplorer._clustering_manager._data_source = ndxplorer.data_source
 
     if method is None:
         method = ndxplorer.clustering_dialog._cluster_method
@@ -255,19 +273,15 @@ def perform_clustering(
         full_labels, full_probabilities = result
         ndxplorer._cluster_labels = full_labels
         ndxplorer._cluster_probabilities = full_probabilities
-        logging.info("Stored cluster labels and probabilities to prevent infinite loop")
-
-        df = ndxplorer._data_source.data
-        df["Cluster Label"] = full_labels
-        df["Cluster Probability"] = full_probabilities
-        ndxplorer._data_source.data = df
-
-        ndxplorer.plot_control.update(update_comboboxes=True, update_plots=False)
-        logging.info("Refreshed axis selection comboboxes to show cluster columns")
-
         ndxplorer._cluster_data_shape = (
             ndxplorer._clustering_manager._cluster_data_shape
         )
+        # Writing the columns back and refreshing the combo boxes touches the
+        # data source and Qt widgets, so it must happen on the GUI thread. When
+        # a worker ran the fit, ``on_clustering_done`` does it after the queued
+        # signal lands; doing it here would be a cross-thread widget call.
+        if worker is None:
+            store_clustering_result(ndxplorer, full_labels, full_probabilities)
         logging.info("Stored cluster data shape: %s", ndxplorer._cluster_data_shape)
 
     return result
