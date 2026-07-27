@@ -85,15 +85,38 @@ def test_hdbscan_is_reachable_without_the_standalone_package():
     assert hasattr(backend, "HDBSCAN")
 
 
-def test_the_hdbscan_shim_ignores_keywords_sklearn_does_not_take():
-    """``prediction_data`` is a standalone-package keyword and must not leak."""
+def test_whichever_hdbscan_is_installed_accepts_the_call_the_code_makes():
+    """The call site passes ``prediction_data``; both backends must take it.
+
+    The standalone package has that keyword natively; scikit-learn does not and
+    would raise, so the shim drops it. Which one is in use depends on the
+    environment, so this exercises whatever ``get_hdbscan`` returns.
+    """
     backend = get_hdbscan()
-    # Must not raise: the shim drops the keyword rather than passing it on.
     clusterer = backend.HDBSCAN(min_samples=5, min_cluster_size=5, prediction_data=True)
     data, _ = three_blobs(n=40)
     clusterer.fit(data)
     assert hasattr(clusterer, "labels_")
     assert hasattr(clusterer, "probabilities_"), "the write-back path reads probabilities_"
+
+
+def test_the_sklearn_shim_is_exercised_even_when_the_real_package_is_installed():
+    """Pin the fallback directly, so installing ``hdbscan`` does not hide it.
+
+    Once the standalone package is present ``get_hdbscan`` prefers it and the
+    shim stops being reached — which would leave the path that every
+    scikit-learn-only environment depends on quietly untested.
+    """
+    from sklearn.cluster import HDBSCAN as SkHdbscan
+
+    from ndxplorer.utils.lazy_imports import _SklearnHdbscanShim
+
+    shim = _SklearnHdbscanShim(SkHdbscan)
+    clusterer = shim.HDBSCAN(min_samples=5, min_cluster_size=20, prediction_data=True)
+    data, truth = three_blobs()
+    clusterer.fit(data)
+    assert hasattr(clusterer, "probabilities_")
+    assert purity(clusterer.labels_, truth) > 0.95
 
 
 def test_kmeans_and_pca_are_reachable():
