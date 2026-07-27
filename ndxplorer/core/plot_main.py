@@ -2372,6 +2372,49 @@ class NDXplorer(QtWidgets.QMainWindow):
             cluster_labels=cluster_labels
         )
 
+    def _wants_cluster_colors(self) -> bool:
+        """Whether the 2-D map should be coloured by cluster rather than density."""
+        box = getattr(getattr(self, "plot_control", None), "checkBoxColorClusters", None)
+        if box is None or not box.isChecked():
+            return False
+        return getattr(self, "_cluster_labels", None) is not None
+
+    def _cluster_color_image(self, x_edges, y_edges):
+        """Return the cluster-coloured RGB image for the current axes, or None.
+
+        Returns ``None`` rather than raising whenever the overlay cannot be
+        built -- no labels, a length mismatch after a data change, an empty
+        selection -- so a stale or impossible overlay degrades to the ordinary
+        density map instead of taking the plot down.
+        """
+        from ..plotting.cluster_overlay import cluster_rgb_image
+
+        labels = getattr(self, "_cluster_labels", None)
+        if labels is None:
+            return None
+        try:
+            x_values = np.asarray(self.x_values).ravel()
+            y_values = np.asarray(self.y_values).ravel()
+        except Exception:
+            logging.debug("cluster colouring: axis values unavailable", exc_info=True)
+            return None
+        labels = np.asarray(labels).ravel()
+        if labels.size != x_values.size:
+            # The labels belong to a different dataset than the one on screen.
+            logging.debug(
+                "cluster colouring skipped: %d labels for %d points",
+                labels.size, x_values.size,
+            )
+            return None
+        try:
+            return cluster_rgb_image(
+                x_values, y_values, labels, x_edges, y_edges,
+                log_counts=self.checkBoxLogCounts.isChecked(),
+            )
+        except Exception:
+            logging.debug("cluster colouring failed", exc_info=True)
+            return None
+
     def update_2d_plot(self):
         """
         Update the 2D histogram plot using clean histogram objects.
@@ -2436,6 +2479,15 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # H is already in (ny, nx) shape, no transpose needed for display
         img = np.ascontiguousarray(data)
+
+        # Cluster colouring replaces the density map with an RGB image in which
+        # every cluster carries its own colour. It shares the same bin edges, so
+        # the two views are directly comparable, and it falls back silently to
+        # the density map whenever there is nothing to colour by.
+        if self._wants_cluster_colors():
+            rgb = self._cluster_color_image(x_edges, y_edges)
+            if rgb is not None:
+                img = rgb
         
         logging.debug(f"[DISPLAY] Final image data before set_data():")
         logging.debug(f"[DISPLAY]   Original H shape: {H.shape}, data shape: {data.shape}, img shape: {img.shape}")

@@ -495,6 +495,39 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
         # Connect spinBoxCluster to update plots when value changes
         self.spinBoxCluster.valueChanged.connect(self.onClusterSelectionChanged)
+
+        # "Colour by cluster": draw every cluster at once in its own colour,
+        # rather than isolating one at a time with the spinner beside it. The
+        # two answer different questions -- where the populations sit relative
+        # to one another, versus what one of them looks like alone -- so both
+        # stay available. Added in code rather than the .ui so the layout the
+        # spinner already lives in is reused.
+        self.checkBoxColorClusters = QtWidgets.QCheckBox("colour", self)
+        self.checkBoxColorClusters.setToolTip(
+            "Colour the 2-D map by cluster instead of by density.\n"
+            "Each bin takes the colour of the cluster contributing most points, "
+            "with brightness still carrying the count."
+        )
+        self.checkBoxColorClusters.setChecked(False)
+        try:
+            # Find the layout that actually holds the spinner. Taking the parent
+            # widget's top-level layout is not enough: the spinner sits in a
+            # nested grid, so indexOf() on the outer layout returns -1 and the
+            # checkbox lands in an unrelated corner of the panel.
+            placed = False
+            for layout in self.findChildren(QtWidgets.QGridLayout):
+                index = layout.indexOf(self.spinBoxCluster)
+                if index < 0:
+                    continue
+                row, column, _, _ = layout.getItemPosition(index)
+                layout.addWidget(self.checkBoxColorClusters, row, column + 1)
+                placed = True
+                break
+            if not placed:
+                logging.debug("cluster colour toggle: spinner layout not found")
+        except Exception:
+            logging.debug("could not place the cluster colour toggle", exc_info=True)
+        self.checkBoxColorClusters.toggled.connect(self.onClusterColorsToggled)
         
         # Connect bin count spinboxes to clear mask when bins change
         self.spinBoxBin2DX.valueChanged.connect(self.on_bin_count_changed)
@@ -603,6 +636,33 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     # Keep the old method name for backward compatibility
     onUpdate_z_axis_settings = update_z_axis_settings
+
+    def onClusterColorsToggled(self, checked: bool) -> None:
+        """Redraw the 2-D map when the cluster-colour toggle changes.
+
+        This is a *display* change: the histogram behind the image is identical
+        either way. Going through the ordinary plot-update path would therefore
+        do nothing, because that path skips the redraw when nothing it caches
+        has changed -- the toggle would appear dead until something else forced
+        a repaint. Repainting the image directly is both correct and cheaper
+        than invalidating the histogram to provoke it.
+        """
+        logging.debug("Cluster colouring toggled: %s", checked)
+        try:
+            if self.parent._histogram.get("2d") is None:
+                # Nothing to recolour yet — a run of clustering invalidates the
+                # histogram, so the toggle can land while it is being recomputed.
+                # The ordinary update path will draw it, and will pick up the
+                # new setting when it does.
+                self.parent.request_plot_update(skip_clustering=True)
+            else:
+                # A histogram exists and does not change with this setting, so
+                # repaint the image directly. Going through the update path
+                # would skip the redraw — nothing it caches has changed — and
+                # the toggle would look dead.
+                self.parent.update_2d_plot()
+        except Exception:
+            logging.debug("could not redraw the 2-D plot", exc_info=True)
 
     def onClusterSelectionChanged(self, value):
         """

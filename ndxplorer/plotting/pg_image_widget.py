@@ -211,6 +211,7 @@ class PGImageWidget(QtWidgets.QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._data: Optional[np.ndarray] = None
+        self._is_rgb = False
         self._colormap_name = "viridis"
         self._vmin = 0.0
         self._vmax = 1.0
@@ -233,12 +234,28 @@ class PGImageWidget(QtWidgets.QWidget):
         layout.addWidget(self.plot_widget)
 
     def set_data(self, data: np.ndarray) -> None:
-        """Set the 2D image data."""
+        """Set the image data: a 2-D scalar map, or an ``(ny, nx, 3|4)`` RGB(A).
+
+        RGB is how the cluster overlay is drawn — every cluster in its own
+        colour at once. Such an image carries its colours directly, so the
+        colormap and the contrast levels must not be applied to it: doing so
+        would remap the red channel through viridis and produce something that
+        is neither the clusters nor the density.
+        """
         if data is None or data.size == 0:
             data = np.zeros((1, 1))
         self._data = np.ascontiguousarray(data)
+        self._is_rgb = self._data.ndim == 3 and self._data.shape[-1] in (3, 4)
         self.image_item.setImage(self._data, autoLevels=False)
-        self.image_item.setLevels((self._vmin, self._vmax))
+        if self._is_rgb:
+            # RGB carries absolute channel values. The contrast levels left over
+            # from the density view (e.g. 1..33 counts) would clip every channel
+            # to full scale and render every cluster white, so the levels must be
+            # reset to the channel range rather than merely left alone.
+            top = 255.0 if self._data.dtype == np.uint8 else 1.0
+            self.image_item.setLevels((0.0, top))
+        else:
+            self.image_item.setLevels((self._vmin, self._vmax))
         self.set_axis_scale("xBottom", 0, self._data.shape[1] - 1)
         self.set_axis_scale("yLeft", 0, self._data.shape[0] - 1)
 
@@ -267,6 +284,10 @@ class PGImageWidget(QtWidgets.QWidget):
             self._vmin = float(vmin)
         if vmax is not None:
             self._vmax = float(vmax)
+        if getattr(self, "_is_rgb", False):
+            # An RGB image already carries its colours; applying a lookup table
+            # would remap them into the colormap and destroy the cluster identity.
+            return
         cmap = pg.colormap.get(colormap_name)
         self.image_item.setLookupTable(cmap.getLookupTable(0.0, 1.0, 256))
         self.image_item.setLevels((self._vmin, self._vmax))

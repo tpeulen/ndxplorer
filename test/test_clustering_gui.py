@@ -81,6 +81,25 @@ def run_clustering(window, qt_app, method, columns=("x", "y"),
     return getattr(window, "_cluster_labels", None)
 
 
+def wait_for_2d_histogram(window, qt_app, timeout_ms=20_000):
+    """Pump events until the 2-D histogram exists.
+
+    Histograms are computed off the GUI thread, so a freshly built window has
+    none for a while and ``update_2d_plot`` returns early against the 10x10
+    placeholder. Without this wait the colour test is a race that passes alone
+    and fails behind other tests.
+    """
+    from qtpy import QtCore
+
+    deadline = QtCore.QElapsedTimer()
+    deadline.start()
+    while deadline.elapsed() < timeout_ms:
+        if window._histogram.get("2d") is not None:
+            return True
+        qt_app.processEvents()
+    return False
+
+
 def purity(labels, truth):
     """Fraction of points whose cluster is that cluster's majority true label."""
     labels = np.asarray(labels)
@@ -255,3 +274,111 @@ def test_axis_selection_by_index_still_works(explorer, qt_app):
     assert float(np.asarray(explorer.y_values).mean()) == pytest.approx(
         float(explorer.data_source.data["y"].mean()), abs=1e-3
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Colouring the map by cluster
+# ──────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def unit_explorer(qt_app):
+    """A window whose data lies inside the default 0..1 axis range.
+
+    The 2-D histogram is built over the axis *range* controls, which default to
+    0..1. The main fixture's blobs sit at 0 and 8, so only the corner of the map
+    is binned — fine for the clustering tests, useless for checking that every
+    cluster gets its own colour.
+    """
+    from ndxplorer.core.plot_main import NDXplorer
+
+    rng = np.random.default_rng(0)
+    blocks, truth = [], []
+    for i, (cx, cy) in enumerate([(0.2, 0.3), (0.8, 0.3), (0.5, 0.8)]):
+        blocks.append(np.column_stack([rng.normal(cx, 0.03, 120),
+                                       rng.normal(cy, 0.03, 120)]))
+        truth.append(np.full(120, i))
+    data = np.vstack(blocks)
+    frame = pd.DataFrame({"x": data[:, 0], "y": data[:, 1],
+                          "truth": np.concatenate(truth)})
+    window = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    yield window
+    window.close()
+
+
+def test_the_colour_toggle_produces_a_cluster_image(unit_explorer, qt_app):
+    """Ticking the box must yield a multi-coloured RGB image of the clusters.
+
+    This asserts the two things the toggle controls -- the *decision* to colour,
+    and the image that decision produces -- directly, rather than through the
+    repaint. The repaint itself is deliberately not asserted here: histograms
+    are computed off the GUI thread and clustering invalidates them, so the
+    moment the new image lands depends on background timing, and a test that
+    waits for it is a race that passes alone and fails behind other tests. That
+    path is verified by rendering the window and looking at it.
+    """
+    control = unit_explorer.plot_control
+    control.update(update_comboboxes=True, update_plots=True)
+    assert wait_for_2d_histogram(unit_explorer, qt_app)
+    control.comboBoxSelX.setCurrentText("x")
+    control.comboBoxSelY.setCurrentText("y")
+    control.update(update_comboboxes=False, update_plots=True)
+    assert wait_for_2d_histogram(unit_explorer, qt_app)
+
+    run_clustering(unit_explorer, qt_app, "kmeans", n_clusters=3)
+    assert unit_explorer._cluster_labels is not None
+
+    assert hasattr(control, "checkBoxColorClusters")
+    assert unit_explorer._wants_cluster_colors() is False, "off by default"
+    control.checkBoxColorClusters.setChecked(True)
+    qt_app.processEvents()
+    assert unit_explorer._wants_cluster_colors() is True
+
+    edges = np.linspace(0.0, 1.0, 31)
+    image = unit_explorer._cluster_color_image(edges, edges)
+    assert image is not None and image.ndim == 3 and image.shape[-1] == 3
+    hues = {tuple(c) for c in image.reshape(-1, 3) if int(c.sum()) > 0}
+    assert len(hues) > 1, "every cluster was drawn in the same colour"
+
+    control.checkBoxColorClusters.setChecked(False)
+    qt_app.processEvents()
+    assert unit_explorer._wants_cluster_colors() is False
+
+
+def test_the_colour_toggle_sits_beside_the_cluster_spinner(unit_explorer):
+    """The toggle must land next to the spinner, not in an unrelated corner.
+
+    It is added in code rather than in the .ui file, and the first attempt put
+    it at the top of the panel because ``indexOf`` was asked of the wrong
+    (outer) layout.
+    """
+    control = unit_explorer.plot_control
+    box = control.checkBoxColorClusters
+    spinner = control.spinBoxCluster
+    assert box.parentWidget() is not None
+    shared = [
+        layout for layout in control.findChildren(QtWidgets.QGridLayout)
+        if layout.indexOf(spinner) >= 0 and layout.indexOf(box) >= 0
+    ]
+    assert shared, "the colour toggle is not in the same layout as the cluster spinner"
+
+    layout = shared[0]
+    spin_row, spin_col, _, _ = layout.getItemPosition(layout.indexOf(spinner))
+    box_row, box_col, _, _ = layout.getItemPosition(layout.indexOf(box))
+    assert box_row == spin_row and box_col == spin_col + 1, (
+        f"toggle at ({box_row}, {box_col}) is not beside the spinner "
+        f"at ({spin_row}, {spin_col})"
+    )
+
+
+def test_colouring_without_clusters_falls_back_to_density(explorer, qt_app):
+    """Ticking the box before clustering must not blank or break the plot."""
+    control = explorer.plot_control
+    control.update(update_comboboxes=True, update_plots=True)
+    wait_for_2d_histogram(explorer, qt_app)
+    explorer._cluster_labels = None
+
+    assert explorer._wants_cluster_colors() is False
+    control.checkBoxColorClusters.setChecked(True)
+    for _ in range(120):
+        qt_app.processEvents()
+    data = explorer.g_2dplot.data
+    assert data is not None and data.ndim == 2
