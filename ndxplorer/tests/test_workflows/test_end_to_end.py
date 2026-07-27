@@ -31,6 +31,8 @@ def test_export_round_trip_with_synthetic_payload(tmp_path):
     save_selection(payload, hdf5_path, format="hdf5")
 
     csv_df = pd.read_csv(csv_path)
+    # No key: reading an export back with the plain one-liner is the point of
+    # writing the table under a flat key.
     hdf5_df = pd.read_hdf(hdf5_path)
 
     expected_rows = payload.values.shape[1]
@@ -50,7 +52,9 @@ def test_export_round_trip_with_synthetic_payload(tmp_path):
 def test_fixture_bundle_produces_expected_artifacts(tmp_path):
     """Workflow: dataset fixture writer generates all artifact types."""
     summary = write_fixture_bundle(tmp_path, n_points=5_000, seed=2718)
-    paths = {key: Path(value) for key, value in summary.items() if value}
+    # write_fixture_bundle returns a typed FixtureSummary; as_dict() is how it
+    # presents itself as a mapping of artifact name -> path.
+    paths = {key: Path(value) for key, value in summary.as_dict().items() if value}
 
     required_keys = {"csv", "hdf5", "npz", "metadata"}
     assert required_keys.issubset(paths.keys())

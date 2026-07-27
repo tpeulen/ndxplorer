@@ -23,7 +23,7 @@ def export_hdf5(
     *,
     compression: str = "zlib",
     compression_level: int = 4,
-    key: str = "ndxplorer/table",
+    key: str = "ndxplorer_table",
 ) -> None:
     """
     Persist selection data + metadata in an HDF5 container using pandas only.
@@ -39,7 +39,11 @@ def export_hdf5(
     compression_level:
         Compression level (0-9) where supported by the underlying writer.
     key:
-        HDF5 dataset path within the store.
+        HDF5 dataset path within the store. Deliberately flat: a nested key such
+        as ``ndxplorer/table`` makes pandas register the parent group as a second
+        key, so ``pd.read_hdf(path)`` -- the obvious way to read the file back --
+        fails with "key must be provided when HDF5 file contains multiple
+        datasets" on a store that holds exactly one table.
     """
 
     if not payload.has_tabular_data():

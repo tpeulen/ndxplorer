@@ -11,6 +11,14 @@ import numpy as np
 
 from ..logging_config import logging
 
+try:
+    from scipy.stats import gaussian_kde
+except ImportError:  # pragma: no cover - scipy is a normal dependency
+    # Imported at module level rather than inside the function so that the
+    # density path can be exercised without scipy driving the outcome, and so
+    # the import cost is paid once instead of on every call.
+    gaussian_kde = None
+
 if False:  # pragma: no cover - type checking hints without runtime import
     from ..core.plot_main import NDXplorer
 
@@ -111,10 +119,14 @@ def create_weighted_scatter(
     if len(x_data) != len(y_data) or len(x_data) != len(weights):
         raise ValueError("All input arrays must have the same length")
     
-    # Normalize weights for color mapping
-    norm_weights = (weights - np.min(weights)) / (np.max(weights) - np.min(weights)) if np.max(weights) > np.min(weights) else np.zeros_like(weights)
-    
-    # Scale sizes based on weights
+    # Scale sizes by the weight as a fraction of the largest weight — the same
+    # normalisation ``create_scatter_plot`` applies to alpha. Min-max scaling was
+    # used here instead, which made the *smallest* weight render at the base size
+    # whatever its value: weights of [100, 101] drew identically to [1, 100], so
+    # a size that is supposed to encode a quantity encoded only its rank.
+    largest = np.max(weights)
+    norm_weights = weights / largest if largest > 0 else np.zeros_like(weights, dtype=float)
+
     sizes = 10 + norm_weights * size_scale
     
     return create_scatter_plot(
@@ -225,12 +237,10 @@ def create_density_scatter(
     Returns:
         Dictionary containing density scatter data
     """
-    try:
-        from scipy.stats import gaussian_kde
-    except ImportError:
+    if gaussian_kde is None:
         logging.warning("scipy not available, falling back to regular scatter")
         return create_scatter_plot(ndxplorer, x_data, y_data)
-    
+
     # Compute point density
     xy = np.vstack([x_data, y_data])
     
@@ -267,13 +277,21 @@ def export_scatter_data(
         String data if filename is None, otherwise None
     """
     import pandas as pd
-    
-    # Create DataFrame
+
+    # Validate the format first: refusing an unsupported one must not depend on
+    # the payload being complete. Building the frame first meant a bad format
+    # plus a partial dict raised KeyError instead of the documented ValueError.
+    if format not in ("csv", "json", "numpy"):
+        raise ValueError(f"Unsupported format: {format}")
+
+    # Create DataFrame. ``colors`` and ``sizes`` are rendering quantities this
+    # module computes as floats; casting them keeps the exported schema stable
+    # when a caller happens to pass integers.
     df_data = {
         "x": plot_data["x"],
         "y": plot_data["y"],
-        "colors": plot_data["colors"],
-        "sizes": plot_data["sizes"]
+        "colors": np.asarray(plot_data["colors"], dtype=float),
+        "sizes": np.asarray(plot_data["sizes"], dtype=float),
     }
     
     if "alpha_array" in plot_data:
@@ -290,8 +308,6 @@ def export_scatter_data(
         if filename:
             np.savez(filename, **output)
             return None
-    else:
-        raise ValueError(f"Unsupported format: {format}")
     
     if filename:
         with open(filename, 'w') as f:

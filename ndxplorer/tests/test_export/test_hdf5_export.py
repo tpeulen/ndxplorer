@@ -34,7 +34,7 @@ class TestHDF5Export:
             name="sample",
         )
 
-    def _read_back(self, path: Path, key: str = "ndxplorer/table") -> pd.DataFrame:
+    def _read_back(self, path: Path, key: str = "ndxplorer_table") -> pd.DataFrame:
         return pd.read_hdf(path, key=key)
 
     def test_basic_export(self, payload: SelectionExportPayload) -> None:
@@ -52,7 +52,7 @@ class TestHDF5Export:
             export_hdf5(payload, path)
 
             with pd.HDFStore(path, "r") as store:
-                storer = store.get_storer("ndxplorer/table")
+                storer = store.get_storer("ndxplorer_table")
                 assert storer.attrs.metadata_json
                 assert "test" in storer.attrs.metadata_json
 
@@ -65,7 +65,7 @@ class TestHDF5Export:
             export_hdf5(payload, path)
 
             with pd.HDFStore(path, "r") as store:
-                attrs = store.get_storer("ndxplorer/table").attrs
+                attrs = store.get_storer("ndxplorer_table").attrs
                 assert tuple(attrs.values_shape) == values.shape
 
     def test_compression_options(self, payload: SelectionExportPayload) -> None:
@@ -91,3 +91,34 @@ class TestHDF5Export:
             path = Path(tmpdir) / "broken.h5"
             with pytest.raises(HDFBackendUnavailable):
                 export_hdf5(payload, path)
+
+
+def test_export_is_readable_without_naming_a_key(tmp_path):
+    """``pd.read_hdf(path)`` must open our own export.
+
+    The table used to be written under the nested key ``ndxplorer/table``, which
+    makes pandas register the parent group as a *second* key. Reading the file
+    back the obvious way then failed with "key must be provided when HDF5 file
+    contains multiple datasets" — on a store holding exactly one table.
+    """
+    import pandas as pd
+
+    from ndxplorer.export.api import save_selection
+    from ndxplorer.tests.fixtures.dataset_fixtures import (
+        create_synthetic_selection_payload,
+    )
+
+    payload = create_synthetic_selection_payload(
+        n_points=200, seed=11, include_figure=False
+    )
+    path = tmp_path / "roundtrip.h5"
+    save_selection(payload, path, format="hdf5")
+
+    with pd.HDFStore(path) as store:
+        assert len(store.keys()) == 1, (
+            f"one table should register one key, got {store.keys()}"
+        )
+
+    frame = pd.read_hdf(path)  # no key, no error
+    assert list(frame.columns) == list(payload.columns)
+    assert len(frame) == payload.values.shape[1]
