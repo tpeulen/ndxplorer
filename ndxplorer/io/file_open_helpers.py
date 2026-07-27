@@ -42,8 +42,8 @@ def _open_with_merge_dialog(
     logging.debug(f"_open_with_merge_dialog: {file_type}")
     if (
         filenames is None
-        and getattr(ndxplorer, "_data_source", None) is not None
-        and not ndxplorer._data_source.empty
+        and getattr(ndxplorer, "data_source", None) is not None
+        and not ndxplorer.data_source.empty
     ):
         result = show_merge_dialog(ndxplorer, dialog_title)
         if result is None:
@@ -77,7 +77,7 @@ def open_mfd_hdf5(
 def open_smfret(ndxplorer, merge_mode: str = "columns"):
     logging.debug("open_smFRET")
     append = False
-    if getattr(ndxplorer, "_data_source", None) is not None and not ndxplorer._data_source.empty:
+    if getattr(ndxplorer, "data_source", None) is not None and not ndxplorer.data_source.empty:
         result = show_merge_dialog(ndxplorer, "Open SmFRET Files")
         if result is None:
             return

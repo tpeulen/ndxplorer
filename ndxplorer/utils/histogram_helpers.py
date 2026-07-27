@@ -153,7 +153,14 @@ def extract_histogram_params(ndxplorer: "NDXplorer") -> HistogramParams:
         else ""
     )
     z_enabled = hasattr(ndxplorer, "groupBox_3") and ndxplorer.groupBox_3.isChecked()
-    mask_id = getattr(ndxplorer, "_cached_values_mask_id", None)
+    # Identity of the cached selection mask. This is the *only* selection-aware
+    # component of the key: ``data_hash`` below tracks the data, not which points
+    # are gated in, so without this a selection change would leave every
+    # histogram stale. The manager hands back the same object until the data
+    # version or the selection state changes, so identity is exactly the token
+    # wanted -- and because the manager keeps the object alive, the id cannot be
+    # recycled under us.
+    mask_id = id(ndxplorer.value_mask)
     
     # Get density settings
     normed_x = getattr(ndxplorer.plot_control, 'normed_hist_x', False)

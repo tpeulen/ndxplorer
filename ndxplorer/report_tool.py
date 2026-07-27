@@ -1419,9 +1419,9 @@ class ReportWizard(QtWidgets.QDialog):
             ndx.data_source = ds
         except Exception:
             # Fallback (should not be needed): direct assign and manual compute
-            ndx._data_source = ds
+            ndx.data_source = ds
             try:
-                ndx._data_source.compute_columns(constants=ndx.constants, equations=ndx.equations)
+                ndx.data_source.compute_columns(constants=ndx.constants, equations=ndx.equations)
             except Exception:
                 pass
         # Clear any prior selections and refresh plot controls for new columns

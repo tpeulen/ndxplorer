@@ -11,15 +11,12 @@ caches that self-guard on ``DataSource.data_version``:
   filtered slice.
 """
 
-import types
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from ndxplorer.core.data_source import DataSource
 from ndxplorer.core.data.data_manager import DataManager
-from ndxplorer.utils.value_cache import get_value_mask
 
 
 def _make_source(scale: float = 1.0) -> DataSource:
@@ -83,41 +80,30 @@ def test_axis_values_cache_respects_version():
     np.testing.assert_allclose(np.sort(a1), np.sort(np.arange(10) * 5.0))
 
 
-def _stub_ndxplorer(ds: DataSource):
-    """Minimal duck-typed NDXplorer carrying just what get_value_mask reads."""
-    plot_control = types.SimpleNamespace(
-        get_selections=lambda: [],
-        p1=(0, "a"),
-        p2=(1, "b"),
-        p3=(0, "a"),
-        selected_cluster=-1,
-        _frame_param=None,
-    )
-    return types.SimpleNamespace(
-        plot_control=plot_control,
-        data_source=ds,
-        _mask_inf=False,
-        _mask_nan=False,
-        _dynamic_selection=False,
-        _use_clustering=False,
-    )
-
-
 def test_value_mask_cache_hits_and_versions():
-    ds = _make_source()
-    ndx = _stub_ndxplorer(ds)
+    """The mask must be stable when nothing changed and refresh when data does.
 
-    m0 = get_value_mask(ndx)
-    m0_again = get_value_mask(ndx)
+    Previously exercised through ``utils.value_cache``, a second implementation
+    that lived beside the data manager's own. The two did not merely risk
+    drifting -- they had already diverged: one applied selections, clusters,
+    frames and the z-range, the other silently ignored all four. There is one
+    implementation now, and this asserts the caching behaviour of it.
+    """
+    dm = DataManager()
+    ds = _make_source()
+    dm.data_source = ds
+
+    m0 = dm.get_value_mask()
+    m0_again = dm.get_value_mask()
     # Nothing changed → same cached mask object (this stability is what lets the
     # histogram layer skip recompute on view-only updates).
     assert m0_again is m0
 
     # A data change bumps data_version; the mask must be recomputed even though
-    # no explicit invalidate_values_cache() was called and the selection/view
-    # key is byte-for-byte identical.
+    # no explicit invalidation was called and the selection/view key is
+    # byte-for-byte identical.
     ds.data = pd.DataFrame({"a": np.ones(10), "b": np.zeros(10)})
-    m1 = get_value_mask(ndx)
+    m1 = dm.get_value_mask()
     assert m1 is not m0
 
 

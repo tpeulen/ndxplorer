@@ -266,20 +266,24 @@ def estimate_memory_usage(ndxplorer: "NDXplorer") -> dict:
     usage = {}
     
     # Data source
-    if hasattr(ndxplorer, '_data_source') and ndxplorer._data_source is not None:
-        if hasattr(ndxplorer._data_source, 'values'):
+    source = getattr(ndxplorer, 'data_source', None)
+    if source is not None:
+        if hasattr(source, 'values'):
             try:
-                values = ndxplorer._data_source.values
+                values = source.values
                 usage['data_values_mb'] = values.nbytes / (1024 * 1024)
             except Exception:
                 pass
     
-    # Cached values
-    if hasattr(ndxplorer, '_cached_values') and ndxplorer._cached_values is not None:
-        if isinstance(ndxplorer._cached_values, np.ndarray):
-            usage['cached_values_mb'] = ndxplorer._cached_values.nbytes / (1024 * 1024)
-        elif _HAVE_BITFIELD and isinstance(ndxplorer._cached_values, BitfieldMask):
-            usage['cached_values_mb'] = ndxplorer._cached_values.nbytes / (1024 * 1024)
+    # Cached values, now owned by the data manager rather than kept in a second
+    # set of attributes on the window.
+    manager = getattr(ndxplorer, 'data_manager', None)
+    cached = manager.cache.get_cache_value('filtered_values') if manager is not None else None
+    if cached is not None:
+        if isinstance(cached, np.ndarray):
+            usage['cached_values_mb'] = cached.nbytes / (1024 * 1024)
+        elif _HAVE_BITFIELD and isinstance(cached, BitfieldMask):
+            usage['cached_values_mb'] = cached.nbytes / (1024 * 1024)
     
     # Cache manager
     cache_stats = get_cache_stats()

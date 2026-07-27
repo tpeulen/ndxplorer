@@ -13,7 +13,6 @@ from .ui_helpers import *
 from .working_path_helpers import *
 from .lazy_imports import *
 from .performance_optimizations import *
-from .value_cache import *
 from .mouse_event_filter import MouseEventFilter
 from .. import settings_helpers as settings_helpers
 

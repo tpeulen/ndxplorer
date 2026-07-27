@@ -78,7 +78,7 @@ from ..plotting.plot_helpers import (
     setup_2d_histogram_plot,
     setup_plot_placeholders,
 )
-from ..utils.value_cache import get_value_mask, get_filtered_values
+from ..core.data.mask_state import MaskState
 from ..utils.histogram_export import (
     copy_1d_histograms,
     copy_2d_hist_csv,
@@ -105,54 +105,29 @@ class NDXplorer(QtWidgets.QMainWindow):
         changes that would invalidate the mask or the data.
         """
         logging.debug("Invalidating values cache")
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            self.data_manager.cache.invalidate_all()
-        
-        # Backward compatibility: keep old cache variables
-        self._cached_values = None
-        self._cached_values_selections = None
-        self._cached_values_p13 = None
-        self._cached_values_mask_inf = None
-        self._cached_values_mask_nan = None
-        self._cached_filtered_values = None
-        self._cached_values_mask_id = None
-        self._cached_x_values = None
-        self._cached_x_param_idx = None
-        self._cached_y_values = None
-        self._cached_y_param_idx = None
-        self._cached_z_values = None
-        self._cached_z_param_idx = None
+        self.data_manager.cache.invalidate_all()
         self._cached_hist_params = None
 
     @property
     def data_source(self) -> DataSource:
-        logging.debug("Getting data_source")
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            return self.data_manager.data_source
-        # Fallback for initialization
-        if self._data_source.empty and self._default_data_source is not None:
-            return self._default_data_source
-        return self._data_source
+        """The data currently loaded, owned by the data manager.
+
+        There is exactly one of these. An earlier refactor left a second,
+        private ``_data_source`` field behind as a "backward compatible" copy;
+        because the manager took over, that copy stayed permanently empty while
+        several call sites still read and wrote it. Clustering and UMAP saw zero
+        rows, and appending a file wrote the new data into the dead copy and
+        silently changed nothing. The field is gone -- this property is the only
+        way in or out.
+        """
+        return self.data_manager.data_source
 
     @data_source.setter
     def data_source(self, v: DataSource) -> None:
         logging.info(f"Setting data_source with {v.values.shape[1] if not v.empty else 0} data points")
-        
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            self.data_manager.constants = self.constants
-            self.data_manager.equations = self.equations
-            self.data_manager.data_source = v
-        else:
-            # Fallback during initialization
-            self._data_source = v
-            self.invalidate_values_cache()
-            self._data_source.compute_columns(
-                constants=self.constants,
-                equations=self.equations
-            )
+        self.data_manager.constants = self.constants
+        self.data_manager.equations = self.equations
+        self.data_manager.data_source = v
         
         self._set_data_loaded(not v.empty)
 
@@ -196,75 +171,27 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def x_values(self) -> np.ndarray:
-        """Get x-axis values, using cache when valid."""
-        p1_idx = self.plot_control.p1[0]
-        
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            return self.data_manager.get_axis_values('x', p1_idx, use_filtered=True)
-        
-        # Fallback: old implementation
-        mask_id = getattr(self, '_cached_values_mask_id', None)
-        if (
-            getattr(self, '_cached_x_values', None) is not None
-            and getattr(self, '_cached_x_param_idx', None) == p1_idx
-            and mask_id is not None
-        ):
-            return self._cached_x_values
-
-        values = self.values
-        x_values = values[p1_idx]
-        self._cached_x_values = x_values
-        self._cached_x_param_idx = p1_idx
-        return x_values
+        """The x-axis values of the visible points, gating applied."""
+        self.data_manager.mask_state = self._collect_mask_state()
+        return self.data_manager.get_axis_values(
+            'x', self.plot_control.p1[0], use_filtered=True
+        )
 
     @property
     def y_values(self) -> np.ndarray:
-        """Get y-axis values, using cache when valid."""
-        p2_idx = self.plot_control.p2[0]
-        
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            return self.data_manager.get_axis_values('y', p2_idx, use_filtered=True)
-        
-        # Fallback: old implementation
-        mask_id = getattr(self, '_cached_values_mask_id', None)
-        if (
-            getattr(self, '_cached_y_values', None) is not None
-            and getattr(self, '_cached_y_param_idx', None) == p2_idx
-            and mask_id is not None
-        ):
-            return self._cached_y_values
-
-        values = self.values
-        y_values = values[p2_idx]
-        self._cached_y_values = y_values
-        self._cached_y_param_idx = p2_idx
-        return y_values
+        """The y-axis values of the visible points, gating applied."""
+        self.data_manager.mask_state = self._collect_mask_state()
+        return self.data_manager.get_axis_values(
+            'y', self.plot_control.p2[0], use_filtered=True
+        )
 
     @property
     def z_values(self) -> np.ndarray:
-        """Get z-axis values, using cache when valid."""
-        p3_idx = self.plot_control.p3[0]
-        
-        # New architecture: use data_manager
-        if hasattr(self, 'data_manager'):
-            return self.data_manager.get_axis_values('z', p3_idx, use_filtered=True)
-        
-        # Fallback: old implementation
-        mask_id = getattr(self, '_cached_values_mask_id', None)
-        if (
-            getattr(self, '_cached_z_values', None) is not None
-            and getattr(self, '_cached_z_param_idx', None) == p3_idx
-            and mask_id is not None
-        ):
-            return self._cached_z_values
-
-        values = self.values
-        z_values = values[p3_idx]
-        self._cached_z_values = z_values
-        self._cached_z_param_idx = p3_idx
-        return z_values
+        """The z-axis values of the visible points, gating applied."""
+        self.data_manager.mask_state = self._collect_mask_state()
+        return self.data_manager.get_axis_values(
+            'z', self.plot_control.p3[0], use_filtered=True
+        )
 
     @property
     def weight_enabled(self) -> bool:
@@ -317,18 +244,79 @@ class NDXplorer(QtWidgets.QMainWindow):
             if index >= 0:
                 self.comboBoxWeight.setCurrentIndex(index)
     
+    def _collect_mask_state(self) -> MaskState:
+        """Gather every gating term the widgets hold into one Qt-free value.
+
+        This is the *only* place that reads the GUI to decide which points are
+        visible. Everything downstream -- the mask, the filtered values, the axis
+        slices, the histograms -- works from the object returned here, so there
+        is exactly one answer to "what is shown" instead of one per consumer.
+        """
+        control = self.plot_control
+
+        # Dynamic z-selection only applies while the z axis is actually on; the
+        # slider keeps its last range when the group box is unchecked, and
+        # honouring it then would silently delete points along an axis the user
+        # cannot see.
+        z_enabled = hasattr(self, "groupBox_3") and self.groupBox_3.isChecked()
+        z_range = None
+        if self._dynamic_selection and z_enabled and hasattr(self, "selection_z"):
+            z_range = tuple(self.selection_z.get_range())
+            self._last_z_range = z_range
+
+        selected_cluster = control.selected_cluster
+        cluster_label = (
+            selected_cluster if self._use_clustering and selected_cluster >= 0 else None
+        )
+
+        # Single-frame mode: the frame column is chosen in the control, so the
+        # mask has to be built there and travels as a plain array.
+        frame_mask = None
+        frame_number = None
+        single_frame = (
+            hasattr(control, "checkBoxStackFrames")
+            and not control.checkBoxStackFrames.isChecked()
+            and getattr(control, "_frame_param", None) is not None
+        )
+        if single_frame:
+            frame_mask = control.get_frame_filter_mask(self.data_source)
+            if hasattr(control, "spinBoxFrameNumber"):
+                frame_number = control.spinBoxFrameNumber.value()
+
+        return MaskState(
+            selections=control.get_selections(),
+            axis_indices=(control.p1[0], control.p2[0], control.p3[0]),
+            mask_inf=self._mask_inf,
+            mask_nan=self._mask_nan,
+            z_range=z_range,
+            cluster_label=cluster_label,
+            frame_mask=frame_mask,
+            frame_number=frame_number,
+        )
+
     @property
-    def value_mask(self):
-        return get_value_mask(self)
+    def value_mask(self) -> np.ndarray:
+        """Points excluded by the current gating, over the full-length data.
+
+        ``True`` means excluded. Length always matches the raw data, so callers
+        can turn it into row indices -- the background histogram path does
+        exactly that.
+        """
+        self.data_manager.mask_state = self._collect_mask_state()
+        return self.data_manager.get_value_mask()
 
     @property
     def values(self) -> np.ndarray:
+        """The visible points as ``(n_params, n_visible)``.
+
+        Everything gating implies has already been applied: Inf/NaN on the
+        plotted axes, drawn selections, the z-range, cluster isolation and
+        single-frame mode. The second axis is *shorter* than the raw data, so
+        positions here are not original row numbers; use :attr:`value_mask` to
+        map back.
         """
-        Return a 2D array of data (selected columns only), applying the
-        user-defined mask for Inf/NaN. The result is cached to avoid repeated
-        computation when .values is accessed multiple times.
-        """
-        return get_filtered_values(self)
+        self.data_manager.mask_state = self._collect_mask_state()
+        return self.data_manager.get_filtered_values()
 
     @property
     def ymax(self) -> float:
@@ -550,10 +538,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Track active background load threads to prevent premature deletion
         self._active_load_threads = []
         
-        # Backward compatibility: old data source properties
-        self._data_source = DataSource()
-        self._default_data_source = None  # Now handled by data_manager
-        
         if isinstance(data_source, DataSource):
             self.data_source = data_source
 
@@ -568,13 +552,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Create clustering dialog early to use its parameters
         self.clustering_dialog = ClusteringDialog(parent=self)
 
-        # Initialize the cache variables to None (backward compatibility)
-        self._cached_values = None
-        self._cached_values_selections = None
-        self._cached_values_p13 = None
-        self._cached_values_mask_inf = None
-        self._cached_values_mask_nan = None
-        
         # Initialize weight tracking attributes
         self.current_weight_enabled = False
         self.current_weight_param = "None"
@@ -1239,15 +1216,10 @@ class NDXplorer(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-        # 1. Clear the user data => empty => fallback to _default_data_source
-        # Must clear through data_manager when it exists, otherwise the
-        # data_source property returns data_manager.data_source which is a
-        # different object from self._data_source.
-        if hasattr(self, 'data_manager') and self.data_manager is not None:
-            ds = self.data_manager.data_source
-            if ds is not None:
-                ds.clear()
-        self._data_source.clear()
+        # 1. Clear the user data, so the default (logo) source takes over again.
+        source = self.data_source
+        if source is not None:
+            source.clear()
 
         # 2. Clear the selection table so no old mask references remain
         #    (But remember, this does NOT fix comboBoxSelX/Y/Z)
@@ -1296,7 +1268,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         if hasattr(self, 'clustering_dialog') and self.clustering_dialog is not None and self.clustering_dialog.isVisible():
             self.clustering_dialog.hide()
 
-        # 3. Update once so 'plot_control.update()' sees empty _data_source =>
+        # 3. Update once so 'plot_control.update()' sees an empty data source =>
         #    repopulates combo boxes with the default dataset columns
         self.plot_control.update()
 

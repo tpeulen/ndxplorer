@@ -38,15 +38,15 @@ def _update_working_path(ndxplorer: "NDXplorer", first_selection: Optional[str])
 
 def _handle_append(ndxplorer: "NDXplorer", new_source, merge_mode: str) -> None:
     """Append/replace loaded data followed by UI updates."""
-    if (
-        hasattr(ndxplorer, "_data_source")
-        and ndxplorer._data_source is not None
-        and not ndxplorer._data_source.empty
-    ):
-        if ndxplorer._data_source.merge(new_source, mode=merge_mode):
+    current = ndxplorer.data_source
+    if current is not None and not current.empty:
+        if current.merge(new_source, mode=merge_mode):
+            # Re-assign through the property so the data manager sees the
+            # merged frame and its caches are invalidated.
+            ndxplorer.data_source = current
             ndxplorer.update()
     else:
-        ndxplorer._data_source = new_source
+        ndxplorer.data_source = new_source
         ndxplorer.update()
 
 
@@ -169,7 +169,7 @@ def open_files(
         if append:
             _handle_append(ndxplorer, combined_data_source, merge_mode)
         else:
-            ndxplorer._data_source = combined_data_source
+            ndxplorer.data_source = combined_data_source
             ndxplorer.update()
 
         _apply_axes_and_refresh(ndxplorer)
@@ -469,14 +469,17 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) 
                     logging.error(f"Error detecting frames/weights in image data: {e}")
                     ndxplorer.plot_control.hide_frame_selection()
             
-            # Disable NaN/Inf masking for image data since pixel coordinates are always valid
-            try:
-                if hasattr(ndxplorer, 'data_manager') and hasattr(ndxplorer.data_manager, 'selection'):
-                    ndxplorer.data_manager.selection.mask_nan = False
-                    ndxplorer.data_manager.selection.mask_inf = False
-                    logging.info("Disabled NaN/Inf masking for image data")
-            except Exception as e:
-                logging.debug(f"Could not disable NaN/Inf masking: {e}")
+            # Disable NaN/Inf masking for image data: pixel coordinates are
+            # always valid, so the masks can only remove real pixels.
+            #
+            # This used to write to a pair of flags on the data manager that
+            # nothing read -- the checkboxes below are what actually decide the
+            # mask -- so it logged success and changed nothing. Going through
+            # the checkboxes means the UI also shows the state it is in.
+            ndxplorer.checkBoxMaskNaN.setChecked(False)
+            ndxplorer.checkBoxMaskInf.setChecked(False)
+            ndxplorer.onMaskChanged()
+            logging.info("Disabled NaN/Inf masking for image data")
             
             # Clear the stored dims
             delattr(ndxplorer, '_detected_image_dims')

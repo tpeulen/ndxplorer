@@ -7,6 +7,6 @@ making the code more testable and maintainable.
 
 from .data_manager import DataManager
 from .cache_coordinator import CacheCoordinator
-from .selection_manager import SelectionManager
+from .mask_state import MaskState
 
-__all__ = ['DataManager', 'CacheCoordinator', 'SelectionManager']
+__all__ = ['DataManager', 'CacheCoordinator', 'MaskState']
