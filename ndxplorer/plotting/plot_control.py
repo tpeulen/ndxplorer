@@ -55,9 +55,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     @property
     def p2(self):
-        idx = self.comboBoxSelY.currentIndex()
-        name = self.comboBoxSelY.currentText()
-        return idx, str(name)
+        return self._axis_selection(self.comboBoxSelY)
         
     @p2.setter
     def p2(self, value, block_signals=False):
@@ -72,9 +70,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     @property
     def p3(self):
-        idx = self.comboBoxSelZ.currentIndex()
-        name = self.comboBoxSelZ.currentText()
-        return idx, str(name)
+        return self._axis_selection(self.comboBoxSelZ)
         
     @property
     def x_label(self):

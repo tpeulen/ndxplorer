@@ -209,3 +209,49 @@ def test_pca_then_clustering_composes(explorer, qt_app):
     assert labels is not None, "clustering could not use the PCA columns"
     truth = explorer.data_source.data["truth"].values.astype(int)
     assert purity(labels, truth) > 0.95
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Axis selection: the label and the data must agree
+# ──────────────────────────────────────────────────────────────────────────────
+def test_choosing_an_axis_by_name_plots_that_parameter(explorer, qt_app):
+    """The plotted values must follow the axis *name*, not a stale index.
+
+    The axis combo boxes are editable, and Qt's ``setCurrentText`` on an
+    editable combo changes the line-edit text without moving ``currentIndex``
+    when the insert policy forbids inserting. The plotted values are taken from
+    the index and the axis label from the text, so before this was fixed a user
+    typing a valid parameter name got **another parameter's data under the
+    right label** — a wrong plot with nothing visibly wrong about it.
+    """
+    control = explorer.plot_control
+    control.update(update_comboboxes=True, update_plots=False)
+    qt_app.processEvents()
+
+    control.comboBoxSelX.setCurrentText("x")
+    control.comboBoxSelY.setCurrentText("truth")
+    qt_app.processEvents()
+
+    frame = explorer.data_source.data
+    assert control.p2[1] == "truth"
+    # p2's index must point at the column its name names.
+    assert control.p2[0] == list(frame.columns).index("truth")
+    assert float(np.asarray(explorer.y_values).mean()) == pytest.approx(
+        float(frame["truth"].mean()), abs=1e-3
+    ), "the y axis is labelled 'truth' but is plotting something else"
+
+
+def test_axis_selection_by_index_still_works(explorer, qt_app):
+    """The ordinary path — picking an item — must be unaffected by the fix."""
+    control = explorer.plot_control
+    control.update(update_comboboxes=True, update_plots=False)
+    qt_app.processEvents()
+
+    columns = list(explorer.data_source.data.columns)
+    control.comboBoxSelY.setCurrentIndex(columns.index("y"))
+    qt_app.processEvents()
+
+    assert control.p2 == (columns.index("y"), "y")
+    assert float(np.asarray(explorer.y_values).mean()) == pytest.approx(
+        float(explorer.data_source.data["y"].mean()), abs=1e-3
+    )

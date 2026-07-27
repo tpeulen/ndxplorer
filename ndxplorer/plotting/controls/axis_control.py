@@ -58,12 +58,32 @@ class AxisControlMixin:
             if block_signals and not was_blocked:
                 combobox.blockSignals(was_blocked)
 
+    @staticmethod
+    def _axis_selection(combobox):
+        """Return a consistent ``(index, name)`` for an axis combo box.
+
+        The combos are **editable**, and Qt's ``setCurrentText`` on an editable
+        combo sets the line-edit text without moving ``currentIndex`` when the
+        insert policy forbids adding. A user typing a valid parameter name — or
+        any code calling ``setCurrentText`` — therefore leaves the index and the
+        text disagreeing.
+
+        That split is silently destructive: the plotted values are taken from
+        the *index* while the axis label is taken from the *name*, so the plot
+        shows one parameter under another parameter's label. Resolving the index
+        from the text whenever the text matches an item keeps the two in step.
+        """
+        name = str(combobox.currentText())
+        index = combobox.currentIndex()
+        matched = combobox.findText(name)
+        if matched >= 0 and matched != index:
+            index = matched
+        return index, name
+
     @property
     def p1(self):
         """Get X axis parameter (index, name) tuple."""
-        idx = self.comboBoxSelX.currentIndex()
-        name = self.comboBoxSelX.currentText()
-        return idx, str(name)
+        return self._axis_selection(self.comboBoxSelX)
         
     @p1.setter
     def p1(self, value, block_signals=False):
