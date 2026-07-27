@@ -184,3 +184,56 @@ def test_a_collection_converts_back_to_selections(data):
     assert isinstance(back, RegionDataSelection)
     assert back.invert is True
     assert (back.idx1, back.idx2) == (0, 1)
+
+
+# --- multi-class painted masks -------------------------------------------------
+def test_each_painted_class_becomes_its_own_gate():
+    """The brush paints class ids, so one image carries several populations.
+
+    As a single MaskDataSelection they had no names, could not be measured or
+    inverted separately and could not be combined — the multi-label information
+    existed and nothing downstream could reach it.
+    """
+    from ndxplorer.core.region_selection import selections_from_label_mask
+
+    labels = np.zeros((20, 20), dtype=int)
+    labels[2:8, 2:8] = 1
+    labels[12:18, 12:18] = 2
+    edges1 = np.linspace(0.0, 20.0, 21)
+    edges2 = np.linspace(0.0, 20.0, 21)
+
+    gates = selections_from_label_mask(labels, edges1, edges2, names={2: "bright"})
+    assert [g.name for g in gates] == ["class 1", "bright"]
+
+    # Each selects its own population and not the other's.
+    first, second = (np.array([[5.0], [5.0]]), np.array([[15.0], [15.0]]))
+    assert gates[0].get_mask(first)[0].tolist() == [False]
+    assert gates[0].get_mask(second)[0].tolist() == [True]
+    assert gates[1].get_mask(second)[0].tolist() == [False]
+
+
+def test_an_empty_mask_yields_no_gates():
+    from ndxplorer.core.region_selection import selections_from_label_mask
+
+    edges = np.linspace(0.0, 10.0, 11)
+    assert selections_from_label_mask(np.zeros((10, 10), dtype=int), edges, edges) == []
+
+
+def test_classes_round_trip_back_into_a_mask():
+    """A set of region gates can be handed back to the brush."""
+    from ndxplorer.core.region_selection import (
+        label_mask_from_selections,
+        selections_from_label_mask,
+    )
+
+    labels = np.zeros((20, 20), dtype=int)
+    labels[2:8, 2:8] = 1
+    labels[12:18, 12:18] = 2
+    edges = np.linspace(0.0, 20.0, 21)
+
+    gates = selections_from_label_mask(labels, edges, edges)
+    back = label_mask_from_selections(gates, labels.shape, edges, edges)
+
+    assert set(np.unique(back)) == {0, 1, 2}
+    np.testing.assert_array_equal(back > 0, labels > 0)
+    np.testing.assert_array_equal(back, labels)

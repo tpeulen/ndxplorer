@@ -198,10 +198,100 @@ def load_selections(path: str, axes: Tuple[int, int] = (0, 1)) -> list:
     return from_collection(RegionCollection.from_dict(data), axes=axes)
 
 
+def selections_from_label_mask(
+    mask: np.ndarray,
+    edges1: Sequence[float],
+    edges2: Sequence[float],
+    idx1: int = 0,
+    idx2: int = 1,
+    names: Optional[dict] = None,
+) -> list:
+    """Split a painted **multi-class** mask into one gate per class.
+
+    The mask brush paints integer class ids, not a yes/no bitmap, so one painted
+    image can carry several populations at once. Until now that whole image was
+    a single :class:`MaskDataSelection`: the classes had no names, could not be
+    measured or inverted separately, and could not be combined — the multi-label
+    information existed and nothing downstream could reach it.
+
+    One region per class fixes that. Each becomes an ordinary gate, so a painted
+    population is on the same footing as a drawn ellipse.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Integer label image over the histogram bins, indexed ``[y_bin, x_bin]``
+        as the brush stores it (transposed to match the displayed image). Zero
+        is background.
+    edges1, edges2 : sequence of float
+        Bin edges of the two axes.
+    idx1, idx2 : int
+        The parameter indices the plane is drawn from.
+    names : dict, optional
+        Class id to label; unnamed classes become ``"class <id>"``.
+
+    Returns
+    -------
+    list of RegionDataSelection
+        One per non-zero class, in class order.
+    """
+    from chisurf.core.roi import MaskROI
+
+    labels = np.asarray(mask)
+    out = []
+    for value in sorted(int(v) for v in np.unique(labels) if int(v) != 0):
+        label = (names or {}).get(value, f"class {value}")
+        roi = MaskROI.from_histogram(
+            labels == value, np.asarray(edges1), np.asarray(edges2), name=label
+        )
+        out.append(RegionDataSelection(roi, idx1, idx2, name=label))
+    return out
+
+
+def label_mask_from_selections(
+    selections: Iterable[DataSelection],
+    shape: Tuple[int, int],
+    edges1: Sequence[float],
+    edges2: Sequence[float],
+) -> np.ndarray:
+    """Rasterise region gates back into a multi-class mask.
+
+    The inverse of :func:`selections_from_label_mask`, so a set of regions can
+    be handed back to the brush. Later selections overwrite earlier ones where
+    they overlap, since a pixel carries one class.
+
+    Parameters
+    ----------
+    selections : iterable of DataSelection
+        Those backed by a region contribute; others are skipped.
+    shape : tuple of int
+        ``(n_y_bins, n_x_bins)`` of the mask to fill.
+    edges1, edges2 : sequence of float
+        Bin edges of the two axes.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer label image, ``0`` where nothing is selected.
+    """
+    labels = np.zeros(tuple(shape), dtype=np.int32)
+    extent = (
+        float(edges1[0]), float(edges1[-1]), float(edges2[0]), float(edges2[-1])
+    )
+    for value, selection in enumerate(selections or [], start=1):
+        roi = getattr(selection, "roi", None)
+        if roi is None:
+            continue
+        labels[roi.to_mask(labels.shape, extent=extent)] = value
+    return labels
+
+
 __all__ = [
     "RegionDataSelection",
     "to_collection",
     "from_collection",
     "save_selections",
     "load_selections",
+    "selections_from_label_mask",
+    "label_mask_from_selections",
 ]
