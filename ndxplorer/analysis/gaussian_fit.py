@@ -7,6 +7,7 @@ It wires all Gaussian-related signal handlers here and implements the logic
 (fitting, overlays, table I/O, marginals, and Delete-key row removal).
 """
 from ..logging_config import logging
+from ..ui.table import TableItem, ValueTable
 from typing import Iterator, Optional, Tuple, List
 
 import json
@@ -208,13 +209,13 @@ class GaussianFit(QtCore.QObject):
         self._connect_signals()
 
     # ------------------------------ UI ---------------------------------
-    def _num_item(self, val: float) -> QtWidgets.QTableWidgetItem:
+    def _num_item(self, val: float) -> TableItem:
         # Display numbers in scientific notation with 2 decimals; align left so checkbox appears in front of text
-        it = QtWidgets.QTableWidgetItem(f"{float(val):.2e}")
+        it = TableItem(f"{float(val):.2e}")
         it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         return it
 
-    def _make_fixable(self, item: QtWidgets.QTableWidgetItem, checked: bool = False):
+    def _make_fixable(self, item: TableItem, checked: bool = False):
         # Add an in-cell checkbox without losing editability
         flags = (item.flags()
                  | QtCore.Qt.ItemIsUserCheckable
@@ -224,17 +225,17 @@ class GaussianFit(QtCore.QObject):
         item.setFlags(flags)
         item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
 
-    def _is_fixed_item(self, item: QtWidgets.QTableWidgetItem) -> bool:
+    def _is_fixed_item(self, item: TableItem) -> bool:
         return item is not None and item.checkState() == QtCore.Qt.Checked
 
-    def _make_check_item(self, checked: bool = False) -> QtWidgets.QTableWidgetItem:
-        it = QtWidgets.QTableWidgetItem("")
+    def _make_check_item(self, checked: bool = False) -> TableItem:
+        it = TableItem("")
         it.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
         it.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
         it.setTextAlignment(QtCore.Qt.AlignCenter)
         return it
 
-    def _is_checked(self, item: Optional[QtWidgets.QTableWidgetItem]) -> bool:
+    def _is_checked(self, item: Optional[TableItem]) -> bool:
         return (item is not None) and (item.checkState() == QtCore.Qt.Checked)
 
     def _build_ui(self):
@@ -271,7 +272,7 @@ class GaussianFit(QtCore.QObject):
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
-        m.tableGaussians = QtWidgets.QTableWidget(m)
+        m.tableGaussians = ValueTable(0, 6, m)
         m.tableGaussians.setColumnCount(6)
         m.tableGaussians.setHorizontalHeaderLabels(["x", "y", "sd_x", "sd_y", "rho", "w"])
         header = m.tableGaussians.horizontalHeader()
@@ -289,7 +290,9 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             pass
         # Remove extra item padding; keep a couple of horizontal pixels for readability
-        m.tableGaussians.setStyleSheet("QTableWidget::item{padding:0px 2px;} QTableWidget{gridline-color: palette(mid);} ")
+        m.tableGaussians.setStyleSheet(
+            "QTableView::item{padding:0px 2px;} QTableView{gridline-color: palette(mid);}"
+        )
         m.tableGaussians.setWordWrap(False)
         m.tableGaussians.setShowGrid(True)
         m.tableGaussians.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
@@ -373,9 +376,9 @@ class GaussianFit(QtCore.QObject):
             return
         # Build set of selected row indices
         sel = set()
-        sel_model = table.selectionModel()
-        if sel_model is not None:
-            sel = {ix.row() for ix in sel_model.selectedRows()}
+        # Source rows, not view rows: with the shared table the list can be
+        # sorted, and a view row would then point at a different Gaussian.
+        sel = set(table.selected_source_rows())
 
         # Update line widths
         for i, it in enumerate(items):
@@ -408,7 +411,7 @@ class GaussianFit(QtCore.QObject):
         is_log_x = self.is_log_x
         is_log_y = self.is_log_y
         # Collect selected rows; if none selected, use all rows if exactly one exists
-        selected = [ix.row() for ix in table.selectionModel().selectedRows()] if table.selectionModel() else []
+        selected = table.selected_source_rows()
         if not selected:
             if table.rowCount() == 1:
                 selected = [0]
@@ -1328,7 +1331,7 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             pass
 
-    def on_gaussian_table_item_changed(self, item: QtWidgets.QTableWidgetItem):
+    def on_gaussian_table_item_changed(self, item: TableItem):
         """Redraw Gaussian overlays when the user edits any cell in the table."""
         m = self.main
         try:
@@ -1915,10 +1918,9 @@ class GaussianFit(QtCore.QObject):
                 return
             # Map the point to global for the popup menu
             global_pos = table.viewport().mapToGlobal(pos)
-            sel_model = table.selectionModel()
-            selected_rows = []
-            if sel_model is not None:
-                selected_rows = [idx.row() for idx in sel_model.selectedRows()]
+            # Source rows: these are used to *delete* Gaussians, so a view row
+            # would remove the wrong one as soon as the table is sorted.
+            selected_rows = table.selected_source_rows()
             menu = QtWidgets.QMenu(table)
             act_remove = QtWidgets.QAction("Remove Gaussian(s)", menu)
             act_remove.setEnabled(len(selected_rows) > 0)
@@ -1933,14 +1935,15 @@ class GaussianFit(QtCore.QObject):
         """Intercept Delete key presses on the Gaussians table to delete selected rows."""
         try:
             m = self.main
-            if obj is getattr(m, 'tableGaussians', None) and event.type() == QtCore.QEvent.KeyPress:
+            table = getattr(m, 'tableGaussians', None)
+            # ``owns`` because key presses arrive at the inner view when the
+            # shared table is in use, not at the container.
+            if table is not None and table.owns(obj) and event.type() == QtCore.QEvent.KeyPress:
                 if event.key() in (QtCore.Qt.Key_Delete,):
-                    sel_model = m.tableGaussians.selectionModel()
-                    if sel_model is not None:
-                        rows = [idx.row() for idx in sel_model.selectedRows()]
-                        if rows:
-                            self._delete_selected_gaussian_rows(rows)
-                            return True
+                    rows = table.selected_source_rows()
+                    if rows:
+                        self._delete_selected_gaussian_rows(rows)
+                        return True
         except Exception:
             pass
         return super().eventFilter(obj, event)
