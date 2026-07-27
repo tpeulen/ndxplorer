@@ -1328,6 +1328,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         
         # Add napari option - allows sending the current 2D histogram to Napari
         action_napari = menu.addAction("Send to Napari")
+
+        # Hand the gated bursts to a real analysis (FCS, TCSPC, PDA, PCH).
+        # Offered here as well as on the selection table because the gate is
+        # usually drawn on this canvas, and going hunting for the table to act
+        # on what you just drew is a detour.
+        menu.addSeparator()
+        try:
+            from ..analysis.send_menu import add_send_menu
+
+            add_send_menu(menu, self)
+        except Exception:
+            logging.debug("could not build the send menu", exc_info=True)
         
         action = menu.exec_(self.g_2dplot.canvas().mapToGlobal(pos))
         if action == action_csv:

@@ -14,9 +14,29 @@ whole bridge is one pure transform, :func:`selection_to_burst_slices`, plus a
 thin dispatcher, :class:`BurstAnalysisBridge`, that marshals those intervals into
 a ChiSurf RPC call:
 
-* **FCS / burst correlation** — ``burst_fcs.correlate_file`` (one call per file).
-* **PDA** — ``pda.from_bursts`` (one call; the experimental S1/S2 histogram).
-* **Lifetime (MLE)** and any future burst analysis — a configurable method name.
+**What a gate can be sent to is not decided here.** ndXplorer does not know, and
+must not know, that a method called ``pda.from_bursts`` exists: it asks ChiSurf
+what consumes bursts (``bursts.consumers``) and renders what it is told. Each
+advertised consumer carries its own label, RPC name, call shape, default
+parameters, provenance vocabulary and — where the analysis does not simply mean
+what it appears to mean — a caveat to show the user.
+
+That inversion is what keeps the two sides independent. A new burst analysis,
+including one living in a ChiSurf plugin that declares ``burst_consumers`` in its
+manifest, appears in this menu with no ndXplorer release. Conversely an older
+ChiSurf that advertises three analyses gets a three-entry menu rather than a
+menu with a dead fourth entry.
+
+:meth:`BurstAnalysisBridge.send_to` remains open to any other burst RPC.
+
+**Every handoff is recorded.** A gated population is a scientific claim about a
+subset of the data — "these bursts are the high-FRET species" — and a decay or a
+correlation curve computed from it is meaningless without the gate that produced
+it. So each send writes an operation to the metadata store, linking the input
+product to the output artifact and carrying the gate definition and the analysis
+settings, via :meth:`BurstAnalysisBridge.record_operation`. Recording never
+breaks a send: an unreachable store is logged and reported in the return value,
+because losing the provenance is bad and losing the analysis is worse.
 
 Qt-free and headless-testable. The RPC client is any object exposing
 ``call(method, params) -> {"ok": bool, "result"|"error": ...}`` — ndXplorer holds
@@ -27,9 +47,12 @@ in-process client the ChiSurf ndX plugin injects).
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
+
+from ..logging_config import logging
 
 #: Default burst-provenance column names in an MFD table.
 FILE_COL = "First File"
@@ -38,6 +61,74 @@ FIRST_PHOTON_COL = "First Photon"
 LAST_PHOTON_COL = "Last Photon"
 
 BurstSlices = "OrderedDict[str, List[Tuple[int, int]]]"
+
+
+@dataclass(frozen=True)
+class Target:
+    """One analysis a gated burst population can be handed to.
+
+    Built from what ChiSurf advertises, never hard-coded here — see
+    :meth:`BurstAnalysisBridge.discover`. One object drives the menu entry, the
+    dispatch and the provenance record, so the three cannot disagree.
+
+    Attributes
+    ----------
+    key : str
+        Stable identifier used by the UI and by :meth:`BurstAnalysisBridge.send`.
+    title : str
+        Menu label.
+    rpc : str
+        ChiSurf RPC method name.
+    summary : str
+        One line on what comes back, for the menu's tooltip.
+    operation_type, product_type : str
+        Metadata-store vocabulary terms for the recorded operation and the
+        artifact it produces. Both come from the mmCIF dictionary, which is the
+        schema authority -- a term that is not in it will be rejected on write.
+    per_file : bool
+        ``True`` issues one call per file with ``tttr_path`` + ``ranges``;
+        ``False`` sends the whole ``burst_slices`` mapping in one call.
+    defaults : dict
+        Parameters sent when the caller supplies none.
+    caveat : str, optional
+        A qualification the user must see before trusting the result — PCH from
+        bursts is the motivating case. Advertised by the analysis itself,
+        because only it knows when its own answer needs one.
+    """
+
+    key: str
+    title: str
+    rpc: str
+    summary: str = ""
+    operation_type: str = "analysis"
+    product_type: str = "analysis_result"
+    per_file: bool = False
+    defaults: Optional[Dict[str, Any]] = None
+    caveat: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, entry: Mapping[str, Any]) -> "Target":
+        """Build a target from one advertised consumer.
+
+        Unknown fields are ignored rather than raising: a newer ChiSurf may
+        advertise things this client has no use for yet, and refusing the whole
+        menu over one unrecognised key would be the worst possible trade.
+        """
+        return cls(
+            key=str(entry["key"]),
+            title=str(entry.get("title") or entry["key"]),
+            rpc=str(entry["rpc"]),
+            summary=str(entry.get("summary") or ""),
+            operation_type=str(entry.get("operation_type") or "analysis"),
+            product_type=str(entry.get("product_type") or "analysis_result"),
+            per_file=bool(entry.get("per_file", False)),
+            defaults=dict(entry.get("defaults") or {}),
+            caveat=entry.get("caveat") or None,
+        )
+
+
+#: RPC that asks ChiSurf what consumes bursts.
+CONSUMERS_RPC = "bursts.consumers"
 
 
 class BurstBridgeError(RuntimeError):
@@ -110,6 +201,85 @@ def selection_to_burst_slices(
     return slices
 
 
+
+def _software_version() -> str:
+    """ndXplorer's version, or ``"unknown"`` when it cannot be determined."""
+    try:
+        from ndxplorer import __version__
+
+        return str(__version__)
+    except Exception:
+        return "unknown"
+
+
+def describe_selections(selections: Sequence[Any]) -> List[Dict[str, Any]]:
+    """Render the gates as plain JSON, for storing beside a derived analysis.
+
+    A decay or a correlation curve computed from a sub-population cannot be
+    interpreted without knowing which sub-population, so the gate is recorded
+    with it. Selection classes differ (interval, rectangle, 2-D Gaussian, bitmap
+    mask) and not all are describable by bounds, so this reads whatever
+    attributes each carries rather than assuming one shape -- an unrecognised
+    selection still records its type and name instead of vanishing.
+    """
+    described: List[Dict[str, Any]] = []
+    for selection in selections or ():
+        entry: Dict[str, Any] = {
+            "type": type(selection).__name__,
+            "name": getattr(selection, "name", None),
+            "enabled": bool(getattr(selection, "enabled", True)),
+        }
+        for attribute in (
+            "parameter_idx", "lower", "upper", "invert",
+            "p1", "p2", "x_min", "x_max", "y_min", "y_max", "selection_id",
+        ):
+            if hasattr(selection, attribute):
+                value = getattr(selection, attribute)
+                if isinstance(value, (bool, int, float, str)) or value is None:
+                    entry[attribute] = value
+                else:
+                    entry[attribute] = str(value)
+        described.append(entry)
+    return described
+
+
+def summarise_result(spec: "Target", result: Any) -> Dict[str, Any]:
+    """Describe what came back, small enough to embed in a provenance record.
+
+    The store indexes provenance; it is not a results archive. A PDA S1/S2
+    histogram or a set of correlation curves can be megabytes, and embedding
+    them would make every provenance query drag the data with it. What is kept
+    is the shape of the answer -- enough to confirm the operation produced what
+    it claims and to recognise it later.
+    """
+    summary: Dict[str, Any] = {"analysis": spec.key, "rpc": spec.rpc}
+    if isinstance(result, Mapping):
+        for key in (
+            "n_files", "n_photons", "n_bins", "mode", "bin_time_us",
+            "burst_duty_cycle", "selection_bias", "coarsening",
+        ):
+            if key in result:
+                summary[key] = result[key]
+        if isinstance(result.get("decays"), list):
+            summary["decays"] = [
+                {"name": d.get("name"), "n_photons": d.get("n_photons"),
+                 "n_bins": len(d.get("counts", []))}
+                for d in result["decays"]
+            ]
+        if isinstance(result.get("curves"), list):
+            summary["curves"] = [
+                {"name": c.get("name"), "shape": c.get("shape"),
+                 "n_photons": c.get("n_photons")}
+                for c in result["curves"]
+            ]
+    elif isinstance(result, list):
+        summary["n_files"] = len(result)
+        summary["files"] = [
+            r.get("file") for r in result if isinstance(r, Mapping)
+        ]
+    return summary
+
+
 class BurstAnalysisBridge:
     """Route a gated ndXplorer sub-population into a ChiSurf burst analysis.
 
@@ -121,10 +291,15 @@ class BurstAnalysisBridge:
     ----------
     rpc_client
         Any object with ``call(method, params) -> dict``; ``None`` marks the
-        bridge unavailable (:meth:`available` is False and every ``send_to_*``
-        raises). This is ndXplorer's ``self.chisurf_rpc``.
+        bridge unavailable (:meth:`available` is False and every send raises).
+        This is ndXplorer's ``self.chisurf_rpc``.
     data_source
         The ndXplorer data source holding the burst table.
+    owner
+        The explorer window, read only for the identifiers provenance needs
+        (``processed_data_id``, ``experiment_id``). ``None`` disables recording
+        rather than failing -- a bridge driven from a script has no product to
+        attribute the operation to.
     file_col, last_file_col, first_col, last_col
         Burst-provenance column names (see :func:`selection_to_burst_slices`).
     """
@@ -134,6 +309,7 @@ class BurstAnalysisBridge:
         rpc_client: Any,
         data_source: Any,
         *,
+        owner: Any = None,
         file_col: str = FILE_COL,
         last_file_col: str = LAST_FILE_COL,
         first_col: str = FIRST_PHOTON_COL,
@@ -141,12 +317,65 @@ class BurstAnalysisBridge:
     ) -> None:
         self._rpc = rpc_client
         self._data_source = data_source
+        self._owner = owner
+        self._targets: Optional["OrderedDict[str, Target]"] = None
         self._cols = dict(
             file_col=file_col,
             last_file_col=last_file_col,
             first_col=first_col,
             last_col=last_col,
         )
+
+    def discover(self, refresh: bool = False) -> "OrderedDict[str, Target]":
+        """Ask ChiSurf which analyses consume bursts.
+
+        The answer is what the menu is built from, so this is the only place
+        that decides what a gate can be sent to. Cached for the session: the
+        advertised set changes when ChiSurf changes, not while the user works.
+
+        Parameters
+        ----------
+        refresh : bool
+            Re-ask even if the answer is already cached.
+
+        Returns
+        -------
+        OrderedDict
+            ``{key: Target}`` in the order ChiSurf advertised them. Empty when
+            no client is attached or the call failed — an empty menu that says
+            why is the honest outcome, and better than a menu of guesses that
+            may not exist on the other side.
+        """
+        if self._targets is not None and not refresh:
+            return self._targets
+
+        targets: "OrderedDict[str, Target]" = OrderedDict()
+        if self.available():
+            try:
+                reply = self._call(CONSUMERS_RPC, {})
+                for entry in (reply or {}).get("consumers", []):
+                    try:
+                        target = Target.from_dict(entry)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        logging.warning("ignoring a malformed consumer %r: %s", entry, exc)
+                        continue
+                    targets[target.key] = target
+            except BurstBridgeError as exc:
+                # An older ChiSurf without the advertisement RPC: no menu rather
+                # than a menu of methods that may not be there.
+                logging.info("ChiSurf advertises no burst consumers: %s", exc)
+        self._targets = targets
+        return targets
+
+    def target(self, key: str) -> "Target":
+        """Return one advertised target, or raise with what is on offer."""
+        targets = self.discover()
+        if key not in targets:
+            raise BurstBridgeError(
+                f"ChiSurf does not advertise a burst consumer named {key!r}; "
+                f"it offers {sorted(targets) or 'none'}"
+            )
+        return targets[key]
 
     def available(self) -> bool:
         """True when an RPC client capable of ``call`` is attached."""
@@ -177,65 +406,181 @@ class BurstAnalysisBridge:
 
     # -- targets ------------------------------------------------------------
 
+    def send(
+        self,
+        target: str,
+        selections: Sequence[Any],
+        *,
+        record: bool = True,
+        **params: Any,
+    ) -> Dict[str, Any]:
+        """Hand the gated bursts to an advertised consumer and record it.
+
+        Parameters
+        ----------
+        target : str
+            A key ChiSurf advertised — see :meth:`discover`.
+        selections : sequence
+            The active gates.
+        record : bool
+            Write the operation to the metadata store. Recording failures never
+            fail the send; they are reported in ``provenance``.
+        **params
+            Overrides for the target's defaults, passed to the RPC.
+
+        Returns
+        -------
+        dict
+            ``{"target", "result", "n_files", "n_bursts", "provenance"}``.
+            ``provenance`` is the store's reply, ``None`` when *record* is false
+            or no store is attached, or ``{"ok": False, "error": ...}`` when the
+            write failed.
+        """
+        # Before anything else: with no connection there is nothing to discover
+        # and nothing to send to, and "connect ChiSurf" is the actionable
+        # message rather than "nothing is advertised".
+        self._require_rpc()
+        spec = self.target(target)
+        slices = self.burst_slices(selections)
+        if not slices:
+            raise BurstBridgeError(
+                f"selection is empty — no bursts to send to {spec.title}"
+            )
+
+        call_params = dict(spec.defaults or {})
+        call_params.update(params)
+
+        if spec.per_file:
+            result: Any = [
+                {
+                    "file": path,
+                    "result": self._call(
+                        spec.rpc,
+                        {
+                            "tttr_path": path,
+                            "ranges": [[a, b] for a, b in ranges],
+                            **call_params,
+                        },
+                    ),
+                }
+                for path, ranges in slices.items()
+            ]
+        else:
+            result = self._call(
+                spec.rpc,
+                {
+                    "burst_slices": {
+                        p: [[a, b] for a, b in r] for p, r in slices.items()
+                    },
+                    **call_params,
+                },
+            )
+
+        n_bursts = sum(len(r) for r in slices.values())
+        out: Dict[str, Any] = {
+            "target": spec.key,
+            "result": result,
+            "n_files": len(slices),
+            "n_bursts": n_bursts,
+            "provenance": None,
+        }
+        if record:
+            out["provenance"] = self.record_operation(
+                spec, selections, slices, call_params, result
+            )
+        return out
+
+    def record_operation(
+        self,
+        spec: "Target",
+        selections: Sequence[Any],
+        slices: Mapping[str, Sequence[Tuple[int, int]]],
+        params: Mapping[str, Any],
+        result: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Write the handoff to the metadata store as an operation + artifact.
+
+        A decay computed from a gated population is uninterpretable without the
+        gate, so the gate travels with it: the recorded settings carry each
+        selection's parameters and bounds, the per-file burst counts, and the
+        analysis parameters actually used.
+
+        The result payload itself is **not** embedded — a PDA histogram or a
+        correlation curve set is large, and the store is a provenance index, not
+        a results archive. What is stored is enough to find and re-derive it:
+        which files, which bursts, which settings.
+
+        Returns
+        -------
+        dict or None
+            The store's reply, ``None`` when no store is attached, or a
+            ``{"ok": False, "error": ...}`` dict when the write failed. Never
+            raises: losing provenance must not lose the analysis.
+        """
+        client = self._rpc
+        product_id = getattr(self._owner, "processed_data_id", None)
+        if client is None or product_id is None:
+            return None
+
+        try:
+            payload = {
+                "experiment_id": getattr(self._owner, "experiment_id", None) or "exp_1",
+                "input_processed_data_ids": [product_id],
+                "analysis_type": spec.key,
+                "settings": {
+                    "operation_type": spec.operation_type,
+                    "rpc": spec.rpc,
+                    "parameters": dict(params),
+                    "gate": describe_selections(selections),
+                    "bursts_per_file": {p: len(r) for p, r in slices.items()},
+                    "n_bursts": sum(len(r) for r in slices.values()),
+                },
+                "products": [
+                    {
+                        "product_type": spec.product_type,
+                        "storage_mode": "embedded_json",
+                        "data": summarise_result(spec, result),
+                        "validation_status": "valid",
+                    }
+                ],
+                "software_version": _software_version(),
+            }
+            reply = client.call("ndxplorer.record_analysis", payload)
+            if isinstance(reply, Mapping) and not (
+                reply.get("ok") or (isinstance(reply.get("result"), Mapping)
+                                    and reply["result"].get("ok"))
+            ):
+                logging.error("provenance write refused: %s", reply.get("error"))
+                return {"ok": False, "error": reply.get("error")}
+            return reply
+        except Exception as exc:
+            # Deliberately swallowed: the analysis succeeded, and failing it now
+            # would discard a completed computation over a bookkeeping problem.
+            logging.error("could not record the %s handoff: %s", spec.key, exc)
+            return {"ok": False, "error": str(exc)}
+
     def send_to_correlator(
         self,
         selections: Sequence[Any],
         pairs: Sequence[Mapping[str, Any]],
         settings: Optional[Mapping[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Correlate the selected bursts (per file) via ``burst_fcs.correlate_file``.
+        """Correlate the gated bursts. Thin wrapper over :meth:`send`."""
+        return self.send(
+            "fcs", selections, pairs=list(pairs), settings=dict(settings or {})
+        )["result"]
 
-        Parameters
-        ----------
-        selections
-            The active gates.
-        pairs
-            Correlation channel-pair configurations (``PairConfig`` dicts).
-        settings
-            Optional ``BurstFcsSettings`` dict.
+    def send_to_pda(self, selections: Sequence[Any], **params: Any) -> Any:
+        """Build a PDA histogram from the gate. Thin wrapper over :meth:`send`."""
+        return self.send("pda", selections, **params)["result"]
 
-        Returns
-        -------
-        list of dict
-            One entry per file: ``{"file": path, "curves": ...}``.
-        """
-        slices = self.burst_slices(selections)
-        if not slices:
-            raise BurstBridgeError("selection is empty — nothing to correlate")
-        out: List[Dict[str, Any]] = []
-        for path, ranges in slices.items():
-            result = self._call(
-                "burst_fcs.correlate_file",
-                {
-                    "tttr_path": path,
-                    "ranges": [[a, b] for a, b in ranges],
-                    "pairs": list(pairs),
-                    "settings": dict(settings or {}),
-                },
-            )
-            out.append({"file": path, "curves": result})
-        return out
+    def send_to_tcspc(self, selections: Sequence[Any], **params: Any) -> Any:
+        """Build micro-time decays from the gate. Thin wrapper over :meth:`send`."""
+        return self.send("tcspc", selections, **params)["result"]
 
-    def send_to_pda(
-        self,
-        selections: Sequence[Any],
-        *,
-        method: str = "pda.from_bursts",
-        **params: Any,
-    ) -> Any:
-        """Build a PDA experimental histogram from the selected bursts.
-
-        Sends the whole ``burst_slices`` mapping in one call. The default
-        *method* wraps ChiSurf's PDA burst reader; extra keyword arguments
-        (channel routing, micro-time gating, number of bins…) pass through.
-        """
-        slices = self.burst_slices(selections)
-        if not slices:
-            raise BurstBridgeError("selection is empty — no bursts for PDA")
-        return self._call(
-            method,
-            {"burst_slices": {p: [[a, b] for a, b in r] for p, r in slices.items()}, **params},
-        )
+    def send_to_pch(self, selections: Sequence[Any], **params: Any) -> Any:
+        """Build a counting histogram from the gate. Thin wrapper over :meth:`send`."""
+        return self.send("pch", selections, **params)["result"]
 
     def send_to(
         self,
@@ -273,6 +618,10 @@ class BurstAnalysisBridge:
 
 __all__ = [
     "BurstAnalysisBridge",
+    "Target",
+    "CONSUMERS_RPC",
+    "describe_selections",
+    "summarise_result",
     "BurstBridgeError",
     "selection_to_burst_slices",
     "FILE_COL",

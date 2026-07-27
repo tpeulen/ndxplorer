@@ -1735,7 +1735,17 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         select_all_action = menu.addAction("Select All")
         clear_action = menu.addAction("Clear")
         delete_action = menu.addAction("Delete")
-        
+
+        # Hand the gated bursts to a real analysis. This is the natural place
+        # for it: the gate is what is being right-clicked.
+        menu.addSeparator()
+        try:
+            from ..analysis.send_menu import add_send_menu
+
+            add_send_menu(menu, self.parent)
+        except Exception:
+            logging.debug("could not build the send menu", exc_info=True)
+
         # Show menu and get action
         action = menu.exec_(table.mapToGlobal(position))
         

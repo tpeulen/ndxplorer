@@ -40,13 +40,31 @@ class _FakeDataSource:
 
 
 class _FakeRpc:
-    """Records calls; echoes params back as the result."""
+    """Records calls; echoes params back as the result.
+
+    Also answers ``bursts.consumers``: the bridge no longer holds a list of
+    analyses, it asks the server which ones exist, so a stand-in ChiSurf has to
+    advertise something before anything can be dispatched to it.
+    """
+
+    ADVERTISED = [
+        {"key": "fcs", "title": "FCS", "rpc": "burst_fcs.correlate_file",
+         "per_file": True, "operation_type": "fcs_correlation",
+         "product_type": "fcs_correlation"},
+        {"key": "pda", "title": "PDA", "rpc": "pda.from_bursts",
+         "per_file": False, "operation_type": "pda_histogram_computation",
+         "product_type": "pda_histogram"},
+    ]
 
     def __init__(self, ok=True):
         self.calls = []
         self._ok = ok
 
     def call(self, method, params):
+        if method == "bursts.consumers":
+            # Not recorded: discovery is bookkeeping, and counting it would make
+            # every dispatch assertion below fragile.
+            return {"ok": True, "result": {"consumers": self.ADVERTISED}}
         self.calls.append((method, params))
         if self._ok:
             return {"ok": True, "result": {"echo": params}}
