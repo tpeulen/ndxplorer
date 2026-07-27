@@ -159,8 +159,10 @@ def apply_clustering(ndxplorer: "NDXplorer") -> None:
     columns = dialog._cluster_columns
 
     if not _ensure_algorithm_available(ndxplorer, method):
-        if dialog is not None:
-            dialog.checkBoxClustering.setChecked(False)
+        # No checkbox to untick: this used to set ``dialog.checkBoxClustering``,
+        # a widget that has never existed, so a genuinely missing backend raised
+        # AttributeError here instead of declining cleanly.
+        dialog.clustering_completed(success=False)
         return
 
     params: Dict[str, Any]

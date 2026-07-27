@@ -34,7 +34,7 @@ from ..utils import working_path_helpers
 from ..io import file_operations
 from ..utils import histogram_helpers
 from ..analysis import clustering_helpers
-from ..analysis import umap_helpers
+from ..analysis import pca_helpers, umap_helpers
 from ..utils import settings_helpers
 from ..settings import get_settings_path
 from ..ui.clustering_dialog import ClusteringDialog
@@ -2268,6 +2268,21 @@ class NDXplorer(QtWidgets.QMainWindow):
             columns=columns,
             params=params,
             progress_dialog_factory=self._create_umap_progress_dialog,
+        )
+
+    def add_pca_columns_to_dataframe(self, columns, params):
+        """Add ``PC_n`` columns to the table and return the decomposition.
+
+        The result is handed back rather than discarded because the loadings are
+        what PCA was asked for -- which measured parameters carry the separation
+        -- and the dialog reports them. The columns are only how you plot it.
+        """
+        logging.info("Adding PCA columns to dataframe using helper")
+        return pca_helpers.add_pca_columns(
+            ndxplorer=self,
+            columns=list(columns),
+            n_components=int(params.get("n_components", 2)),
+            standardize=bool(params.get("standardize", True)),
         )
 
     def _create_umap_progress_dialog(self, title: str) -> UMAPProgressDialog:
