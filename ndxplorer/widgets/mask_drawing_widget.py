@@ -321,7 +321,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Error",
-                "Could not find parent NDXplorer window."
+                "Could not find parent ndX window."
             )
     
     def _on_drawing_enabled_changed(self, enabled: bool):
@@ -340,7 +340,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.warning(
                     self,
                     "Error",
-                    "NDXplorer parent reference not found. Widget may not be properly initialized."
+                    "ndX parent reference not found. Widget may not be properly initialized."
                 )
                 return
             

@@ -172,7 +172,7 @@ class GaussianSettingsDialog(QtWidgets.QDialog):
     def on_save_clicked(self):
         cfg = self.get_settings()
         save_gmm_settings(cfg)
-        self._dialogs.info("GMM Settings", "Settings saved to your NDxplorer user folder.")
+        self._dialogs.info("GMM Settings", "Settings saved to your ndX user folder.")
 
     def accept(self):
         cfg = self.get_settings()

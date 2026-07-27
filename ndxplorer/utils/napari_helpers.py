@@ -149,7 +149,7 @@ def send_to_napari(ndxplorer: "NDXplorer") -> None:
 
     viewer.add_image(
         hist_data,
-        name=f"NDXplorer: {x_label} vs {y_label} {weight_label}",
+        name=f"ndX: {x_label} vs {y_label} {weight_label}",
         colormap="viridis",
         scale=[1, 1],
     )

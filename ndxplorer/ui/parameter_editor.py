@@ -148,7 +148,7 @@ if HAS_CHISURF:
             try:
                 from chisurf.core.parameter_group_registry import register_parameter_group
                 register_parameter_group(
-                    self._group, owner_id=_NDX_OWNER_ID, label="ndXplorer"
+                    self._group, owner_id=_NDX_OWNER_ID, label="ndX"
                 )
                 self._registered = True
             except Exception as exc:

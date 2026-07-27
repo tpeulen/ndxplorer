@@ -192,9 +192,9 @@ def load_settings(
     if settings_json_fn is None:
         file_sel = QtWidgets.QFileDialog.getOpenFileName(
             None,
-            "ndXplorer settings file",
+            "ndX settings file",
             ndxplorer.working_path,
-            "ndXplorer settings (*.settings.json)",
+            "ndX settings (*.settings.json)",
         )
         if isinstance(file_sel, (tuple, list)):
             settings_json_fn = file_sel[0]

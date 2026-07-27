@@ -161,7 +161,7 @@ class BurstAnalysisBridge:
     def _require_rpc(self) -> None:
         if not self.available():
             raise BurstBridgeError(
-                "no ChiSurf RPC connection — launch ndXplorer with --chisurf-rpc "
+                "no ChiSurf RPC connection — launch ndX with --chisurf-rpc "
                 "host:port, or open it from ChiSurf, to use analysis bridges"
             )
 

@@ -175,7 +175,7 @@ class FolderDropList(QtWidgets.QListWidget):
 class ReportWizard(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("NDXplorer Report Tool")
+        self.setWindowTitle("ndX Report Tool")
         self.resize(900, 600)
 
         self._config: Dict = _default_config()
@@ -1275,7 +1275,7 @@ class ReportWizard(QtWidgets.QDialog):
                         pass
                 else:
                     try:
-                        suggested = str(Path(results[0]['folder']).parent / "NDXplorer_Batch_Report.docx")
+                        suggested = str(Path(results[0]['folder']).parent / "ndX_Batch_Report.docx")
                         fn, _ = QtWidgets.QFileDialog.getSaveFileName(
                             self,
                             "Save Final Combined Report",
@@ -1284,7 +1284,7 @@ class ReportWizard(QtWidgets.QDialog):
                         )
                         if fn:
                             final_doc = Document()
-                            final_doc.add_heading("NDXplorer Batch Report", level=1)
+                            final_doc.add_heading("ndX Batch Report", level=1)
                             for res in results:
                                 # Section heading per folder (use parent folder name)
                                 folder_path = Path(res['folder'])
@@ -1446,7 +1446,7 @@ class ReportWizard(QtWidgets.QDialog):
             doc = Document()
             # Use parent folder name as the sample title, as requested
             sample_name = folder.parent.name if folder.parent else folder.name
-            doc.add_heading(f"NDXplorer Report: {sample_name}", level=1)
+            doc.add_heading(f"ndX Report: {sample_name}", level=1)
             try:
                 # Place the full path below the title as normal text
                 doc.add_paragraph(str(folder.resolve()))

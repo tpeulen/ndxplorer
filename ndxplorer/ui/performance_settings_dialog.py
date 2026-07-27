@@ -184,7 +184,7 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
             "Choose the plotting backend for 2D plots and visualizations:\n"
             "• pyqtgraph: Fast interactive plots (default)\n"
             "• matplotlib: Feature-rich, widely used\n"
-            "Changes require restarting ndxplorer to take effect."
+            "Changes require restarting ndX to take effect."
         )
         self.backend_combo = QtWidgets.QComboBox()
         self.backend_combo.addItems(["pyqtgraph", "matplotlib"])
@@ -369,7 +369,7 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
                 self, 
                 "Settings Applied", 
                 "Performance settings have been saved.\n\n"
-                "Some changes may require restarting ndxplorer to take full effect."
+                "Some changes may require restarting ndX to take full effect."
             )
             
             logging.info("Performance settings updated and saved")

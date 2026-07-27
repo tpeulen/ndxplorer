@@ -580,7 +580,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         ui_path = next((path for path in ui_candidates if path.exists()), None)
         if ui_path is None:
             raise FileNotFoundError(
-                f"NDXplorer UI definition not found. Tried: {', '.join(str(p) for p in ui_candidates)}"
+                f"ndX UI definition not found. Tried: {', '.join(str(p) for p in ui_candidates)}"
             )
         uic.loadUi(str(ui_path), self)
         self.verticalLayout_3.addWidget(self.plot_control)

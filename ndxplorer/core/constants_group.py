@@ -23,7 +23,7 @@ from typing import Any, Dict, Iterator, Mapping, Optional
 # pure format helpers (is_state_format / values_from_data) — used by the Qt-free,
 # chisurf-free CLI and settings loaders — import without a chisurf dependency.
 
-DEFAULT_GROUP_NAME = "ndXplorer constants"
+DEFAULT_GROUP_NAME = "ndX constants"
 
 
 # ---------------------------------------------------------------- construction

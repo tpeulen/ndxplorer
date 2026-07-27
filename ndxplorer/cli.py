@@ -99,7 +99,7 @@ def _apply_filter_logic(data_source, select, query):
 
 @click.group()
 def cli():
-    """ndXplorer Headless CLI subcommands."""
+    """ndX headless CLI subcommands."""
     pass
 
 

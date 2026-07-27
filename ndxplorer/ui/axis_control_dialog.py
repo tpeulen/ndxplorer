@@ -658,7 +658,7 @@ class AxisControlDialog(QtWidgets.QDialog):
             settings_dir.mkdir(parents=True, exist_ok=True)
 
             with open(str(fn_axis_labels), "w") as fp:
-                fp.write("# Configuration for axis labels and fonts in ndxplorer\n")
+                fp.write("# Configuration for axis labels and fonts in ndX\n")
                 fp.write("# axis_labels: visibility of labels; fonts: family and sizes\n\n")
                 yaml.dump(settings, fp, default_flow_style=False, sort_keys=False)
 
