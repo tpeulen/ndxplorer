@@ -441,7 +441,9 @@ def start_read_burst_analysis_async(
     additional_endings : Optional[List[str]], optional
         Extra file endings to process, by default None (uses settings).
     drop_last_column : bool, optional
-        Drop last column from .bur files, by default True.
+        Trim the trailing placeholder column the writers append to the burst
+        tables (only empty/``Unnamed`` columns are removed, never real data),
+        by default True.
     on_success : Callable[[DataSource], None], optional
         Callback when loading succeeds, by default None.
     on_error : Optional[Callable[[str], None]], optional
@@ -538,8 +540,12 @@ def _process_burst_analysis_dir(
             bur_format_cache = _detect_format(bur)
         df_main = _read_text_table_auto(bur, cached_kwargs=bur_format_cache)
         df_main.columns = [str(c).strip() for c in df_main.columns]
-        if drop_last_column and df_main.shape[1] > 1:
-            df_main = df_main.iloc[:, :-1]
+        # Same rule as the companions below: the trailing tab on the header line
+        # is already resolved by the parser, so a blanket drop-last would delete
+        # a real measurement column ("Red Count Rate (KHz)", "S delayed yellow
+        # (kHz)") and with it every derived red/FRET quantity.
+        if drop_last_column:
+            df_main = _drop_trailing_empty_columns(df_main)
 
         dfs = [df_main]
 
