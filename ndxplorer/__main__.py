@@ -96,9 +96,12 @@ class MutuallyExclusiveOption(click.Option):
 @click.option('--processed-data-id', type=str, help='Database processed data ID')
 @click.option('--experiment-id', type=str, help='Database experiment ID')
 @click.option('--zmq-port', type=int, default=8765, help='ChiSurf ZMQ port')
+@click.option('--chisurf-rpc', type=str, default=None,
+              help='Connect to a ChiSurf RPC server at host:port for phasor / FRET-line '
+                   'features (e.g. 127.0.0.1:8765).')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
 @click.pass_context
-def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, debug):
+def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc, debug):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -130,11 +133,21 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
     import numpy as np
     np.random.seed(0)
     
+    # Optional: connect to a ChiSurf RPC server for phasor / FRET-line features.
+    rpc_client = None
+    if chisurf_rpc:
+        from .rpc import connect
+
+        rpc_client = connect(chisurf_rpc, require=False)
+        if rpc_client is None:
+            logging.warning("No ChiSurf RPC server at %s — phasor features disabled", chisurf_rpc)
+
     # Create main window
     win = NDXplorer(
         zmq_cmd_port=zmq_port if processed_data_id else None,
         processed_data_id=processed_data_id,
-        experiment_id=experiment_id
+        experiment_id=experiment_id,
+        chisurf_rpc=rpc_client,
     )
     win.show()
     
