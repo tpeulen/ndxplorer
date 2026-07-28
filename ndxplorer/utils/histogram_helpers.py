@@ -106,6 +106,72 @@ def sanitize_bins(
         return np.array([0.0, 1.0])
 
 
+def joint_axis_mask(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
+    """Rows that carry a usable value on *both* plotted axes.
+
+    The 2D map can only show a burst that has an x *and* a y value, but a 1D
+    histogram silently drops only the NaNs of its own column. Computed
+    independently, the marginals therefore describe a larger population than the
+    image below them -- a column that is defined for every burst (a proximity
+    ratio) shows its full distribution next to a map built from the handful of
+    bursts that also have the other column (a per-state lifetime). Restricting
+    every marginal to this mask makes them true projections of what is plotted.
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        The two plotted axis columns, row-aligned and equally long.
+
+    Returns
+    -------
+    np.ndarray or None
+        Boolean keep-mask, or ``None`` when every row already qualifies -- the
+        common case, and worth skipping the copies for.
+    """
+    def _finite(a: np.ndarray) -> Optional[np.ndarray]:
+        arr = np.asarray(a)
+        # Only floating/complex columns can carry NaN or Inf; integer and
+        # datetime columns are always usable and np.isfinite rejects some of them.
+        if arr.dtype.kind not in "fc":
+            return None
+        return np.isfinite(arr)
+
+    fx, fy = _finite(x), _finite(y)
+    if fx is None and fy is None:
+        return None
+    if fx is None:
+        keep = fy
+    elif fy is None:
+        keep = fx
+    else:
+        keep = fx & fy
+    if keep.all():
+        return None
+    return keep
+
+
+def apply_joint_axis_mask(x, y, z=None, weights=None):
+    """Restrict axis columns (and weights) to :func:`joint_axis_mask`.
+
+    Returns the arrays unchanged when nothing has to be dropped.
+    """
+    if x is None or y is None or len(x) != len(y):
+        return x, y, z, weights
+    keep = joint_axis_mask(x, y)
+    if keep is None:
+        return x, y, z, weights
+    logging.debug(
+        "joint axis mask: %d of %d rows have a value on both axes", int(keep.sum()), keep.size
+    )
+    x = x[keep]
+    y = y[keep]
+    if z is not None and len(z) == keep.size:
+        z = z[keep]
+    if weights is not None and len(weights) == keep.size:
+        weights = weights[keep]
+    return x, y, z, weights
+
+
 def is_data_ready(ndxplorer: "NDXplorer") -> bool:
     """Return True if data and axis selections are ready for histogram computation."""
     try:
@@ -311,13 +377,15 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
     """Return weight array matching d1 length or None (float32 for memory efficiency)."""
     if not use_weights:
         return None
+    weight_param = ndxplorer.comboBoxWeight.currentText()
+    weight_idx = -1
     # Use the same data source as x_values and y_values to ensure consistency
     data_source = ndxplorer.data_source
     if data_source is not None and hasattr(data_source, "parameter_names"):
         param_names = data_source.parameter_names
         if weight_param in param_names:
             weight_idx = param_names.index(weight_param)
-    
+
     if weight_idx < 0:
         logging.warning("Weight parameter '%s' not found in data source. Disabling weights.", weight_param)
         return None

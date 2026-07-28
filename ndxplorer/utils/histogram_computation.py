@@ -45,7 +45,16 @@ def compute_histograms_sync(
                 z_data = z_data[valid_indices]
             if weights is not None:
                 weights = weights[valid_indices]
-        
+
+        # Every histogram here describes the same population: the rows that have
+        # a value on both plotted axes. Without this the marginals count bursts
+        # the 2D map cannot show.
+        from .histogram_helpers import apply_joint_axis_mask
+
+        x_data, y_data, z_data, weights = apply_joint_axis_mask(
+            x_data, y_data, z_data, weights
+        )
+
         result = {}
 
         # Prefer the precomputed bin EDGES over a uniform count+range. get_x_bins/

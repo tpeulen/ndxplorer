@@ -517,11 +517,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.settings = dict()  # type: Dict
         self.equations = list()  # type: List[Dict[str, str]]
         self.constants = dict()  # type: Dict[str, float]
+        # ``None`` means "not computed yet" -- the state every consumer already
+        # tests for. An empty tuple looked like a *corrupt* histogram instead, so
+        # startup logged format errors for a window that simply had no data, and
+        # the "is there a histogram to recolour?" checks answered yes.
         self._histogram = {
-            "x": (),
-            "y": (),
-            "z": (),
-            "2d": ()
+            "x": None,
+            "y": None,
+            "z": None,
+            "2d": None,
         }
         
         # Backward compatibility: delegate to data_manager
@@ -912,10 +916,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.overlay_plot.canvas().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.overlay_plot.canvas().customContextMenuRequested.connect(self.on_canvas_context_menu)
 
-        # Assuming these combo boxes control the parameter selections for the 2D plot:
-        self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.update_spinbox_limits)
-        self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.update_spinbox_limits)
-        self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.update_spinbox_limits)
+        # These combo boxes control the parameter selections for the 2D plot.
+        # They must go through the argument-dropping slot: ``currentIndexChanged``
+        # carries the new index, which would otherwise land in ``low_pct``.
+        self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.on_axis_selection_changed)
+        self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.on_axis_selection_changed)
+        self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.on_axis_selection_changed)
 
         # Connections for spin boxes are already set up above
         
@@ -1810,7 +1816,33 @@ class NDXplorer(QtWidgets.QMainWindow):
         if self._pending_changed_constants and not self._parameter_recompute_timer.isActive():
             self._parameter_recompute_timer.start(self._recompute_interval_ms)
 
-    def update_spinbox_limits(self, low_pct=0.1, high_pct=99, recompute=True):
+    def on_axis_selection_changed(self, _index: int = 0) -> None:
+        """Re-derive the colour limits after an axis combo box changed.
+
+        ``currentIndexChanged`` delivers the newly selected index. It is dropped
+        here on purpose: bound to :meth:`update_spinbox_limits` directly it would
+        arrive as ``low_pct``, which silently skews the contrast for any index
+        below 100 and raises for any index above it.
+
+        Parameters
+        ----------
+        _index : int, optional
+            The combo box index Qt sends along; unused.
+        """
+        self.update_spinbox_limits()
+
+    def update_spinbox_limits(self, *, low_pct=0.1, high_pct=99, recompute=True):
+        """Set the colour limits from robust percentiles of the 2D histogram.
+
+        Parameters
+        ----------
+        low_pct, high_pct : float, optional
+            Percentiles bounding the colour scale; both must lie in ``[0, 100]``.
+            Keyword-only so a Qt signal argument can never bind to them.
+        recompute : bool, optional
+            Recompute the histograms first. Callers that just computed them pass
+            ``False`` to avoid doing the work twice.
+        """
         plot_update_helpers.update_spinbox_limits(self, low_pct=low_pct, high_pct=high_pct)
 
         # --- 2) Guard: are our selected column indices valid? ---

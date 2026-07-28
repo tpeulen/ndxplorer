@@ -201,7 +201,15 @@ class HistogramComputationWorker(QtCore.QObject):
                         self.weights = self.weights[valid_indices]
                 except Exception as exc:
                     logging.debug("Failed to apply valid_indices filter in background histograms: %s", exc)
-            
+
+            # Marginals and the 2D map must describe one population: the rows
+            # that carry a value on both plotted axes.
+            from ..utils.histogram_helpers import apply_joint_axis_mask
+
+            x_data, y_data, z_data, self.weights = apply_joint_axis_mask(
+                x_data, y_data, z_data, self.weights
+            )
+
             result = {}
             
             # Check performance configuration for histogram backend

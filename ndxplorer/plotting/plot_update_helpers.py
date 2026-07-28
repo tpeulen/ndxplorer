@@ -18,6 +18,37 @@ hdbscan = _hdbscan
 
 from ..utils.performance import compute_percentile_range_optimized
 
+def _as_edges_counts(hist):
+    """Return ``(edges, counts)`` for either 1D histogram representation.
+
+    The immediate path stores a :class:`~..core.histograms.Histogram1D`; the
+    background worker hands back a plain ``(edges, counts)`` tuple. Consumers
+    that understood only one of the two silently blanked the marginals whenever
+    the other path had produced them.
+
+    Parameters
+    ----------
+    hist : Histogram1D or tuple or None
+        The stored histogram, or ``None`` when nothing is computed yet.
+
+    Returns
+    -------
+    tuple or None
+        ``(edges, counts)``, or ``None`` when unusable.
+    """
+    if hist is None:
+        return None
+    edges = getattr(hist, "edges", None)
+    counts = getattr(hist, "counts", None)
+    if edges is None and isinstance(hist, tuple) and len(hist) == 2:
+        edges, counts = hist
+    if edges is None or counts is None:
+        return None
+    if len(edges) >= 2 and len(counts) >= 1:
+        return edges, counts
+    return None
+
+
 def _compute_selection_hash(selections):
     """Compute a hash of current selections for cache validation."""
     if not selections:
@@ -169,6 +200,7 @@ def _update_histograms_immediate(ndxplorer) -> None:
     from ..core.histograms import Histogram1D, Histogram2D
     from ..utils.fast_histogram import fast_histogram_1d, fast_histogram_2d
     from ..utils.histogram_helpers import (
+        apply_joint_axis_mask,
         extract_histogram_params,
         is_data_ready,
         resolve_weights,
@@ -188,8 +220,14 @@ def _update_histograms_immediate(ndxplorer) -> None:
     d1 = ndxplorer.x_values
     d2 = ndxplorer.y_values
     d3 = ndxplorer.z_values
+
+    # Weights are resolved against the gated set, then narrowed with it: the
+    # marginals must describe the same rows as the 2D map, i.e. those with a
+    # value on both plotted axes. The displayed count follows that population.
+    weights = resolve_weights(ndxplorer, params.use_weights, d1)
+    d1, d2, d3, weights = apply_joint_axis_mask(d1, d2, d3, weights)
     ndxplorer.lineEditCountCurrent.setText(str(len(d1)))
-    
+
     # Get bins
     x_bins_1d, x_bins_2d = ndxplorer.get_x_bins()
     y_bins_1d, y_bins_2d = ndxplorer.get_y_bins()
@@ -206,10 +244,7 @@ def _update_histograms_immediate(ndxplorer) -> None:
     z_bins_1d = sanitize_bins(z_bins_1d, d3, default_count=getattr(ndxplorer.plot_control, "n_zhist_1d", 50), scale=z_scale)
     x_bins_2d = sanitize_bins(x_bins_2d, d1, default_count=getattr(ndxplorer.plot_control, "n_xhist_2d", 50), scale=x_scale)
     y_bins_2d = sanitize_bins(y_bins_2d, d2, default_count=getattr(ndxplorer.plot_control, "n_yhist_2d", 50), scale=y_scale)
-    
-    # Resolve weights
-    weights = resolve_weights(ndxplorer, params.use_weights, d1)
-    
+
     try:
         # Debug: Check density settings
         density_x = ndxplorer.plot_control.normed_hist_x
@@ -310,10 +345,9 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
     
     try:
         # Update X marginal
-        x_hist = ndxplorer._histogram.get("x")
-        if x_hist is not None:
-            x_bin_edges = x_hist.edges
-            x_counts = x_hist.counts
+        x_data = _as_edges_counts(ndxplorer._histogram.get("x"))
+        if x_data is not None:
+            x_bin_edges, x_counts = x_data
             
             # Ensure arrays have same length to prevent IndexError
             x_edges_for_plot = x_bin_edges[1:]
@@ -338,10 +372,9 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
             _autoscale_horizontal_hist(ndxplorer.g_xplot, x_bin_edges, x_counts)
 
         # Update Y marginal
-        y_hist = ndxplorer._histogram.get("y")
-        if y_hist is not None:
-            y_bin_edges = y_hist.edges
-            y_counts = y_hist.counts
+        y_data = _as_edges_counts(ndxplorer._histogram.get("y"))
+        if y_data is not None:
+            y_bin_edges, y_counts = y_data
             
             # Ensure arrays have same length to prevent IndexError
             y_edges_for_plot = y_bin_edges[1:]
@@ -372,10 +405,9 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
             and ndxplorer.groupBox_3.isChecked()
             and "z" in ndxplorer._histogram
         ):
-            z_hist = ndxplorer._histogram.get("z")
-            if z_hist is not None:
-                z_bin_edges = z_hist.edges
-                z_counts = z_hist.counts
+            z_data = _as_edges_counts(ndxplorer._histogram.get("z"))
+            if z_data is not None:
+                z_bin_edges, z_counts = z_data
                 
                 # Ensure arrays have same length to prevent IndexError
                 z_edges_for_plot = z_bin_edges[1:]
@@ -592,39 +624,38 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     x_hist = ndxplorer._histogram.get("x")
     y_hist = ndxplorer._histogram.get("y")
     
-    # Validate histogram format (edges, counts) or (H, x_edges, y_edges)
-    def is_valid_histogram(hist):
+    # ``None`` is the "nothing computed yet" state (startup, or a load in
+    # progress), not a failure — only a histogram that exists and is unusable is
+    # worth an error.
+    def _report_missing(axis: str, hist) -> None:
         if hist is None:
-            return False
-        if isinstance(hist, tuple) and len(hist) == 2:
-            edges, counts = hist
-            return len(edges) >= 2 and len(counts) >= 1
-        if isinstance(hist, tuple) and len(hist) == 3:
-            H, x_edges, y_edges = hist
-            return H.size > 0 and len(x_edges) >= 2 and len(y_edges) >= 2
-        return False
-    
-    if not is_valid_histogram(x_hist):
-        logging.error("X histogram computation failed or returned empty result")
+            logging.debug("%s histogram not computed yet; showing empty plots", axis)
+        else:
+            logging.error("%s histogram computation failed or returned empty result", axis)
+
+    x_data = _as_edges_counts(x_hist)
+    if x_data is None:
+        _report_missing("X", x_hist)
         _show_empty_plots(ndxplorer)
         return
-    
-    if not is_valid_histogram(y_hist):
-        logging.error("Y histogram computation failed or returned empty result")
+
+    y_data = _as_edges_counts(y_hist)
+    if y_data is None:
+        _report_missing("Y", y_hist)
         _show_empty_plots(ndxplorer)
         return
 
     # Extract 1D histogram data (edges, counts)
-    x_bin_edges, x_counts = x_hist
-    
+    x_bin_edges, x_counts = x_data
+
     # Update X marginal
     ndxplorer.g_xhist_m.set_data(x_bin_edges, x_counts)
     _autoscale_horizontal_hist(ndxplorer.g_xplot, x_bin_edges, x_counts)
     ndxplorer.g_xplot.replot()
 
     # Extract Y histogram data (edges, counts)
-    y_bin_edges, y_counts = y_hist
-    
+    y_bin_edges, y_counts = y_data
+
     # Update Y marginal: counts on X-axis (horizontal), edges on Y-axis (vertical)
     ndxplorer.g_yhist_m.set_data(y_counts, y_bin_edges)
     _autoscale_vertical_hist(ndxplorer.g_yplot, y_bin_edges, y_counts)
@@ -632,13 +663,13 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
 
     # Handle Z histogram if enabled
     z_hist = ndxplorer._histogram.get("z")
+    z_data = _as_edges_counts(z_hist)
     if (
         hasattr(ndxplorer, "groupBox_3")
         and ndxplorer.groupBox_3.isChecked()
-        and z_hist is not None
-        and is_valid_histogram(z_hist)
+        and z_data is not None
     ):
-        z_bin_edges, z_counts = z_hist
+        z_bin_edges, z_counts = z_data
         ndxplorer.g_zhist_m.set_data(z_bin_edges, z_counts)
         _autoscale_horizontal_hist(ndxplorer.g_zplot, z_bin_edges, z_counts)
         ndxplorer.g_zplot.replot()
@@ -772,7 +803,18 @@ def auto_contrast(ndxplorer: "NDXplorer", skip_if_preserve: bool = True):
         ndxplorer.on_vmin_vmax_changed()
 
 
-def update_spinbox_limits(ndxplorer, low_pct: float = 0.1, high_pct: float = 99) -> None:
+def update_spinbox_limits(ndxplorer, *, low_pct: float = 0.1, high_pct: float = 99) -> None:
+    """Set ``vmin``/``vmax`` from percentiles of the current 2D histogram.
+
+    Parameters
+    ----------
+    ndxplorer : object
+        The plot window holding ``_histogram`` and the colour-limit spin boxes.
+    low_pct, high_pct : float, optional
+        Percentiles bounding the colour scale, in ``[0, 100]``. Keyword-only:
+        a Qt signal argument reaching ``low_pct`` positionally is the bug this
+        guards against.
+    """
     # Skip contrast update if preserving contrast during selection operations
     if getattr(ndxplorer, '_preserve_contrast', False):
         logging.debug("update_spinbox_limits: preserving contrast, skipping update")
