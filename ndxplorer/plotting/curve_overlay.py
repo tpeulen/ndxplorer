@@ -13,6 +13,18 @@ from qtpy import QtCore, QtWidgets, QtGui
 from qtpy.QtCore import Qt
 from ..widgets import ParameterSlider
 
+try:
+    from chisurf.gui.autoform.sections.parameter_table import ParameterGroupTableWidget
+
+    HAS_PARAM_TABLE = True
+except Exception:  # pragma: no cover - nDXplorer also runs without chisurf
+    ParameterGroupTableWidget = None
+    HAS_PARAM_TABLE = False
+
+#: Distinguishes the curves in the crosslink registry, which is keyed by a
+#: stable owner id: two curves of the same equation must not claim one entry.
+_CURVE_SEQ = [0]
+
 # Names that appear in an equation but are NOT free parameters: the independent
 # variables and the maths functions/constants the evaluator provides. Without
 # this, a regex that harvests identifiers turns ``exp``/``sqrt``/``pi`` into
@@ -27,9 +39,28 @@ _NON_PARAMETER_NAMES: Set[str] = {
 }
 
 
+class _CurveColumns:
+    """Columns the overlay table shows — the same set as the ndX constants.
+
+    ``ParameterGroupTableWidget`` reads ``section.columns``; the fit ``error``
+    column is left out because a curve is drawn, not fitted, until the user asks
+    for a fit (which reports its own χ²).
+    """
+
+    columns = ("name", "value", "fixed", "bounds_lo", "bounds_hi", "bounds_on")
+
+
 class CurveWidget(QtWidgets.QGroupBox):
     """
     A widget for a single curve equation with parameters and visibility control.
+
+    The parameters are :class:`FittingParameter` objects in a
+    :class:`FittingParameterGroup`, rendered in chisurf's shared fitting-parameter
+    table — the same editor as the ndX constants and a fit's parameters, so they
+    behave the same (wheel, bounds, copy/paste, detail popup) and can be
+    **crosslinked**: a FRET line's ``tau_d0`` can follow the donor lifetime of an
+    actual fit. Where chisurf is not importable the widget falls back to the
+    original slider grid.
     """
     visibilityChanged = QtCore.Signal(bool)
     equationChanged = QtCore.Signal()
@@ -42,9 +73,17 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.setCheckable(True)
         self.setChecked(True)
 
-        self.parameters = {}  # Dictionary to store parameter widgets
+        #: ``name -> FittingParameter`` with the table, ``name -> widget`` without.
+        self.parameters = {}
         self.curve_color = "#ff0000"  # Default color is red
-        self.use_sliders = True  # Whether to use sliders for parameters (default: True)
+        self.use_sliders = True  # Legacy slider grid only (kept for the fallback)
+        #: The curve's parameter group and its table, and the id it is registered
+        #: under so another table's link menu can reach these parameters.
+        self._group = None
+        self._table = None
+        self._registered_as = None
+        _CURVE_SEQ[0] += 1
+        self._owner_id = "ndxplorer.curve.%d" % _CURVE_SEQ[0]
         self.is_function = is_function  # Whether the input is a function (True) or an equation (False)
         self.function = None  # Store the compiled function if is_function is True
         self.curve_evaluator = CurveEvaluator()  # Create a CurveEvaluator instance
@@ -86,24 +125,31 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.color_button.clicked.connect(self._choose_color)
         color_layout.addWidget(self.color_button)
         color_layout.addStretch(1)
-        # Fit this curve's parameters to the current X-axis marginal histogram.
+        # Fit this curve's free parameters to the data that is displayed.
         self.fit_button = QtWidgets.QPushButton("🎯 Fit")
-        self.fit_button.setToolTip("Fit this curve's parameters to the X-axis marginal histogram")
+        self.fit_button.setToolTip(
+            "Fit this curve's free parameters to the displayed data "
+            "(the 2-D distribution, or a marginal histogram)"
+        )
         self.fit_button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        self.fit_button.setVisible(not self.is_function)  # equation curves only (v1)
         color_layout.addWidget(self.fit_button, 0, Qt.AlignRight)
         self.delete_button = QtWidgets.QPushButton("Delete")
         self.delete_button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         color_layout.addWidget(self.delete_button, 0, Qt.AlignRight)
         layout.addLayout(color_layout)
 
-        # Parameters container (grid, 2 per row, unified label widths)
+        # Parameters: the shared fitting-parameter table when chisurf is there,
+        # else the original grid of sliders (2 per row, unified label widths).
         self.param_container = QtWidgets.QWidget()
         self.param_layout = QtWidgets.QGridLayout(self.param_container)
         self.param_layout.setContentsMargins(0, 0, 0, 0)
         self.param_layout.setHorizontalSpacing(0)
         self.param_layout.setVerticalSpacing(0)
         layout.addWidget(self.param_container)
+        self.param_container.setVisible(not HAS_PARAM_TABLE)
+        #: Where the table is inserted; kept so it can be replaced when the
+        #: equation grows or loses a parameter.
+        self._param_slot = layout
 
         # Connect signals
         self.toggled.connect(self.visibilityChanged)
@@ -115,6 +161,7 @@ class CurveWidget(QtWidgets.QGroupBox):
         # Parse initial equation and update filled equation
         self._parse_equation()
         self._update_filled_equation()
+        self.equation_edit.setCursorPosition(0)
         # Ensure correct initial visibility state of content
         self._on_toggled(self.isChecked())
 
@@ -130,6 +177,11 @@ class CurveWidget(QtWidgets.QGroupBox):
             if child is self:
                 continue
             child.setVisible(checked)
+        # The slider grid is the fallback for a chisurf-less nDXplorer; when the
+        # table is in use it must stay hidden, or unfolding the curve reveals an
+        # empty box below the parameters.
+        if HAS_PARAM_TABLE:
+            self.param_container.setVisible(False)
 
     def _parse_equation(self):
         """
@@ -168,6 +220,109 @@ class CurveWidget(QtWidgets.QGroupBox):
             # genuine free parameters get sliders.
             params -= _NON_PARAMETER_NAMES
 
+        if HAS_PARAM_TABLE:
+            self._sync_table(sorted(params), values=self._signature_defaults())
+            return
+        self._sync_sliders(params)
+
+    def _signature_defaults(self):
+        """Starting values a *function* curve declares in its own signature.
+
+        ``def static_fret_line(forster_radius=52.0, ..., num_points=500)`` says
+        what those parameters are; falling back to the generic 1.0 gave a line
+        traced with a single point, which cannot be drawn or fitted.
+        """
+        if not self.is_function or self.function is None:
+            return {}
+        defaults = {}
+        for name, p in inspect.signature(self.function).parameters.items():
+            if p.default is not inspect.Parameter.empty:
+                try:
+                    defaults[name] = float(p.default)
+                except (TypeError, ValueError):
+                    continue
+        return defaults
+
+    # -- parameter table ---------------------------------------------------
+    def _sync_table(self, names, values=None):
+        """Make the parameter group (and its table) hold exactly ``names``.
+
+        Parameters that survive an equation edit keep their value, bounds and
+        link, so retyping one term does not silently unpin a crosslinked
+        parameter.
+        """
+        from ..core import curve_parameters as cp
+
+        if self._group is None:
+            self._group = cp.build_curve_group(
+                names, values=values, name=str(self.title())
+            )
+            changed = True
+        else:
+            changed = cp.sync_curve_group(self._group, names, values=values)
+        self.parameters = {p.name: p for p in self._group.parameters_all}
+        if changed:
+            self._rebuild_table()
+            self._register_group()
+
+    def _rebuild_table(self):
+        """(Re)create the table view over the current parameters.
+
+        The shared widget takes its rows at construction, so a changed parameter
+        set means a new table rather than a mutated one.
+        """
+        if self._table is not None:
+            self._param_slot.removeWidget(self._table)
+            self._table.setParent(None)
+            self._table.deleteLater()
+            self._table = None
+        if self._group is None:
+            return
+        self._table = ParameterGroupTableWidget(
+            self._group.parameters_all,
+            section=_CurveColumns(),
+            parent=self,
+            on_change=self._parameter_changed,
+            # A curve's parameters belong to no fit on the backend, so an edit
+            # must not be sent there — it could only answer "fit not found".
+            remote=False,
+        )
+        self._param_slot.addWidget(self._table)
+        self._table.setVisible(self.isChecked())
+
+    def _register_group(self):
+        """Publish the group so other parameter tables can link to these."""
+        if self._group is None:
+            return
+        try:
+            from chisurf.core.parameter_group_registry import register_parameter_group
+
+            self._group.name = str(self.title())
+            register_parameter_group(
+                self._group, owner_id=self._owner_id, label="ndX %s" % self.title()
+            )
+            self._registered_as = self._owner_id
+        except Exception as exc:
+            logging.debug("Could not register curve parameter group: %s", exc)
+
+    def _unregister_group(self):
+        """Drop the registry entry (the curve is gone; its links must go too)."""
+        if self._registered_as is None:
+            return
+        try:
+            from chisurf.core.parameter_group_registry import unregister_parameter_group
+
+            unregister_parameter_group(self._registered_as)
+        except Exception:
+            pass
+        self._registered_as = None
+
+    def closeEvent(self, event):  # noqa: N802 (Qt override)
+        self._unregister_group()
+        super().closeEvent(event)
+
+    # -- legacy slider grid (no chisurf) -----------------------------------
+    def _sync_sliders(self, params):
         # Remove parameters that are no longer in the equation or function
         for param in list(self.parameters.keys()):
             if param not in params:
@@ -229,10 +384,13 @@ class CurveWidget(QtWidgets.QGroupBox):
                 self.param_layout.addWidget(param_widget, row, col)
                 self.parameters[param] = param_widget
 
-    def _parameter_changed(self, value):
+    def _parameter_changed(self, value=None):
         """
         Called when a parameter value changes.
         Updates the filled equation and emits the equationChanged signal.
+
+        Takes no argument from the parameter table (which reports *that* an edit
+        happened, not what it was) and the value from the legacy sliders.
         """
         self._update_filled_equation()
         self.equationChanged.emit()
@@ -246,17 +404,20 @@ class CurveWidget(QtWidgets.QGroupBox):
         # Build both raw and formatted parameter mappings
         raw_params = {}
         formatted_params = {}
-        for name, widget in self.parameters.items():
+        for name, holder in self.parameters.items():
             try:
-                raw_val = widget.value()
+                # A FittingParameter carries its value as an attribute (and a
+                # *linked* one reports its master's); a legacy widget as value().
+                raw_val = holder.value if self._group is not None else holder.value()
             except Exception:
-                # Fallback if widget has no value() method
                 raw_val = None
             raw_params[name] = raw_val
             try:
-                if hasattr(widget, 'spinbox') and widget.spinbox is not None:
+                if self._group is not None:
+                    formatted_params[name] = f"{float(raw_val):.4e}"
+                elif hasattr(holder, 'spinbox') and holder.spinbox is not None:
                     # Use the spinbox's own text so decimals/format_str are respected
-                    formatted_params[name] = widget.spinbox.text()
+                    formatted_params[name] = holder.spinbox.text()
                 else:
                     # Reasonable fallback formatting
                     formatted_params[name] = f"{raw_val:.6g}" if isinstance(raw_val, (int, float)) else str(raw_val)
@@ -288,6 +449,9 @@ class CurveWidget(QtWidgets.QGroupBox):
                 filled_equation = re.sub(pattern, formatted_value, filled_equation)
 
         self.filled_equation_edit.setText(filled_equation)
+        # Show the *start* of a long equation: a line edit left at the end of its
+        # text shows the tail, so a FRET line read "…num_points*0".
+        self.filled_equation_edit.setCursorPosition(0)
 
     def get_equation(self):
         """
@@ -301,7 +465,25 @@ class CurveWidget(QtWidgets.QGroupBox):
         return self.equation_edit.text()
 
     def get_parameters(self):
+        """Return ``{name: value}``, following crosslinks.
+
+        A parameter linked to a fit reports the fit's current value, so the
+        overlay is always drawn against what the fit says now.
+        """
+        if self._group is not None:
+            from ..core import curve_parameters as cp
+
+            return dict(cp.curve_values(self._group))
         return {name: widget.value() for name, widget in self.parameters.items()}
+
+    @property
+    def parameter_group(self):
+        """The curve's :class:`FittingParameterGroup` (``None`` without chisurf).
+
+        This is what a fit of the curve to the data optimises, so the fix/free
+        flags and bounds set in the table are the fit's, with no second copy.
+        """
+        return self._group
 
     def set_parameters(self, parameters, ranges=None):
         """
@@ -314,20 +496,45 @@ class CurveWidget(QtWidgets.QGroupBox):
         # First parse the equation to ensure all parameters exist
         self._parse_equation()
 
-        # Set values for existing parameters
-        for name, value in parameters.items():
-            if name in self.parameters:
-                self.parameters[name].setValue(value)
+        if self._group is not None:
+            from ..core import curve_parameters as cp
 
-        # Set ranges for existing parameters if provided
-        if ranges:
-            for name, range_values in ranges.items():
-                if name in self.parameters and len(range_values) == 2:
-                    min_val, max_val = range_values
-                    self.parameters[name].setRange(min_val, max_val)
+            cp.apply_curve_values(self._group, parameters, ranges)
+            self.refresh_parameter_display()
+        else:
+            # Set values for existing parameters
+            for name, value in parameters.items():
+                if name in self.parameters:
+                    self.parameters[name].setValue(value)
+
+            # Set ranges for existing parameters if provided
+            if ranges:
+                for name, range_values in ranges.items():
+                    if name in self.parameters and len(range_values) == 2:
+                        min_val, max_val = range_values
+                        self.parameters[name].setRange(min_val, max_val)
 
         # Update the filled equation with the new parameter values
         self._update_filled_equation()
+
+    def refresh_parameter_display(self):
+        """Repaint the parameter table from the parameters themselves.
+
+        Used after something *other* than a table edit moved a value — a fit
+        writing its result back, or a linked master changing.
+        """
+        if self._table is None:
+            return
+        try:
+            # A dialog that showed these same parameters took the
+            # ``parameter.controller`` back-references with it; take them back.
+            self._table.claim_controllers()
+        except Exception:
+            pass
+        try:
+            self._table.sync()
+        except Exception:
+            pass
 
     def get_color(self):
         return self.curve_color
@@ -358,6 +565,9 @@ class CurveOverlayWidget(QtWidgets.QWidget):
     curvesChanged = QtCore.Signal()
     #: Emitted with the CurveWidget whose "Fit" button was pressed.
     curveFitRequested = QtCore.Signal(object)
+    #: Internal, thread-safe hop: a fit-client callback may fire off the GUI
+    #: thread, and widgets may only be touched on it.
+    _externalEvent = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -420,6 +630,76 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
         # Load predefined equations
         self.load_predefined_equations()
+
+        # Follow the fits: a curve parameter linked to a fit must redraw when
+        # that fit moves it. One subscription for every curve, on the GUI thread.
+        self._reg_cb = None
+        self._fc_cb = None
+        self._externalEvent.connect(self._on_external_gui, QtCore.Qt.QueuedConnection)
+        self._subscribe_external()
+
+    # -- linked-parameter updates -----------------------------------------
+    def _subscribe_external(self):
+        """Listen for parameter changes made outside this panel."""
+        try:
+            from chisurf.core import parameter_group_registry as reg
+
+            reg.subscribe(self._on_external_event)
+            self._reg_cb = self._on_external_event
+        except Exception:
+            self._reg_cb = None
+        try:
+            from chisurf.gui.widgets.fitting.fitting_client import get_fitting_client
+
+            fc = get_fitting_client()
+            if fc is not None:
+                cb = lambda *a, **k: self._on_external_event()  # noqa: E731
+                fc.subscribe("parameter.", cb)
+                fc.subscribe("fit.", cb)
+                self._fc_cb = (fc, cb)
+        except Exception:
+            self._fc_cb = None
+
+    def _unsubscribe_external(self):
+        try:
+            if self._reg_cb is not None:
+                from chisurf.core import parameter_group_registry as reg
+
+                reg.unsubscribe(self._reg_cb)
+        except Exception:
+            pass
+        try:
+            if self._fc_cb is not None:
+                fc, cb = self._fc_cb
+                fc.unsubscribe("parameter.", cb)
+                fc.unsubscribe("fit.", cb)
+        except Exception:
+            pass
+        self._reg_cb = self._fc_cb = None
+
+    def _on_external_event(self, *args, **kwargs):
+        # May arrive on an RPC thread — hop to the GUI thread before touching
+        # widgets.
+        try:
+            self._externalEvent.emit()
+        except Exception:
+            pass
+
+    def _on_external_gui(self):
+        """Repaint the tables and redraw: a linked master may have moved."""
+        for curve in self.curves:
+            try:
+                curve.refresh_parameter_display()
+                curve._update_filled_equation()
+            except Exception:
+                continue
+        self.curvesChanged.emit()
+
+    def closeEvent(self, event):  # noqa: N802 (Qt override)
+        self._unsubscribe_external()
+        for curve in self.curves:
+            curve._unregister_group()
+        super().closeEvent(event)
 
     def add_selected_curve(self):
         """
@@ -541,6 +821,9 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         if curve_widget in self.curves:
             self.curves.remove(curve_widget)
             self.scroll_layout.removeWidget(curve_widget)
+            # The registry holds the group by owner id; a deleted curve must
+            # take its entry with it, or its name lingers in every link menu.
+            curve_widget._unregister_group()
             curve_widget.deleteLater()
             self.curvesChanged.emit()
 
@@ -555,6 +838,7 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         for curve_widget in curves_copy:
             # Remove from the layout
             self.scroll_layout.removeWidget(curve_widget)
+            curve_widget._unregister_group()
             curve_widget.deleteLater()
 
         # Clear the list

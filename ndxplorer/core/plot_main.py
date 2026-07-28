@@ -625,7 +625,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Connect curve overlay signals
         self.curve_overlay_widget.curvesChanged.connect(self.update_curve_overlays)
-        self.curve_overlay_widget.curveFitRequested.connect(self.on_fit_curve_to_marginal)
+        self.curve_overlay_widget.curveFitRequested.connect(self.on_fit_curve_to_data)
 
         def save_cb():
             logging.info("Save CB")
@@ -2624,87 +2624,174 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Delegate auto-contrast adjustment to helper module."""
         plot_update_helpers.auto_contrast(self)
 
-    def on_fit_curve_to_marginal(self, curve):
-        """Fit an overlay curve's parameters to the current X-axis marginal.
-
-        Reuses ChiSurf's least-squares engine (via a ``ParseModel`` built from the
-        curve's equation): the marginal histogram becomes the data, the fitted
-        parameters are written back into the curve (so the overlay redraws as the
-        fitted curve) and into any matching entry of the parameter table.
-        """
-        from ..analysis.marginal_fit import (
-            MarginalFitError,
-            bin_centers,
-            build_marginal_fit,
-            fit_equation_to_marginal,
-        )
+    def marginal_for_fit(self, axis="x"):
+        """Return ``(centers, counts)`` of a displayed 1-D marginal histogram."""
+        from ..analysis.curve_fit import bin_centers
         from ..plotting.histograms import plot_histogram
 
-        if getattr(curve, "is_function", False):
-            logging.warning("Fit to marginal supports equation curves only.")
-            return
-        equation = curve.get_equation()
-        if not isinstance(equation, str) or not equation.strip():
-            return
-        initial = curve.get_parameters()
-        try:
-            counts, edges = plot_histogram(self, "x")
-        except Exception as exc:
-            logging.warning("Fit to marginal: no X histogram (%s)", exc)
-            return
+        counts, edges = plot_histogram(self, axis)
         counts = np.asarray(counts, dtype=float)
         edges = np.asarray(edges, dtype=float)
         centers = bin_centers(edges) if edges.size == counts.size + 1 else edges
+        return centers, counts
 
+    def build_curve_fit_for(self, curve, target="2d"):
+        """Build the fit of ``curve`` against what is displayed.
+
+        Parameters
+        ----------
+        curve : CurveWidget
+            The overlay curve. Its parameter group seeds the fit — value,
+            bounds and fix/free come from the curve's own table, so those are
+            set in one place.
+        target : {'2d', 'x', 'y'}
+            ``'2d'`` fits ``y = f(x)`` to the displayed two-dimensional
+            distribution (one weighted point per populated x column); ``'x'`` /
+            ``'y'`` fit the curve to that axis's marginal histogram of counts.
+
+        Returns
+        -------
+        CurveFit
+            Ready to ``run()``.
+
+        Raises
+        ------
+        CurveFitError
+            If the equation cannot be fitted, or there is nothing displayed to
+            fit it to.
+        """
+        from ..analysis.curve_fit import (
+            CurveFitError,
+            build_function_fit,
+            build_function_histogram_fit,
+            build_histogram_fit,
+            build_marginal_fit,
+        )
+        from ..plotting.histograms import plot_histogram
+
+        equation = curve.get_equation()
+        parametric = getattr(curve, "is_function", False)
+        if not parametric and (not isinstance(equation, str) or not equation.strip()):
+            raise CurveFitError("curve has no equation to fit")
+        initial = curve.get_parameters()
         const_values = dict(self.constants) if isinstance(self.constants, dict) else {}
+        text = equation if isinstance(equation, str) else ""
+        constant_names = [k for k in const_values if k in text]
+        # Constants are seeded from the constants table and start fixed.
+        initial = dict(initial)
+        for name in constant_names:
+            try:
+                initial[name] = float(const_values[name])
+            except (TypeError, ValueError):
+                pass
+
+        # A parametric curve (a FRET line traced from a mean distance) is not
+        # y = f(x), so it has no ParseModel; it is optimised through its own
+        # function, over the parameters already in the curve's table.
+        group = getattr(curve, "parameter_group", None)
+        if parametric:
+            if group is None:
+                raise CurveFitError(
+                    "fitting a function curve needs the chisurf parameter table"
+                )
+            params = list(group.parameters_all)
+
+        if target == "2d":
+            try:
+                counts, edges = plot_histogram(self, "2d")
+                x_edges, y_edges = edges
+            except CurveFitError:
+                raise
+            except Exception as exc:
+                raise CurveFitError(f"no 2-D histogram displayed ({exc})") from exc
+            if parametric:
+                return build_function_histogram_fit(
+                    curve.function, params, counts, x_edges, y_edges
+                )
+            cf = build_histogram_fit(
+                equation, counts, x_edges, y_edges,
+                initial=initial, constant_names=constant_names,
+            )
+        else:
+            try:
+                centers, counts = self.marginal_for_fit(target)
+            except Exception as exc:
+                raise CurveFitError(f"no {target} histogram displayed ({exc})") from exc
+            if parametric:
+                return build_function_fit(curve.function, params, centers, counts)
+            cf = build_marginal_fit(
+                equation, centers, counts,
+                initial=initial, constant_names=constant_names,
+            )
+        # The curve's own table has the last word on fix/free and bounds.
+        cf.seed_from_group(getattr(curve, "parameter_group", None))
+        for p in cf.parameters:
+            if p.name in const_values:
+                p.fixed = True
+        return cf
+
+    def on_fit_curve_to_data(self, curve):
+        """Fit an overlay curve's parameters to the data that is displayed.
+
+        Reuses ChiSurf's least-squares engine (via a ``ParseModel`` built from
+        the curve's equation). The dialog chooses what to fit against — the
+        displayed 2-D distribution or a marginal histogram — and the fitted
+        parameters are written back into the curve (so the overlay redraws as
+        the fitted curve) and into any matching entry of the constants table.
+        """
+        from ..analysis.curve_fit import CurveFitError
 
         def _write_back(result):
             if not result.ok:
                 return
-            ranges = {
-                k: [min(0.0, v * 1.5), max(10.0, abs(v) * 3.0 + 1.0)]
-                for k, v in result.params.items()
-            }
-            curve.set_parameters(result.params, ranges)
+            # Write into the curve's own parameters, leaving linked ones to
+            # their master, then redraw and push through to the constants.
+            group = getattr(curve, "parameter_group", None)
+            if group is not None:
+                cf = dlg.current_fit if dlg is not None else None
+                if cf is not None:
+                    cf.write_back(group)
+                curve.refresh_parameter_display()
+                curve._update_filled_equation()
+            else:
+                curve.set_parameters(result.params)
             self.update_curve_overlays()
             self._apply_fitted_params_to_constants(result.params)
-            logging.info("Fit to marginal: chi2r=%.4g, params=%s", result.chi2r, result.params)
+            logging.info(
+                "Curve fit: chi2r=%.4g, params=%s", result.chi2r, result.params
+            )
 
-        # When ChiSurf's fitting table is available, open the interactive dialog:
-        # parameters live in a fitting-parameter table (fix/free/bounds) and any
-        # parameter that names an ndX constant starts fixed (seeded from the table).
+        dlg = None
         try:
-            from ..ui.marginal_fit_dialog import HAS_FIT_TABLE, MarginalFitDialog
+            from ..ui.curve_fit_dialog import HAS_FIT_TABLE, CurveFitDialog
         except Exception:
             HAS_FIT_TABLE = False
 
         if HAS_FIT_TABLE:
-            try:
-                mf = build_marginal_fit(equation, centers, counts, initial=initial)
-            except MarginalFitError as exc:
-                logging.warning("Fit to marginal: %s", exc)
-                return
-            for p in mf.parameters:
-                if p.name in const_values:  # a constant -> seed + fix by default
-                    try:
-                        p.value = float(const_values[p.name])
-                    except (TypeError, ValueError):
-                        pass
-                    p.fixed = True
-            dlg = MarginalFitDialog(self, mf, on_applied=_write_back)
+            dlg = CurveFitDialog(
+                self,
+                build_fit=lambda target: self.build_curve_fit_for(curve, target),
+                on_applied=_write_back,
+            )
             dlg.exec_()
+            # The dialog's table held these parameters' controllers; the curve's
+            # own table takes them back now that it is gone.
+            curve.refresh_parameter_display()
             return
 
-        # No fitting table (ChiSurf absent): direct one-shot fit, all free.
-        constant_names = [k for k in const_values if k in equation]
-        res = fit_equation_to_marginal(
-            equation, initial, centers, counts,
-            constant_names=constant_names,
-        )
-        if not res.ok:
-            logging.warning("Fit to marginal failed: %s", res.message)
+        # No fitting table (ChiSurf absent): direct one-shot fit of the 2-D data.
+        try:
+            cf = self.build_curve_fit_for(curve, "2d")
+        except CurveFitError as exc:
+            logging.warning("Curve fit: %s", exc)
             return
-        _write_back(res)
+        res = cf.run()
+        if not res.ok:
+            logging.warning("Curve fit failed: %s", res.message)
+            return
+        curve.set_parameters(res.params)
+        self.update_curve_overlays()
+        self._apply_fitted_params_to_constants(res.params)
 
     def _apply_fitted_params_to_constants(self, params: "dict") -> None:
         """Push any fitted parameter that names an ndX constant into the table."""
