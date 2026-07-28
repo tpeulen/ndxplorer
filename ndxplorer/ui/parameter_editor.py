@@ -88,6 +88,11 @@ if HAS_CHISURF:
                     section=_CompactColumns(),
                     parent=self,
                     on_change=self._on_change,
+                    # These constants are ndXplorer's own; no fit holds them, so
+                    # an edit must not be sent to the fitting backend, which can
+                    # only answer "fit not found" -- once per keystroke, and once
+                    # per wheel notch, with a stack trace each time.
+                    remote=False,
                 )
                 layout.addWidget(self._table, 1)
                 # Add-parameter affordance so a new constant can be created
