@@ -10,6 +10,7 @@ import io
 import shutil
 import re
 import json
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -346,7 +347,14 @@ def read_burst_analysis(
 
     base_path = pathlib.Path(base_path)
     if additional_endings is None:
-        additional_endings = _get_burst_additional_endings()
+        # Settings *and* whatever the folder actually contains. The configured
+        # list was the only source, so a companion nobody had thought to add to
+        # mfd.settings.json was silently dropped even though the folder was
+        # sitting right there — a burst folder should load everything it holds.
+        # Union, so a user's configured ending is never lost either.
+        configured = _get_burst_additional_endings()
+        discovered = _discover_burst_extra_endings(base_path)
+        additional_endings = list(dict.fromkeys([*configured, *discovered]))
 
     if base_path.is_file() and base_path.suffix.lower() == ".zip":
         # Try "selector zip" path first (loose .bur files)
@@ -641,17 +649,28 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     """
     Read ChiSurf sampling files (.er4).
     Multiple files (chains) are concatenated by rows to form a single distribution.
+
+    Each file is one chain of the same posterior, so the rows are stacked. Two
+    columns are added alongside the parameters: ``chain``, the index of the file
+    a draw came from, and ``draw``, its position within that chain. Without them
+    the stack is a bag of numbers -- the draws cannot be put back in order, the
+    chains cannot be told apart, and neither a trace nor a per-chain comparison
+    (the thing that says whether the runs agree) can be plotted.
     """
     if not filenames:
         return DataSource()
 
     dfs = []
-    for fn in filenames:
+    for chain_index, fn in enumerate(filenames):
         try:
             # ER4 files are tab-separated text files
             df = pd.read_csv(fn, sep=sep, header=0, comment=None)
             # Normalize column names (strip whitespace and leading #)
             df.columns = [str(c).strip().lstrip('#').strip() for c in df.columns]
+            if 'chain' not in df.columns:
+                df['chain'] = chain_index
+            if 'draw' not in df.columns:
+                df['draw'] = np.arange(len(df), dtype=np.int64)
             dfs.append(df)
         except Exception as e:
             logging.warning(f"Could not read sampling file {fn}: {e}")
@@ -669,24 +688,192 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     return DataSource(data=combined_df)
 
 
+def _sampling_chain_files(folder: pathlib.Path) -> List[pathlib.Path]:
+    """Return the ``.er4`` chain files directly inside a sampling run folder.
+
+    A run folder holds its chains in a ``chains/`` subdirectory; a folder of
+    loose ``.er4`` files is accepted too.
+    """
+    return sorted((folder / "chains").glob("*.er4")) or sorted(folder.glob("*.er4"))
+
+
 def read_sampling_folder(path: str) -> DataSource:
     """
-    Read a ChiSurf sampling folder. 
-    It expects a 'chains/' subfolder containing .er4 files.
+    Read a ChiSurf sampling folder.
+
+    ``sample_fit`` writes ``<target>/<timestamp>/chains/*.er4``, so the folder
+    the user chose when starting the run holds *runs*, not chains. Both are
+    accepted: a run folder is read directly, and a folder of runs resolves to
+    its most recent one (the timestamps sort chronologically) with the choice
+    logged. Runs are deliberately **not** merged -- separate timestamps are
+    separate sampling sessions, possibly of different fits, and stacking them
+    would silently pool two different posteriors into one cloud.
     """
     p = pathlib.Path(path)
-    chains_dir = p / "chains"
-    
-    if not chains_dir.is_dir():
-        # Fallback: look for .er4 files in the folder itself
-        chains_dir = p
-        
-    er4_files = sorted(list(chains_dir.glob("*.er4")))
+
+    er4_files = _sampling_chain_files(p)
     if not er4_files:
-        logging.warning(f"No .er4 files found in {chains_dir}")
+        runs = sorted(
+            d for d in p.iterdir() if d.is_dir() and _sampling_chain_files(d)
+        ) if p.is_dir() else []
+        if runs:
+            chosen = runs[-1]
+            if len(runs) > 1:
+                logging.info(
+                    "%d sampling runs in %s; opening the most recent (%s)",
+                    len(runs), p, chosen.name,
+                )
+            er4_files = _sampling_chain_files(chosen)
+
+    if not er4_files:
+        logging.warning(f"No .er4 files found in {p}")
         return DataSource()
 
     return read_csv_sampling([str(f) for f in er4_files])
+
+
+class _NamesOnlyUnpickler(pickle.Unpickler):
+    """Unpickler that decodes plain data and refuses everything else.
+
+    Sampling metadata is stored pickled inside the HDF5 attributes. Opening a
+    file must never run code that the file chose, so no class -- not one --
+    may be resolved: a list of strings needs none, and anything that does need
+    one is not metadata we are willing to read.
+    """
+
+    def find_class(self, module, name):
+        """Refuse every global lookup, which is what makes this safe."""
+        raise pickle.UnpicklingError(
+            f"refusing to load {module}.{name} out of a data file"
+        )
+
+
+def _unpickle_plain(value):
+    """Decode a pickled HDF5 attribute, or return ``None`` if it is not plain data.
+
+    Parameters
+    ----------
+    value
+        Raw attribute value as h5py returns it.
+
+    Returns
+    -------
+    object or None
+        The decoded value, or ``None`` when it is absent, not a pickle, or
+        contains anything beyond plain data.
+    """
+    if value is None:
+        return None
+    raw = value.tobytes() if hasattr(value, "tobytes") else value
+    if not isinstance(raw, (bytes, bytearray)):
+        return raw
+    try:
+        return _NamesOnlyUnpickler(io.BytesIO(raw)).load()
+    except Exception as e:
+        logging.debug("could not decode a pickled attribute: %s", e)
+        return None
+
+
+def is_ensemble_sampling_hdf5(filename: str) -> bool:
+    """Return ``True`` for an HDF5 file holding an ensemble-sampler chain.
+
+    Parameters
+    ----------
+    filename : str
+        Path to test.
+
+    Returns
+    -------
+    bool
+        Whether the file carries an ``mcmc/chain`` dataset.
+    """
+    try:
+        import h5py
+    except ImportError:
+        return False
+    try:
+        with h5py.File(filename, "r") as f:
+            return "mcmc" in f and "chain" in f["mcmc"]
+    except Exception:
+        return False
+
+
+def read_ensemble_sampling_hdf5(filenames: Union[str, List[str]]) -> DataSource:
+    """Read an ensemble-sampler chain written to HDF5 (ucfret's sampling output).
+
+    The chain is stored as ``mcmc/chain`` with shape ``(n_steps, n_walkers,
+    n_dim)`` and ``mcmc/log_prob`` with ``(n_steps, n_walkers)``. Walkers are
+    the chains of an ensemble sampler, so every draw becomes a row carrying the
+    walker it came from (``chain``) and its step (``draw``) -- without those the
+    stack cannot be put back in order or compared walker by walker.
+
+    Only the steps actually written are read: the storage is grown in whole
+    chunks and, when the run thins, its tail is left unwritten. Those rows are
+    zeros, and a zero is not a draw.
+
+    Parameters
+    ----------
+    filenames : str or list of str
+        One or more sampling files. Several files are stacked, with the walker
+        index offset per file so the chains stay distinguishable.
+
+    Returns
+    -------
+    DataSource
+        Columns: one per parameter (named from the file where possible),
+        ``log_prob``, ``chain`` and ``draw``.
+    """
+    try:
+        import h5py
+    except ImportError:
+        logging.warning("h5py is required to read sampling HDF5 files")
+        return DataSource()
+
+    if isinstance(filenames, (str, pathlib.Path)):
+        filenames = [str(filenames)]
+    if not filenames:
+        return DataSource()
+
+    frames = []
+    chain_offset = 0
+    for fn in filenames:
+        try:
+            with h5py.File(str(fn), "r") as f:
+                group = f["mcmc"]
+                n_written = int(group.attrs.get("iteration", len(group["chain"])))
+                chain = np.asarray(group["chain"][:n_written])
+                log_prob = np.asarray(group["log_prob"][:n_written])
+                names = _unpickle_plain(f["blobs"].attrs.get("parameter_names")) \
+                    if "blobs" in f else None
+        except Exception as e:
+            logging.warning(f"Could not read sampling file {fn}: {e}")
+            continue
+
+        if chain.ndim != 3 or chain.size == 0:
+            logging.warning(f"{fn} holds no sampled states")
+            continue
+
+        n_steps, n_walkers, n_dim = chain.shape
+        if not (isinstance(names, (list, tuple)) and len(names) == n_dim
+                and all(isinstance(n, str) for n in names)):
+            names = [f"p{i}" for i in range(n_dim)]
+
+        df = pd.DataFrame(chain.reshape(-1, n_dim), columns=list(names))
+        df["log_prob"] = log_prob.reshape(-1)
+        # ``reshape`` runs the walker axis fastest, so the walker index cycles
+        # and the step index repeats.
+        df["chain"] = np.tile(np.arange(n_walkers), n_steps) + chain_offset
+        df["draw"] = np.repeat(np.arange(n_steps), n_walkers)
+        chain_offset += n_walkers
+        frames.append(df)
+
+    if not frames:
+        return DataSource()
+
+    combined = pd.concat(frames, axis=0, ignore_index=True)
+    combined = _best_effort_numeric(combined)
+    combined = _fill_missing(combined, FILL_MISSING_VALUE)
+    return DataSource(data=combined)
 
 
 def read_mfd_hdf5(filenames: List[str]) -> DataSource:
@@ -702,6 +889,10 @@ def read_mfd_hdf5(filenames: List[str]) -> DataSource:
     if first.lower().endswith(".zip") and not _zip_contains_any(first, _HDF5_EXTS):
         logging.info("No HDF5 in zip; treating as burst analysis: %s", first)
         return read_burst_analysis(first)
+
+    if is_ensemble_sampling_hdf5(first):
+        logging.info("Sampling chain detected in %s", first)
+        return read_ensemble_sampling_hdf5([str(f) for f in filenames])
 
     base_df = read_hdf5_file(first)
     row_count = len(base_df)
