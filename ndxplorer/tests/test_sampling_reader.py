@@ -119,6 +119,71 @@ def test_chain_and_draw_are_not_invented_when_the_file_has_them(tmp_path):
     assert data["draw"].tolist() == [100, 101]
 
 
+def test_a_partial_chain_is_not_counted_twice(tmp_path):
+    """``<name>.partial.er4`` is a prefix of ``<name>.er4``, not another chain.
+
+    A run writes the partial as it goes and deletes it on success. If the delete
+    does not happen, reading both counts those draws twice and shows them as two
+    chains that agree suspiciously well -- the one comparison that is supposed
+    to reveal disagreement.
+    """
+    run = tmp_path / "2026-07-28_10-00-00"
+    write_chain(run / "chains" / "Fit_0.er4", n_draws=25, seed=1)
+    write_chain(run / "chains" / "Fit_0.partial.er4", n_draws=12, seed=1)
+
+    data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 25
+    assert sorted(data["chain"].unique()) == [0]
+
+
+def test_a_cancelled_run_is_still_read(tmp_path):
+    """With no finished chain beside it, the partial is all there is."""
+    run = tmp_path / "2026-07-28_10-00-00"
+    write_chain(run / "chains" / "Fit_0.er4", n_draws=25, seed=1)
+    write_chain(run / "chains" / "Fit_1.partial.er4", n_draws=10, seed=2)
+
+    data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 35
+    assert sorted(data["chain"].unique()) == [0, 1]
+
+
+def test_a_file_that_is_not_a_chain_is_skipped_and_said_so(tmp_path, caplog):
+    """A chain missing from a posterior is a posterior that is quietly wrong.
+
+    It must also not contribute a column of its own: concatenation would give
+    every other chain a missing value there, and the fill would invent draws
+    that were never sampled.
+    """
+    run = tmp_path / "2026-07-28_10-00-00"
+    write_chain(run / "chains" / "Fit_0.er4", n_draws=20, seed=1)
+    (run / "chains" / "Fit_1.er4").write_text("this is not a chain\n")
+
+    with caplog.at_level("WARNING"):
+        data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 20
+    assert list(data.columns) == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
+    assert "read 1 of 2 sampling chains" in caplog.text
+
+
+def test_chains_of_different_parameters_are_not_merged(tmp_path):
+    """Two fits' chains in one folder are not one posterior.
+
+    Filling the difference would fabricate draws for parameters the other run
+    never sampled.
+    """
+    run = tmp_path / "2026-07-28_10-00-00"
+    write_chain(run / "chains" / "Fit_0.er4", n_draws=20, seed=1)
+    with open(run / "chains" / "Other_0.er4", "w") as f:
+        f.write("# chi2r\tlnprior\tx\ty\tz\n")
+        for _ in range(20):
+            f.write("1.0\t0.0\t1.0\t2.0\t3.0\n")
+
+    data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 20
+    assert "z" not in data.columns
+    assert not data.isna().any().any()
+
+
 # --- ensemble-sampler chains stored in HDF5 --------------------------------
 
 def write_sampling_hdf5(path, n_steps=4, n_walkers=6, names=("a", "b", "c"),

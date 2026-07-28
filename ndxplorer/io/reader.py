@@ -661,19 +661,53 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
         return DataSource()
 
     dfs = []
-    for chain_index, fn in enumerate(filenames):
+    skipped: List[str] = []
+    expected_columns: Optional[set] = None
+    for fn in filenames:
         try:
             # ER4 files are tab-separated text files
             df = pd.read_csv(fn, sep=sep, header=0, comment=None)
             # Normalize column names (strip whitespace and leading #)
             df.columns = [str(c).strip().lstrip('#').strip() for c in df.columns]
-            if 'chain' not in df.columns:
-                df['chain'] = chain_index
-            if 'draw' not in df.columns:
-                df['draw'] = np.arange(len(df), dtype=np.int64)
-            dfs.append(df)
         except Exception as e:
             logging.warning(f"Could not read sampling file {fn}: {e}")
+            skipped.append(str(fn))
+            continue
+
+        if df.empty or df.shape[1] < 2:
+            # Not a chain. Concatenated anyway it would contribute a column of
+            # its own that every other chain is missing, and the missing values
+            # are then filled -- inventing draws that were never sampled.
+            logging.warning(f"Not a sampling chain, skipping: {fn}")
+            skipped.append(str(fn))
+            continue
+
+        columns = set(df.columns) - {'chain', 'draw'}
+        if expected_columns is None:
+            expected_columns = columns
+        elif columns != expected_columns:
+            logging.warning(
+                "%s samples %s, the other chains sample %s -- skipping it "
+                "rather than filling in the difference",
+                fn, sorted(columns - expected_columns) or "fewer parameters",
+                sorted(expected_columns),
+            )
+            skipped.append(str(fn))
+            continue
+
+        if 'chain' not in df.columns:
+            df['chain'] = len(dfs)
+        if 'draw' not in df.columns:
+            df['draw'] = np.arange(len(df), dtype=np.int64)
+        dfs.append(df)
+
+    if skipped:
+        # One line the user can actually notice: a chain silently missing from a
+        # posterior is a posterior that is quietly wrong.
+        logging.warning(
+            "read %d of %d sampling chains; skipped: %s",
+            len(dfs), len(filenames), ", ".join(pathlib.Path(f).name for f in skipped),
+        )
 
     if not dfs:
         return DataSource()
@@ -693,8 +727,23 @@ def _sampling_chain_files(folder: pathlib.Path) -> List[pathlib.Path]:
 
     A run folder holds its chains in a ``chains/`` subdirectory; a folder of
     loose ``.er4`` files is accepted too.
+
+    A run writes ``<name>.partial.er4`` while it is going and deletes it once
+    ``<name>.er4`` is complete. A partial is a *prefix* of its final chain, so
+    reading both counts those draws twice and shows them as two chains that
+    agree suspiciously well. The partial is therefore dropped whenever its final
+    exists, and kept when it does not -- a cancelled run leaves nothing else.
     """
-    return sorted((folder / "chains").glob("*.er4")) or sorted(folder.glob("*.er4"))
+    files = sorted((folder / "chains").glob("*.er4")) or sorted(folder.glob("*.er4"))
+    finished = {f for f in files if not f.name.endswith(".partial.er4")}
+    superseded = {
+        f for f in files
+        if f.name.endswith(".partial.er4")
+        and f.with_name(f.name[: -len(".partial.er4")] + ".er4") in finished
+    }
+    for f in sorted(superseded):
+        logging.info("ignoring %s: its finished chain is present", f.name)
+    return [f for f in files if f not in superseded]
 
 
 def read_sampling_folder(path: str) -> DataSource:
