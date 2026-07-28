@@ -645,6 +645,39 @@ def _process_burst_analysis_dir(
     return ds
 
 
+#: Suffixes a stored chain can carry: tab-separated text, or an HDF5 table.
+#: A long run makes the difference matter -- a float64 costs ~25 characters as
+#: text and 8 in HDF5, before compression.
+_CHAIN_SUFFIXES = (".er4", ".h5", ".hdf5")
+
+
+def _read_chain_frame(filename: str, sep: str = '\t') -> pd.DataFrame:
+    """Load one chain file, text or HDF5, as a frame of draws.
+
+    Parameters
+    ----------
+    filename : str
+        Path to a ``.er4`` text chain or an HDF5 chain table.
+    sep : str
+        Column separator of the text format.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per draw.
+    """
+    path = pathlib.Path(filename)
+    if path.suffix.lower() in (".h5", ".hdf5"):
+        if is_ensemble_sampling_hdf5(str(path)):
+            source = read_ensemble_sampling_hdf5(str(path))
+            if source.data is None:
+                raise ValueError("no sampled states in the file")
+            return source.data
+        # ChiSurf writes the chain as a pandas table under 'results'.
+        return pd.read_hdf(path, key="results")
+    return pd.read_csv(path, sep=sep, header=0, comment=None)
+
+
 def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     """
     Read ChiSurf sampling files (.er4).
@@ -665,8 +698,7 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     expected_columns: Optional[set] = None
     for fn in filenames:
         try:
-            # ER4 files are tab-separated text files
-            df = pd.read_csv(fn, sep=sep, header=0, comment=None)
+            df = _read_chain_frame(fn, sep)
             # Normalize column names (strip whitespace and leading #)
             df.columns = [str(c).strip().lstrip('#').strip() for c in df.columns]
         except Exception as e:
@@ -734,12 +766,22 @@ def _sampling_chain_files(folder: pathlib.Path) -> List[pathlib.Path]:
     agree suspiciously well. The partial is therefore dropped whenever its final
     exists, and kept when it does not -- a cancelled run leaves nothing else.
     """
-    files = sorted((folder / "chains").glob("*.er4")) or sorted(folder.glob("*.er4"))
-    finished = {f for f in files if not f.name.endswith(".partial.er4")}
+    def _chains_in(directory: pathlib.Path) -> List[pathlib.Path]:
+        """Return the chain files of one directory, of either format."""
+        return sorted(
+            f for f in directory.glob("*")
+            if f.suffix.lower() in _CHAIN_SUFFIXES or f.name.endswith(".partial.er4")
+        )
+
+    files = _chains_in(folder / "chains") or _chains_in(folder)
+    def _is_partial(f: pathlib.Path) -> bool:
+        """Whether a chain file is the in-progress copy of another."""
+        return ".partial." in f.name
+
+    finished = {f.name for f in files if not _is_partial(f)}
     superseded = {
         f for f in files
-        if f.name.endswith(".partial.er4")
-        and f.with_name(f.name[: -len(".partial.er4")] + ".er4") in finished
+        if _is_partial(f) and f.name.replace(".partial.", ".", 1) in finished
     }
     for f in sorted(superseded):
         logging.info("ignoring %s: its finished chain is present", f.name)

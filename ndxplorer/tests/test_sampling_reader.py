@@ -184,6 +184,45 @@ def test_chains_of_different_parameters_are_not_merged(tmp_path):
     assert not data.isna().any().any()
 
 
+def write_hdf5_chain(path, n_draws=20, offset=0.0, seed=0):
+    """Write one chain as the HDF5 table ChiSurf's ``hdf5`` format produces."""
+    pytest.importorskip("tables")
+    rng = np.random.default_rng(seed)
+    frame = pd.DataFrame({
+        "chi2r": rng.normal(1.0, 0.01, n_draws),
+        "lnprior": np.zeros(n_draws),
+        "c": rng.normal(2.0 + offset, 0.1, n_draws),
+        "a": rng.normal(0.5, 0.01, n_draws),
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_hdf(path, key="results", mode="w", format="table",
+                 complib="zlib", complevel=5)
+
+
+def test_chains_stored_as_hdf5_open_like_text_ones(tmp_path):
+    """The storage format is not supposed to be visible on the other side."""
+    run = tmp_path / "2026-07-28_10-00-00"
+    for i in range(3):
+        write_hdf5_chain(run / "chains" / f"Fit_{i}.h5", n_draws=20, seed=i)
+
+    data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 60
+    assert list(data.columns) == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
+    assert sorted(data["chain"].unique()) == [0, 1, 2]
+    assert np.isclose(data["a"].mean(), 0.5, atol=0.05)
+
+
+def test_a_partial_hdf5_chain_is_not_counted_twice(tmp_path):
+    """The partial/final rule is about the run, not about the file format."""
+    run = tmp_path / "2026-07-28_10-00-00"
+    write_hdf5_chain(run / "chains" / "Fit_0.h5", n_draws=25, seed=1)
+    write_hdf5_chain(run / "chains" / "Fit_0.partial.h5", n_draws=12, seed=1)
+
+    data = reader.read_sampling_folder(str(tmp_path)).data
+    assert len(data) == 25
+    assert sorted(data["chain"].unique()) == [0]
+
+
 # --- ensemble-sampler chains stored in HDF5 --------------------------------
 
 def write_sampling_hdf5(path, n_steps=4, n_walkers=6, names=("a", "b", "c"),
