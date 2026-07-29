@@ -196,8 +196,15 @@ def export_plot_data(
         if dimension is None:
             raise ValueError("Dimension required for histogram export")
         
-        hist_data, bin_edges = histograms.plot_histogram(ndxplorer, dimension, **kwargs)
-        
+        result = histograms.plot_histogram(ndxplorer, dimension, **kwargs)
+        # 2-D hands back (H, (x_edges, y_edges)); a marginal hands back
+        # (edges, counts) — reading both as "data first" wrote the bin edges
+        # out as the counts column of every 1-D export.
+        if dimension == "2d":
+            hist_data, bin_edges = result
+        else:
+            bin_edges, hist_data = result
+
         if dimension == "2d":
             # 2D histogram export
             if format == "numpy":

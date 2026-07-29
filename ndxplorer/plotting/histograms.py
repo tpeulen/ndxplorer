@@ -72,8 +72,11 @@ def plot_histogram(
         **kwargs: Additional plotting options
         
     Returns:
-        Tuple of (histogram_data, bin_edges_or_tuple)
-        
+        For ``dimension='2d'``: ``(H, (x_edges, y_edges))`` with ``H`` shaped
+        ``(n_y, n_x)``. For a marginal (``'x'``/``'y'``/``'z'``):
+        ``(edges, counts)`` — edges **first**, matching how ``Histogram1D``
+        unpacks, not the 2-D order.
+
     Raises:
         ValueError: If dimension is not supported
     """

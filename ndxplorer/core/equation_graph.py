@@ -249,13 +249,47 @@ class EquationGraph:
         self._ordered = ordered
 
     # ---- evaluation -------------------------------------------------------
+    def _needed_for(self, targets: Sequence[str]) -> Set[str]:
+        """The outputs required to produce ``targets`` (targets included).
+
+        Walks the dependency edges backwards from the wanted columns, so a
+        caller that only looks at two plotted axes does not pay for the other
+        forty columns the same constant feeds.
+        """
+        by_key: Dict[str, _Entry] = {}
+        for e in self._ordered:
+            by_key.setdefault(str(e.out_key).lower(), e)
+            by_key.setdefault(_normalize_left(str(e.out_key)).lower(), e)
+
+        needed: Set[str] = set()
+        stack = [str(t).lower() for t in targets]
+        stack += [_normalize_left(str(t)).lower() for t in targets]
+        while stack:
+            key = stack.pop()
+            entry = by_key.get(key)
+            if entry is None:
+                continue
+            out = str(entry.out_key).lower()
+            if out in needed:
+                continue
+            needed.add(out)
+            stack.extend(dr.lower() for dr in entry.data_refs)
+            stack.extend(_normalize_left(dr).lower() for dr in entry.data_refs)
+        return needed
+
     def compute(
         self,
         d: pd.DataFrame,
         constants: Dict[str, float],
         changed_constants: Optional[Set[str]] = None,
+        targets: Optional[Sequence[str]] = None,
     ) -> List[str]:
-        """Evaluate (a subset of) the graph into ``d`` in place; return outputs written."""
+        """Evaluate (a subset of) the graph into ``d`` in place; return outputs written.
+
+        ``targets`` narrows the work to the columns those names depend on — the
+        two plotted axes, when a fit is moving a constant and re-reading them
+        thousands of times.
+        """
         # Which outputs to (re)compute.
         if changed_constants:
             changed_lower = {str(x).lower() for x in changed_constants}
@@ -277,6 +311,8 @@ class EquationGraph:
             to_compute = affected & self._resolvable
         else:
             to_compute = self._resolvable
+        if targets:
+            to_compute = to_compute & self._needed_for(targets)
 
         # Case-insensitive / left-of-pipe resolver over the live frame plus the
         # output keys (which appear as columns are written in topological order).
@@ -348,6 +384,7 @@ def compute_values_ast(
     constants: Dict[str, float],
     equations: Optional[List[Dict[str, str]]] = None,
     changed_constants: Optional[Set[str]] = None,
+    targets: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """AST-graph replacement for ``compute_values`` (same mutate-and-return contract)."""
     equations = equations or []
@@ -357,7 +394,9 @@ def compute_values_ast(
         graph = EquationGraph(equations, list(d.columns), list(constants.keys()))
         with _GRAPH_LOCK:
             _GRAPH_CACHE[key] = graph
-    return graph.compute(d, constants, changed_constants=changed_constants)
+    return graph.compute(
+        d, constants, changed_constants=changed_constants, targets=targets
+    )
 
 
 __all__ = ["EquationGraph", "compute_values_ast", "validate_equation"]

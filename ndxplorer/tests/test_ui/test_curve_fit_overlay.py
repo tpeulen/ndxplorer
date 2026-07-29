@@ -53,7 +53,8 @@ def _patch_histograms(monkeypatch, marginal=None, histogram2d=None):
     def _plot_histogram(nd, dim="2d", **kwargs):
         if dim == "2d":
             return counts, (xe, ye)
-        return y_marg, edges_marg
+        # A marginal comes back edges-first, unlike the 2-D case.
+        return edges_marg, y_marg
 
     monkeypatch.setattr(H, "plot_histogram", _plot_histogram)
 
@@ -202,6 +203,94 @@ def test_a_parametric_curve_is_fitted_through_its_function(qapp, monkeypatch):
     p = cw.get_parameters()
     assert p["tau_d0"] == pytest.approx(3.5, abs=0.1)
     assert p["num_points"] == 200          # resolution, not a fitting parameter
+
+
+def test_the_fit_offers_the_constants_the_equations_read(qapp, monkeypatch):
+    """nDXplorer's own parameters join the fit — fixed until the user frees one."""
+    from ndxplorer.core.constants_group import apply_value_dict
+    from ndxplorer.core.plot_main import NDXplorer
+
+    _patch_histograms(monkeypatch)
+
+    ndx = NDXplorer()
+    ndx._deferred_init()  # the constants table is built there
+    apply_value_dict(ndx.parameter_control.parameter_group, {"nothing_reads_me": 1.0})
+    cw = ndx.curve_overlay_widget.add_curve("m*x + b")
+
+    cf = ndx.build_curve_fit_for(cw, "2d")
+
+    names = [p.name for p in cf.data_parameters]
+    assert "gG/gR" in names and "tauD0" in names
+    # A constant no equation reads cannot move the data, so it is not offered:
+    # it would only add a flat direction to the optimiser.
+    assert "nothing_reads_me" not in names
+    assert all(p.fixed for p in cf.data_parameters)
+    assert cf.free_data_parameters() == []
+
+
+def test_a_freed_constant_is_fitted_by_moving_the_data(qapp, monkeypatch):
+    """The classic use: the constant that puts the population on the line.
+
+    The plotted y axis is the measured one divided by the constant, so the
+    burst cloud only sits on ``y = 0.5x + 0.2`` at the true value. The curve is
+    held; the fit has to move the data onto it.
+    """
+    from ndxplorer.core.plot_main import NDXplorer
+
+    gamma_true = 2.0
+    rng = np.random.default_rng(0)
+    tau = rng.uniform(0.1, 0.9, 5000)
+    measured = (0.5 * tau + 0.2 + rng.normal(0.0, 0.05, tau.size)) * gamma_true
+    xe, ye = np.linspace(0.0, 1.0, 41), np.linspace(0.0, 1.0, 61)
+    recomputed = []
+    redrawn = []
+
+    ndx = NDXplorer()
+    ndx._deferred_init()
+    gamma = ndx.parameter_control.parameter_group.parameters_all_dict["gG/gR"]
+    gamma.value, gamma.fixed = 1.0, False
+
+    import ndxplorer.plotting.histograms as H
+
+    def _reader(self):
+        # What the fit reads every step: the plotted columns for the rows it
+        # froze, plus the columns a recompute has to produce.
+        return (lambda: (tau, measured / float(gamma.value), None)), ["y"]
+
+    monkeypatch.setattr(NDXplorer, "fit_data_reader", _reader)
+    monkeypatch.setattr(
+        NDXplorer,
+        "recompute_for_constants",
+        lambda self, changed, targets=None: recomputed.append((set(changed), targets)),
+    )
+    monkeypatch.setattr(
+        H, "plot_histogram",
+        lambda nd, dim="2d", **k: (
+            np.histogram2d(tau, measured / float(gamma.value), bins=[xe, ye])[0].T,
+            (xe, ye),
+        ),
+    )
+    monkeypatch.setattr(
+        NDXplorer, "update_plots",
+        lambda self, **kwargs: redrawn.append(kwargs),
+    )
+    _autofit_dialog(monkeypatch, target="2d")
+
+    cw = ndx.curve_overlay_widget.add_curve("m*x + b")
+    cw.set_parameters({"m": 0.5, "b": 0.2})
+    for p in cw.parameter_group.parameters_all:
+        p.fixed = True  # only the constant is free
+
+    ndx.on_fit_curve_to_data(cw)
+
+    assert recomputed and all(names == {"gG/gR"} for names, _ in recomputed)
+    # Inside the fit only the plotted columns are recomputed, not every column
+    # the constant feeds; the full recompute happens once, at the end.
+    assert all(targets == ["y"] for _, targets in recomputed[:-1])
+    assert recomputed[-1][1] is None
+    assert gamma.value == pytest.approx(gamma_true, abs=0.02)
+    # The population moved, so the plots — histograms included — are rebuilt.
+    assert redrawn
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -265,6 +265,7 @@ def compute_values(
     equation_json_fn: Optional[str] = None,
     engine: str = "python",
     changed_constants: Optional[Set[str]] = None,
+    targets: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """
     Compute columns in DataFrame `d` from `equations`, using case-insensitive
@@ -307,7 +308,8 @@ def compute_values(
     from .equation_graph import compute_values_ast
 
     return compute_values_ast(
-        d, constants or {}, equations, changed_constants=changed_constants
+        d, constants or {}, equations,
+        changed_constants=changed_constants, targets=targets,
     )
 
 
@@ -730,6 +732,33 @@ class DataSource:
         
         return self._cached_values_array
 
+    def column_values(self, name: str) -> Optional[np.ndarray]:
+        """One numeric column as a float array, or ``None`` if there is no such column.
+
+        :attr:`values` rebuilds a ``(n_parameters, n_points)`` copy of the
+        *whole* table whenever anything changed — right once per redraw, ruinous
+        inside a fit that recomputes one column and re-reads it thousands of
+        times. Names resolve case-insensitively and on the part left of ``|``,
+        as everywhere else.
+        """
+        frame = self._data_numeric if self._data_numeric is not None else self._data
+        if frame is None or name is None:
+            return None
+        column = None
+        if name in frame.columns:
+            column = name
+        else:
+            wanted = str(name).lower()
+            wanted_left = str(name).split("|", 1)[0].strip().lower()
+            for candidate in frame.columns:
+                text = str(candidate)
+                if text.lower() == wanted or text.split("|", 1)[0].strip().lower() == wanted_left:
+                    column = candidate
+                    break
+        if column is None:
+            return None
+        return np.asarray(frame[column].values, dtype=float)
+
     def clear(self) -> None:
         self.data = pd.DataFrame()
 
@@ -740,6 +769,7 @@ class DataSource:
         equation_json_fn: Optional[str] = None,
         engine: str = "python",
         changed_constants: Optional[Set[str]] = None,
+        targets: Optional[Sequence[str]] = None,
     ) -> None:
         computed = compute_values(
             d=self.data,
@@ -748,6 +778,7 @@ class DataSource:
             equation_json_fn=equation_json_fn,
             engine=engine,
             changed_constants=changed_constants,
+            targets=targets,
         )
         self.is_computed = True
 

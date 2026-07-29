@@ -2625,15 +2625,164 @@ class NDXplorer(QtWidgets.QMainWindow):
         plot_update_helpers.auto_contrast(self)
 
     def marginal_for_fit(self, axis="x"):
-        """Return ``(centers, counts)`` of a displayed 1-D marginal histogram."""
+        """Return ``(centers, counts, edges)`` of a displayed 1-D marginal.
+
+        ``plot_histogram`` hands a 1-D histogram back as ``(edges, counts)`` --
+        reading it the other way round left the fit with counts as its x and
+        edges as its y, and every marginal fit refused with "need at least 3
+        matching data points" (the two differ in length by one).
+        """
         from ..analysis.curve_fit import bin_centers
         from ..plotting.histograms import plot_histogram
 
-        counts, edges = plot_histogram(self, axis)
-        counts = np.asarray(counts, dtype=float)
+        edges, counts = plot_histogram(self, axis)
         edges = np.asarray(edges, dtype=float)
+        counts = np.asarray(counts, dtype=float)
         centers = bin_centers(edges) if edges.size == counts.size + 1 else edges
-        return centers, counts
+        return centers, counts, edges
+
+    # -- data parameters (constants that move the population) ---------------
+    def fit_data_reader(self):
+        """Freeze how a fit reads the plotted values, and what it recomputes.
+
+        Returns ``(read, targets)``: ``read()`` gives ``(x, y, weights)`` of the
+        visible points, ``targets`` names the columns a recompute has to produce.
+
+        Everything expensive is done once, here, because the fit calls ``read``
+        once per model evaluation:
+
+        * the **gate is frozen** to the rows visible now. Re-deriving it per step
+          would cost a full mask over every column, and would also let the fitted
+          population change under the fit, which is not a fit of anything.
+        * only the **two plotted columns** are read, straight from the numeric
+          frame. ``data_source.values`` rebuilds a copy of the whole table on
+          every change, which is exactly what a fit does thousands of times.
+        """
+        rows = np.flatnonzero(~np.asarray(self.value_mask, dtype=bool))
+        x_name = self.plot_control.x_label
+        y_name = self.plot_control.y_label
+        box = getattr(self, "checkBoxWeight", None)
+        weight_name = (
+            self.comboBoxWeight.currentText()
+            if box is not None and box.isChecked() and hasattr(self, "comboBoxWeight")
+            else None
+        )
+        targets = [n for n in (x_name, y_name) if n]
+
+        def read():
+            return self.read_fit_columns(x_name, y_name, weight_name, rows)
+
+        return read, targets
+
+    def read_fit_columns(self, x_name, y_name, weight_name, rows):
+        """``(x, y, weights)`` for ``rows``, from the two named columns only."""
+        source = self.data_source
+        d1 = source.column_values(x_name)
+        d2 = source.column_values(y_name)
+        if d1 is None or d2 is None:
+            return np.empty(0), np.empty(0), None
+        d1, d2 = d1[rows], d2[rows]
+        weights = None
+        if weight_name:
+            column = source.column_values(weight_name)
+            if column is not None:
+                weights = column[rows]
+        # The joint-axis gate, cheap and re-applied because a recompute can turn
+        # a value into nan (a background subtraction crossing zero, say).
+        good = np.isfinite(d1) & np.isfinite(d2)
+        if not good.all():
+            d1, d2 = d1[good], d2[good]
+            weights = None if weights is None else weights[good]
+        return d1, d2, weights
+
+    def _constants_shaping_data(self):
+        """The constants the equations actually use, as live parameters.
+
+        A constant that no equation reads (``KB``, ``T_K`` on a plot that does
+        not use them) cannot move the data, so offering it to the fit would only
+        add a flat direction to the optimiser. Equations name a constant quoted
+        -- ``'gG/gR'`` -- which is what makes this an exact match rather than a
+        substring hunt.
+        """
+        group = getattr(self.parameter_control, "parameter_group", None)
+        if group is None:
+            return []
+        blob = []
+        for equation in (self.equations or []):
+            if isinstance(equation, dict):
+                for key, expression in equation.items():
+                    blob.append(f"{key} {expression}")
+            else:
+                blob.append(str(equation))
+        text = " ".join(blob)
+        return [p for p in group.parameters_all if f"'{p.name}'" in text]
+
+    def recompute_for_constants(self, changed, targets=None) -> None:
+        """Re-derive the columns that depend on the named constants.
+
+        ``targets`` narrows that to the columns those names need — inside a fit,
+        the two plotted axes. One constant can feed forty derived columns (every
+        PIE variant, every distance), and a fit that recomputes all of them per
+        step spends nearly all its time on columns nobody is looking at.
+        """
+        changed = {str(c) for c in changed}
+        self.data_source.compute_columns(
+            constants=self.constants,
+            equations=self.equations,
+            changed_constants=changed or None,
+            targets=targets,
+        )
+
+    def build_data_parameters(self, target, x_edges, y_edges=None, keep=None,
+                              min_counts=3.0):
+        """Offer the data-shaping constants to a curve fit.
+
+        Parameters
+        ----------
+        target : {'2d', 'x', 'y'}
+            What the curve is fitted to; decides how the data is re-derived.
+        x_edges : array_like
+            Bin edges of the fitted axis (for a marginal, its own edges).
+        y_edges : array_like, optional
+            The second axis's edges, for ``target='2d'``.
+        keep : array_like of bool, optional
+            The columns the fit started with; held fixed so the residual keeps
+            its length while the population moves.
+        min_counts : float, optional
+            Passed through to :func:`ridge_from_histogram`.
+
+        Returns
+        -------
+        DataParameters or None
+            ``None`` when there are no constants to offer (no chisurf parameter
+            table, or no equation reads one).
+        """
+        from ..analysis.curve_fit import DataParameters, bin_centers, ridge_from_values
+        from ..utils.fast_histogram import fast_histogram_1d
+
+        parameters = self._constants_shaping_data()
+        if not parameters:
+            return None
+        read, targets = self.fit_data_reader()
+        edges = np.asarray(x_edges, dtype=float)
+        density = getattr(self.plot_control, f"normed_hist_{target}", False)
+
+        def refresh(changed):
+            self.recompute_for_constants(changed, targets=targets)
+            d1, d2, weights = read()
+            if target == "2d":
+                return ridge_from_values(
+                    d1, d2, edges,
+                    weights=weights, y_edges=y_edges, keep=keep, min_counts=min_counts,
+                )
+            _, counts = fast_histogram_1d(
+                d1 if target == "x" else d2, edges, weights=weights, density=density
+            )
+            counts = np.asarray(counts, dtype=float)
+            centers = bin_centers(edges) if edges.size == counts.size + 1 else edges
+            return centers, counts, np.sqrt(np.maximum(counts, 1.0))
+
+        return DataParameters(parameters=parameters, refresh=refresh)
 
     def build_curve_fit_for(self, curve, target="2d"):
         """Build the fit of ``curve`` against what is displayed.
@@ -2652,7 +2801,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         Returns
         -------
         CurveFit
-            Ready to ``run()``.
+            Ready to ``run()``. nDXplorer's data-shaping constants are attached
+            as :class:`~ndxplorer.analysis.curve_fit.DataParameters`, fixed
+            until the user frees one.
 
         Raises
         ------
@@ -2660,12 +2811,15 @@ class NDXplorer(QtWidgets.QMainWindow):
             If the equation cannot be fitted, or there is nothing displayed to
             fit it to.
         """
+        import collections.abc
+
         from ..analysis.curve_fit import (
             CurveFitError,
             build_function_fit,
             build_function_histogram_fit,
             build_histogram_fit,
             build_marginal_fit,
+            populated_columns,
         )
         from ..plotting.histograms import plot_histogram
 
@@ -2674,7 +2828,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         if not parametric and (not isinstance(equation, str) or not equation.strip()):
             raise CurveFitError("curve has no equation to fit")
         initial = curve.get_parameters()
-        const_values = dict(self.constants) if isinstance(self.constants, dict) else {}
+        # ``self.constants`` is a live Mapping over the parameter group, not a
+        # dict -- an isinstance(dict) test read it as empty, so no constant was
+        # ever seeded into an equation fit or held fixed there.
+        const_values = (
+            dict(self.constants)
+            if isinstance(self.constants, collections.abc.Mapping)
+            else {}
+        )
         text = equation if isinstance(equation, str) else ""
         constant_names = [k for k in const_values if k in text]
         # Constants are seeded from the constants table and start fixed.
@@ -2705,29 +2866,42 @@ class NDXplorer(QtWidgets.QMainWindow):
             except Exception as exc:
                 raise CurveFitError(f"no 2-D histogram displayed ({exc})") from exc
             if parametric:
-                return build_function_histogram_fit(
+                cf = build_function_histogram_fit(
                     curve.function, params, counts, x_edges, y_edges
                 )
-            cf = build_histogram_fit(
-                equation, counts, x_edges, y_edges,
-                initial=initial, constant_names=constant_names,
+            else:
+                cf = build_histogram_fit(
+                    equation, counts, x_edges, y_edges,
+                    initial=initial, constant_names=constant_names,
+                )
+            data_parameters = self.build_data_parameters(
+                "2d", x_edges, y_edges,
+                keep=populated_columns(counts, x_edges, y_edges),
             )
         else:
             try:
-                centers, counts = self.marginal_for_fit(target)
+                centers, counts, edges = self.marginal_for_fit(target)
             except Exception as exc:
                 raise CurveFitError(f"no {target} histogram displayed ({exc})") from exc
             if parametric:
-                return build_function_fit(curve.function, params, centers, counts)
-            cf = build_marginal_fit(
-                equation, centers, counts,
-                initial=initial, constant_names=constant_names,
-            )
-        # The curve's own table has the last word on fix/free and bounds.
-        cf.seed_from_group(getattr(curve, "parameter_group", None))
-        for p in cf.parameters:
-            if p.name in const_values:
-                p.fixed = True
+                cf = build_function_fit(curve.function, params, centers, counts)
+            else:
+                cf = build_marginal_fit(
+                    equation, centers, counts,
+                    initial=initial, constant_names=constant_names,
+                )
+            data_parameters = self.build_data_parameters(target, edges)
+        # The constants are offered fixed; freeing one makes the fit re-derive
+        # the data at every step (see DataParameters).
+        cf.attach_data_parameters(data_parameters)
+        if not parametric:
+            # The curve's own table has the last word on fix/free and bounds.
+            # (A parametric curve's parameters *are* that table, so there is
+            # nothing to seed -- and nothing of the user's to overwrite.)
+            cf.seed_from_group(getattr(curve, "parameter_group", None))
+            for p in cf.parameters:
+                if p.name in const_values:
+                    p.fixed = True
         return cf
 
     def on_fit_curve_to_data(self, curve):
@@ -2757,8 +2931,15 @@ class NDXplorer(QtWidgets.QMainWindow):
                 curve.set_parameters(result.params)
             self.update_curve_overlays()
             self._apply_fitted_params_to_constants(result.params)
+            if result.data_params:
+                # A constant was fitted: the data itself moved, so the whole
+                # plot -- not just the overlay -- is out of date.
+                self._after_constants_fitted(result.data_params)
             logging.info(
-                "Curve fit: chi2r=%.4g, params=%s", result.chi2r, result.params
+                "Curve fit: chi2r=%.4g, params=%s%s",
+                result.chi2r,
+                result.params,
+                f", constants={result.data_params}" if result.data_params else "",
             )
 
         dlg = None
@@ -2774,9 +2955,14 @@ class NDXplorer(QtWidgets.QMainWindow):
                 on_applied=_write_back,
             )
             dlg.exec_()
-            # The dialog's table held these parameters' controllers; the curve's
-            # own table takes them back now that it is gone.
+            # The dialog's tables held these parameters' controllers; the
+            # curve's own table and the constants table take them back now that
+            # it is gone.
             curve.refresh_parameter_display()
+            try:
+                self.parameter_control.claim_table_controllers()
+            except AttributeError:
+                pass
             return
 
         # No fitting table (ChiSurf absent): direct one-shot fit of the 2-D data.
@@ -2793,28 +2979,89 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update_curve_overlays()
         self._apply_fitted_params_to_constants(res.params)
 
-    def _apply_fitted_params_to_constants(self, params: "dict") -> None:
-        """Push any fitted parameter that names an ndX constant into the table."""
+    def _after_constants_fitted(self, changed) -> None:
+        """Show the world a fit moved a constant.
+
+        The fit recomputed **only the plotted columns** at every step, so every
+        other column the constant feeds is still on its pre-fit value: the
+        full recompute happens once, here. Then the constants table is
+        repainted, the new values become the throttle's baseline (or the next
+        parameter event diffs against the pre-fit ones and recomputes for
+        nothing), and the plots — including the histograms, which is what the
+        moved population actually changes — are rebuilt.
+        """
+        try:
+            self.recompute_for_constants(changed)  # every dependent column now
+        except Exception as exc:
+            logging.warning("Full recompute after a fitted constant failed: %s", exc)
         pc = getattr(self, "parameter_control", None)
-        group = getattr(pc, "_group", None)
+        if pc is not None:
+            try:
+                pc.claim_table_controllers()
+            except AttributeError:
+                pass
+        try:
+            self._prev_constants = dict(self.parameter_control.dict)
+        except Exception:
+            pass
+        # Nothing may be left pending that would recompute over this again.
+        self._pending_changed_constants = set()
+        self._invalidate_histogram_cache()
+        self.update_plots()
+        self.update_curve_overlays()
+
+    def _invalidate_histogram_cache(self) -> None:
+        """Drop cached values and histograms so the redraw re-bins the new data.
+
+        The fit changed the numbers in the plotted columns without touching the
+        axis choice, the gate or the bins — every key the caches are keyed on —
+        so without this the plots would redraw the population the fit started
+        from.
+        """
+        self.invalidate_values_cache()
+        control = getattr(self, "plot_control", None)
+        for method in ("clear_histogram_cache", "clear_frame_histogram_cache"):
+            clear = getattr(control, method, None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception as exc:
+                    logging.debug("Could not clear %s: %s", method, exc)
+
+    def _apply_fitted_params_to_constants(self, params: "dict") -> None:
+        """Push any fitted *curve* parameter that names an ndX constant into the table.
+
+        The constant it lands on may be one the equations read, in which case
+        the derived columns no longer match the constants they were computed
+        from — recompute them and redraw, exactly as if the constant had been
+        fitted directly.
+        """
+        pc = getattr(self, "parameter_control", None)
+        group = getattr(pc, "parameter_group", None)
         if group is None:
             return
         try:
             pdict = group.parameters_all_dict
         except Exception:
             return
-        changed = False
+        shaping = {p.name for p in self._constants_shaping_data()}
+        changed = set()
         for name, value in params.items():
             p = pdict.get(name)
             if p is not None:
                 p.value = float(value)
                 if isinstance(self.constants, dict):
                     self.constants[name] = float(value)
-                changed = True
-        if changed:
+                changed.add(name)
+        if not changed:
+            return
+        moved_data = changed & shaping
+        if moved_data:
+            self._after_constants_fitted(moved_data)  # recomputes and redraws
+        else:
             try:
-                pc._table.set_params(group.parameters_all)
-            except Exception:
+                pc.claim_table_controllers()
+            except AttributeError:
                 pass
 
     def update_curve_overlays(self):

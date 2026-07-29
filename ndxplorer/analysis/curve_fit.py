@@ -23,6 +23,13 @@ the result is written back into the curve. Parameters that name an nDXplorer
 constant, and parameters that are *crosslinked* to another parameter, arrive
 fixed — a linked value belongs to its master, so fitting it would be meaningless.
 
+nDXplorer's **constants** can join the fit as :class:`DataParameters`. They are
+not curve parameters: they are the inputs of the equations that build the
+plotted axes, so freeing one moves the burst population rather than the line —
+which is how ``gamma`` and ``beta`` are determined in the first place. A fit
+carrying them re-derives the data at every step, on the bin edges and columns it
+started with.
+
 :class:`CurveFit` is the persistent handle the GUI dialog drives (build once,
 edit fix/free, ``run`` repeatedly). :func:`fit_equation_to_marginal` and
 :func:`fit_equation_to_histogram` are the one-shot conveniences used by the
@@ -34,7 +41,7 @@ Qt-free and headless-testable; ChiSurf is imported lazily.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -59,6 +66,9 @@ class CurveFitResult:
         The fitted model evaluated at the input x (for redraw/preview).
     message
         A short reason when ``ok`` is False.
+    data_params
+        Fitted ``{name: value}`` for the *data* parameters (nDXplorer constants)
+        that took part — empty when the fit only moved the curve.
     """
 
     ok: bool
@@ -66,6 +76,7 @@ class CurveFitResult:
     chi2r: float = float("nan")
     y_fit: Optional[np.ndarray] = None
     message: Optional[str] = None
+    data_params: Dict[str, float] = field(default_factory=dict)
 
     def __bool__(self) -> bool:  # noqa: D105
         return self.ok
@@ -77,12 +88,47 @@ def bin_centers(edges: Sequence[float]) -> np.ndarray:
     return 0.5 * (e[:-1] + e[1:])
 
 
+def _oriented(
+    counts: Sequence[Sequence[float]],
+    x_edges: Sequence[float],
+    y_edges: Sequence[float],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the histogram x-first ``(nx, ny)`` with its two edge arrays."""
+    h = np.asarray(counts, dtype=float)
+    xe = np.asarray(x_edges, dtype=float)
+    ye = np.asarray(y_edges, dtype=float)
+    if h.ndim != 2 or h.size == 0:
+        raise CurveFitError("no 2-D histogram to fit")
+    if h.shape[0] == ye.size - 1 and h.shape[1] == xe.size - 1:
+        # Producers hand back (ny, nx) — ndX's own ``Histogram2D.H`` does — so
+        # orient it x-first. Note this branch also matches a square histogram
+        # that is *already* x-first, which is why every caller must pass the
+        # (ny, nx) orientation ``plot_histogram`` returns.
+        h = h.T
+    if h.shape[0] != xe.size - 1 or h.shape[1] != ye.size - 1:
+        raise CurveFitError("histogram does not match its bin edges")
+    return h, xe, ye
+
+
+def populated_columns(
+    counts: Sequence[Sequence[float]],
+    x_edges: Sequence[float],
+    y_edges: Sequence[float],
+    *,
+    min_counts: float = 3.0,
+) -> np.ndarray:
+    """Boolean mask of the x columns holding at least ``min_counts`` events."""
+    h, _, _ = _oriented(counts, x_edges, y_edges)
+    return h.sum(axis=1) >= float(min_counts)
+
+
 def ridge_from_histogram(
     counts: Sequence[Sequence[float]],
     x_edges: Sequence[float],
     y_edges: Sequence[float],
     *,
     min_counts: float = 3.0,
+    keep: Optional[Sequence[bool]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Reduce a displayed 2-D histogram to the ``y(x)`` points a curve fits to.
 
@@ -101,6 +147,13 @@ def ridge_from_histogram(
         Bin edges of the two axes (``nx + 1`` and ``ny + 1`` long).
     min_counts : float, optional
         Minimum number of events for a column to be used.
+    keep : array_like of bool, optional
+        Use exactly these columns instead of re-deciding from ``min_counts``.
+        A fit that moves the *data* (see :class:`DataParameters`) re-reduces the
+        histogram at every step and must return the same number of points every
+        time, or the optimiser's residual vector changes length underneath it.
+        A forced column that has emptied comes back as ``nan``, which the
+        residual drops.
 
     Returns
     -------
@@ -115,34 +168,249 @@ def ridge_from_histogram(
         If the histogram is empty, does not match its edges, or too few columns
         survive to fit anything.
     """
-    h = np.asarray(counts, dtype=float)
-    xe = np.asarray(x_edges, dtype=float)
-    ye = np.asarray(y_edges, dtype=float)
-    if h.ndim != 2 or h.size == 0:
-        raise CurveFitError("no 2-D histogram to fit")
-    if h.shape[0] == ye.size - 1 and h.shape[1] == xe.size - 1:
-        # Some producers hand back (ny, nx); orient it x-first.
-        h = h.T
-    if h.shape[0] != xe.size - 1 or h.shape[1] != ye.size - 1:
-        raise CurveFitError("histogram does not match its bin edges")
+    h, xe, ye = _oriented(counts, x_edges, y_edges)
 
     xc = bin_centers(xe)
     yc = bin_centers(ye)
     n = h.sum(axis=1)
-    keep = n >= float(min_counts)
-    if int(keep.sum()) < 3:
-        raise CurveFitError("too few populated columns to fit (need 3)")
+    if keep is None:
+        mask = n >= float(min_counts)
+        if int(mask.sum()) < 3:
+            raise CurveFitError("too few populated columns to fit (need 3)")
+    else:
+        mask = np.asarray(keep, dtype=bool)
+        if mask.size != n.size:
+            raise CurveFitError("column mask does not match the histogram")
 
-    h = h[keep]
-    n = n[keep]
-    mean = (h * yc).sum(axis=1) / n
-    var = (h * (yc - mean[:, None]) ** 2).sum(axis=1) / n
-    sem = np.sqrt(np.maximum(var, 0.0) / n)
+    h = h[mask]
+    n = n[mask]
+    # A forced column may have run empty; report it as nan rather than dividing
+    # by zero (the caller's residual skips the point).
+    safe = np.where(n > 0, n, np.nan)
+    mean = (h * yc).sum(axis=1) / safe
+    var = (h * (yc - mean[:, None]) ** 2).sum(axis=1) / safe
+    sem = np.sqrt(np.maximum(var, 0.0) / safe)
     floor = 0.5 * float(np.median(np.diff(yc))) if yc.size > 1 else 1.0
-    return xc[keep], mean, np.maximum(sem, floor)
+    return xc[mask], mean, np.maximum(sem, floor)
 
 
-class CurveFit:
+def ridge_from_values(
+    x: Sequence[float],
+    y: Sequence[float],
+    x_edges: Sequence[float],
+    *,
+    weights: Optional[Sequence[float]] = None,
+    y_edges: Optional[Sequence[float]] = None,
+    keep: Optional[Sequence[bool]] = None,
+    min_counts: float = 3.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The same reduction as :func:`ridge_from_histogram`, from unbinned values.
+
+    One weighted mean of y per x column, with its standard error. Taking it over
+    the values rather than over the displayed y bins matters as soon as a
+    constant is being fitted: a *binned* mean moves in steps, as bursts cross
+    bin edges, so the finite-difference derivative reads exactly zero and the
+    optimiser stops before it starts.
+
+    ``y_edges`` only supplies the error floor (half a displayed y bin); ``keep``
+    pins the columns, as in :func:`ridge_from_histogram`.
+    """
+    edges = np.asarray(x_edges, dtype=float)
+    n_cols = edges.size - 1
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    column = np.searchsorted(edges, x, side="right") - 1
+    inside = (column >= 0) & (column < n_cols) & np.isfinite(y)
+    column, values = column[inside], y[inside]
+    w = (
+        np.ones(values.shape)
+        if weights is None
+        else np.asarray(weights, dtype=float)[inside]
+    )
+
+    n = np.bincount(column, weights=w, minlength=n_cols)
+    total = np.bincount(column, weights=w * values, minlength=n_cols)
+    square = np.bincount(column, weights=w * values * values, minlength=n_cols)
+    if keep is None:
+        mask = n >= float(min_counts)
+        if int(mask.sum()) < 3:
+            raise CurveFitError("too few populated columns to fit (need 3)")
+    else:
+        mask = np.asarray(keep, dtype=bool)
+        if mask.size != n_cols:
+            raise CurveFitError("column mask does not match the bin edges")
+
+    safe = np.where(n > 0, n, np.nan)
+    mean = total / safe
+    var = np.maximum(square / safe - mean ** 2, 0.0)
+    sem = np.sqrt(var / safe)
+    floor = 1.0
+    if y_edges is not None:
+        ye = np.asarray(y_edges, dtype=float)
+        if ye.size > 2:
+            floor = 0.5 * float(np.median(np.diff(ye)))
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers[mask], mean[mask], np.maximum(sem[mask], floor)
+
+
+class CurveFitAborted(RuntimeError):
+    """Raised inside a fit when the caller's progress callback says to stop."""
+
+
+def _weighted_residual(
+    y: np.ndarray, model: np.ndarray, ey: Optional[np.ndarray]
+) -> np.ndarray:
+    """Weighted residual of ``model`` against ``y``, skipping absent points.
+
+    A point is skipped (residual zero) where the model does not reach, where
+    the data column ran empty, or where its weight is not usable — never
+    dropped, because a residual vector that changes length between steps is not
+    something the optimiser can work with.
+    """
+    y = np.asarray(y, dtype=float)
+    resid = np.zeros(y.shape, dtype=float)
+    good = np.isfinite(model) & np.isfinite(y)
+    if ey is not None:
+        ey = np.asarray(ey, dtype=float)
+        good &= np.isfinite(ey) & (ey > 0)
+    if not good.any():
+        # Nothing overlaps: a large flat residual, so the optimiser walks back
+        # towards the data instead of reading a perfect fit off an empty set.
+        return np.full(y.shape, 1e6)
+    weights = ey[good] if ey is not None else 1.0
+    resid[good] = (y[good] - model[good]) / weights
+    return resid
+
+
+#: Finite-difference step for a fit that moves the data. Counting data changes
+#: in steps — a burst crosses a bin edge, or it does not — so the default step
+#: (~1e-8, relative) measures a derivative of exactly zero and the optimiser
+#: stops before it has started. A step of a per-mille actually moves the
+#: population, which is what the derivative has to be taken over.
+DATA_PARAMETER_STEP = 1e-3
+
+
+def _least_squares(
+    variables: Sequence[Any],
+    residuals: Callable[[np.ndarray], np.ndarray],
+    diff_step: Optional[float] = None,
+):
+    """Run ``scipy.optimize.least_squares`` over parameters with armed bounds."""
+    from scipy.optimize import least_squares
+
+    start = np.array([float(p.value) for p in variables], dtype=float)
+    lower, upper = [], []
+    for p in variables:
+        bounded = bool(getattr(p, "bounds_on", False))
+        lower.append(float(p.lb) if bounded else -np.inf)
+        upper.append(float(p.ub) if bounded else np.inf)
+    lower, upper = np.array(lower), np.array(upper)
+    # least_squares rejects a start that sits on the wrong side of a bound.
+    return least_squares(
+        residuals,
+        np.clip(start, lower, upper),
+        bounds=(lower, upper),
+        diff_step=diff_step,
+    )
+
+
+@dataclass
+class DataParameters:
+    """Parameters that move the **data**, not the curve.
+
+    nDXplorer's constants (the detection-correction factor ``gG/gR``, the
+    background rates, ``alpha``, ``PhiA``/``PhiD``, ``tauD0`` …) are the inputs
+    of the equations that build the plotted axes, so freeing one does not
+    reshape the curve — it moves the burst population under it. That is exactly
+    how ``gamma`` and ``beta`` are determined: by requiring that the measured
+    population sits on the static FRET line.
+
+    Fitting them therefore means re-deriving the data at every step:
+    :attr:`refresh` is called with the names that moved, recomputes the derived
+    columns and re-bins them **on the bin edges the fit started with**, and
+    returns the new ``(x, y, ey)``. The x grid is fixed for the life of the fit
+    (same edges, same columns), so only y and its weights move and the
+    optimiser's residual vector keeps its length.
+
+    Attributes
+    ----------
+    parameters : list of FittingParameter
+        The constants offered to the fit. They are the *live* objects of the
+        constants table, so a fitted value is already in the table when the fit
+        returns. Fixed ones are left alone.
+    refresh : callable
+        ``refresh(changed_names) -> (x, y, ey)``; recomputes the data for the
+        parameters' current values.
+    """
+
+    parameters: List[Any] = field(default_factory=list)
+    refresh: Optional[Callable[[Sequence[str]], Tuple[np.ndarray, np.ndarray, np.ndarray]]] = None
+
+    def free(self) -> List[Any]:
+        """The parameters the user has freed for the fit."""
+        return [p for p in self.parameters if not getattr(p, "fixed", True)]
+
+    def values(self) -> Dict[str, float]:
+        """Current ``{name: value}`` of every offered parameter."""
+        return {p.name: float(p.value) for p in self.parameters}
+
+
+class _DataParameterHost:
+    """Mixin: a fit that may also optimise :class:`DataParameters`.
+
+    Both fit flavours (equation and parametric) can carry them, and both have
+    to do the same three things — expose them to the dialog, add the free ones
+    to the optimiser's vector, and re-read the data whenever one moves.
+    """
+
+    _data: Optional[DataParameters] = None
+    _progress: Optional[Callable[[int], Any]] = None
+    _steps: int = 0
+
+    def attach_data_parameters(self, data_parameters: Optional[DataParameters]) -> None:
+        """Offer nDXplorer's constants to this fit (``None`` to offer none)."""
+        self._data = data_parameters
+
+    def set_progress(self, callback: Optional[Callable[[int], Any]]) -> None:
+        """Report every step to ``callback(step)``; return ``False`` there to stop.
+
+        A fit that re-derives the data is seconds rather than milliseconds, so
+        the caller needs both a heartbeat to show and a way out of it.
+        """
+        self._progress = callback
+
+    def _note_step(self) -> None:
+        """Count one model evaluation and honour a stop request."""
+        self._steps += 1
+        if self._progress is not None and self._progress(self._steps) is False:
+            raise CurveFitAborted("stopped")
+
+    @property
+    def data_parameters(self) -> List[Any]:
+        """The constants offered to this fit (empty when there are none)."""
+        return list(self._data.parameters) if self._data is not None else []
+
+    def free_data_parameters(self) -> List[Any]:
+        """The offered constants the user has freed."""
+        if self._data is None or self._data.refresh is None:
+            return []
+        return self._data.free()
+
+    def fitted_data_values(self) -> Dict[str, float]:
+        """``{name: value}`` of the constants that actually took part.
+
+        The fixed ones are not reported: nothing moved them, and the caller
+        uses this list to decide which columns to recompute and redraw.
+        """
+        return {p.name: float(p.value) for p in self.free_data_parameters()}
+
+    def _refresh_data(self, names: Sequence[str]):
+        """Recompute the data for the constants' current values."""
+        return self._data.refresh(list(names))
+
+
+class CurveFit(_DataParameterHost):
     """A built ChiSurf ``ParseModel`` fit of an equation to displayed data.
 
     Build it with :func:`build_curve_fit` (or one of the ``build_*_fit``
@@ -228,8 +496,14 @@ class CurveFit:
     def run(self) -> CurveFitResult:
         """Optimise every free parameter (holding the fixed ones); return the result."""
         free = [p for p in self.parameters if not getattr(p, "fixed", False)]
-        if not free:
+        free_data = self.free_data_parameters()
+        if not free and not free_data:
             return CurveFitResult(False, message="all parameters are fixed")
+        if free_data:
+            # A freed constant moves the *data*, which ChiSurf's optimiser knows
+            # nothing about — equation and constants are optimised together here
+            # instead, re-deriving the data at every step.
+            return self._run_joint(free, free_data)
         try:
             self._model.update_model()
             self._fit.run()
@@ -247,6 +521,66 @@ class CurveFit:
             chi2r = float("nan")
         return CurveFitResult(True, params=params, chi2r=chi2r, y_fit=y_fit)
 
+    def _set_data(self, y: np.ndarray, ey: np.ndarray) -> None:
+        """Put the re-derived data on the fit, so it holds what was fitted.
+
+        Only y and its weights are written: the x grid is fixed for the life of
+        a data-parameter fit (same bin edges, same columns), which is what keeps
+        the residual vector's length constant.
+        """
+        try:
+            self._fit.data.y = np.asarray(y, dtype=float)
+            self._fit.data.ey = np.asarray(ey, dtype=float)
+        except Exception:
+            pass
+
+    def _run_joint(self, free: List[Any], free_data: List[Any]) -> CurveFitResult:
+        """Optimise equation parameters and freed constants in one vector."""
+        variables = list(free) + list(free_data)
+        names = [p.name for p in free_data]
+        start = [float(p.value) for p in variables]
+
+        def residuals(values: np.ndarray) -> np.ndarray:
+            for param, value in zip(variables, values):
+                param.value = float(value)
+            self._note_step()
+            x, y, ey = self._refresh_data(names)
+            self._model.update_model()
+            return _weighted_residual(y, np.asarray(self._model.y, dtype=float), ey)
+
+        try:
+            solution = _least_squares(
+                variables, residuals, diff_step=DATA_PARAMETER_STEP
+            )
+        except CurveFitAborted:
+            for param, value in zip(variables, start):
+                param.value = float(value)
+            self._refresh_data(names)
+            return CurveFitResult(False, message="stopped")
+        except Exception as exc:
+            for param, value in zip(variables, start):  # leave the data as it was
+                param.value = float(value)
+            try:
+                self._refresh_data(names)
+            except Exception:
+                pass
+            return CurveFitResult(False, message=f"fit failed: {exc}")
+
+        for param, value in zip(variables, solution.x):
+            param.value = float(value)
+        x, y, ey = self._refresh_data(names)
+        self._set_data(y, ey)
+        self._model.update_model()
+        model = np.asarray(self._model.y, dtype=float)
+        dof = max(1, int(np.isfinite(model).sum()) - len(variables))
+        return CurveFitResult(
+            True,
+            params=self.values(),
+            chi2r=float(2.0 * solution.cost / dof),
+            y_fit=model,
+            data_params=self.fitted_data_values(),
+        )
+
 
 #: Parameters that set a curve's *resolution*, not its shape. They come from the
 #: function's signature like any other, but optimising the number of points a
@@ -257,7 +591,7 @@ RESOLUTION_PARAMETERS = frozenset(
 )
 
 
-class ParametricCurveFit:
+class ParametricCurveFit(_DataParameterHost):
     """Fit a curve that returns ``(x, y)`` — a FRET line — to displayed data.
 
     The predefined FRET lines are not ``y = f(x)``: they sweep a mean distance
@@ -323,62 +657,66 @@ class ParametricCurveFit:
         out[inside] = np.interp(self._x[inside], xs, ys)
         return out
 
-    def _residuals(self, free_values: np.ndarray, free: List[Any]) -> np.ndarray:
+    def _residuals(
+        self, free_values: np.ndarray, free: List[Any], data_names: Sequence[str]
+    ) -> np.ndarray:
         for param, value in zip(free, free_values):
             param.value = float(value)
+        self._note_step()
+        if data_names:
+            # A freed constant moved the population, not the curve: re-derive
+            # the data before comparing anything to it.
+            self._x, self._y, self._ey = self._refresh_data(data_names)
         model = self._evaluate(self.values())
-        good = np.isfinite(model)
-        if not good.any():
-            # The curve missed the data entirely: a large flat residual, so the
-            # optimiser walks back towards where the data is instead of dividing
-            # by an empty array.
-            return np.full(self._x.shape, 1e6)
-        resid = np.zeros(self._x.shape)
-        weights = (
-            self._ey[good] if self._ey is not None else np.ones(int(good.sum()))
-        )
-        resid[good] = (self._y[good] - model[good]) / np.where(
-            weights > 0, weights, 1.0
-        )
-        return resid
+        return _weighted_residual(self._y, model, self._ey)
 
     def run(self) -> CurveFitResult:
         """Optimise every free parameter (holding the fixed ones)."""
-        try:
-            from scipy.optimize import least_squares
-        except Exception as exc:  # pragma: no cover - depends on environment
-            return CurveFitResult(False, message=f"scipy is not available: {exc}")
-
         free = [p for p in self._parameters if not getattr(p, "fixed", False)]
-        if not free:
+        free_data = self.free_data_parameters()
+        if not free and not free_data:
             return CurveFitResult(False, message="all parameters are fixed")
 
-        start = np.array([float(p.value) for p in free])
-        lower, upper = [], []
-        for p in free:
-            bounded = bool(getattr(p, "bounds_on", False))
-            lower.append(float(p.lb) if bounded else -np.inf)
-            upper.append(float(p.ub) if bounded else np.inf)
-        # least_squares rejects a start that sits on the wrong side of a bound.
-        start = np.clip(start, np.array(lower), np.array(upper))
+        variables = free + free_data
+        data_names = [p.name for p in free_data]
+        start = [float(p.value) for p in variables]
 
         try:
-            fit = least_squares(
-                self._residuals, start, args=(free,), bounds=(lower, upper)
+            fit = _least_squares(
+                variables,
+                lambda v: self._residuals(v, variables, data_names),
+                diff_step=DATA_PARAMETER_STEP if data_names else None,
             )
-        except Exception as exc:
-            for param, value in zip(free, start):  # leave the curve as it was
+        except CurveFitAborted:
+            for param, value in zip(variables, start):
                 param.value = float(value)
+            if data_names:
+                self._x, self._y, self._ey = self._refresh_data(data_names)
+            return CurveFitResult(False, message="stopped")
+        except Exception as exc:
+            for param, value in zip(variables, start):  # leave things as they were
+                param.value = float(value)
+            if data_names:
+                try:
+                    self._x, self._y, self._ey = self._refresh_data(data_names)
+                except Exception:
+                    pass
             return CurveFitResult(False, message=f"fit failed: {exc}")
 
-        for param, value in zip(free, fit.x):
+        for param, value in zip(variables, fit.x):
             param.value = float(value)
+        if data_names:
+            self._x, self._y, self._ey = self._refresh_data(data_names)
         model = self._evaluate(self.values())
         good = np.isfinite(model)
-        dof = max(1, int(good.sum()) - len(free))
+        dof = max(1, int(good.sum()) - len(variables))
         self._chi2r = float(2.0 * fit.cost / dof)
         return CurveFitResult(
-            True, params=self.values(), chi2r=self._chi2r, y_fit=model
+            True,
+            params=self.values(),
+            chi2r=self._chi2r,
+            y_fit=model,
+            data_params=self.fitted_data_values(),
         )
 
 
@@ -592,6 +930,8 @@ def fit_equation_to_histogram(
 
 __all__ = [
     "CurveFit",
+    "CurveFitAborted",
+    "DataParameters",
     "ParametricCurveFit",
     "RESOLUTION_PARAMETERS",
     "build_function_fit",
@@ -599,7 +939,9 @@ __all__ = [
     "CurveFitError",
     "CurveFitResult",
     "bin_centers",
+    "populated_columns",
     "ridge_from_histogram",
+    "ridge_from_values",
     "build_curve_fit",
     "build_marginal_fit",
     "build_histogram_fit",

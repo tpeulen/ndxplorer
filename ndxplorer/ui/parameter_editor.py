@@ -94,7 +94,12 @@ if HAS_CHISURF:
                     # per wheel notch, with a stack trace each time.
                     remote=False,
                 )
-                layout.addWidget(self._table, 1)
+                # Top-aligned: the table is sized to its rows, so the panel's
+                # spare height belongs *below* it. Added with no stretch and an
+                # explicit stretch after it, the table starts at the top of the
+                # tab instead of floating in the middle of it.
+                layout.addWidget(self._table, 0, QtCore.Qt.AlignTop)
+                layout.addStretch(1)
                 # Add-parameter affordance so a new constant can be created
                 # without hand-editing the JSON.
                 add_bar = QtWidgets.QHBoxLayout()
@@ -189,6 +194,32 @@ if HAS_CHISURF:
                     self._mapping = self._cg.ConstantsMapping(self._group)
                 return self._mapping
             return self._cs_editor.dict if self._cs_editor is not None else {}
+
+        @property
+        def parameter_group(self):
+            """The constants as a ``FittingParameterGroup`` (``None`` fallback).
+
+            The group is what a fit is given when a constant is freed to be
+            optimised, so callers take it from here rather than reaching into
+            the widget's internals.
+            """
+            return self._group
+
+        def claim_table_controllers(self) -> None:
+            """Take the rows' ``controller`` back from another table.
+
+            A constant can be shown twice — here and in the overlay curve's fit
+            dialog — and the table built last owns ``parameter.controller``.
+            When that one closes this table reclaims its rows, or a later
+            ``finalize()`` would repaint nothing.
+            """
+            if self._table is None:
+                return
+            try:
+                self._table.claim_controllers()
+            except Exception:
+                pass
+            self._refresh_table()
 
         # -- external (fit-driven) change subscription --------------------
         def _subscribe_external(self):

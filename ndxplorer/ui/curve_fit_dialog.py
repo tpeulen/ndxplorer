@@ -8,6 +8,12 @@ over the free parameters, holding the fixed ones. Parameters that name an
 nDXplorer constant — and parameters crosslinked to another parameter — arrive
 fixed (see :mod:`ndxplorer.analysis.curve_fit`).
 
+Below the curve's parameters sits a second table: nDXplorer's own constants,
+the ones the equations read. Freeing one puts it in the same fit, where it moves
+the **data** rather than the curve — the population is re-derived from the
+equations at every step, which is how a detection-correction factor is
+determined from a static FRET line.
+
 What the curve is fitted *to* is chosen here: the displayed two-dimensional
 distribution, or a one-dimensional marginal. Changing the target rebuilds the
 fit from the values the user is looking at.
@@ -31,6 +37,13 @@ try:
 except Exception:  # pragma: no cover - depends on environment
     ParameterGroupTableWidget = None
     HAS_FIT_TABLE = False
+
+try:
+    from chisurf.gui.autoform.sections.progress_section import InlineProgressWidget
+    from chisurf.gui.progress import ChiSurfProgress
+except Exception:  # pragma: no cover - depends on environment
+    InlineProgressWidget = None
+    ChiSurfProgress = None
 
 
 class _CompactColumns:
@@ -95,10 +108,26 @@ class CurveFitDialog(QtWidgets.QDialog):
         layout.addLayout(self._table_slot)
         layout.addStretch(1)
         self._table = None
+        #: Second table: nDXplorer's constants, with its caption. Built only
+        #: when the fit has some to offer.
+        self._data_table = None
+        self._data_label = None
 
         self._status = QtWidgets.QLabel("")
+        # The result line lists every fitted parameter; without wrapping the
+        # dialog's width simply cuts it off mid-number.
+        self._status.setWordWrap(True)
         self._status.setStyleSheet("color: #555; font-size: 9pt;")
         layout.addWidget(self._status)
+
+        # ChiSurf's inline progress bar, sitting in the dialog: a fit that
+        # re-derives the data takes seconds, and ``ChiSurfProgress`` renders
+        # into this widget (with its own Cancel) instead of stacking a modal
+        # dialog on top of a modal dialog — or going silent headlessly.
+        self._progress_bar = None
+        if InlineProgressWidget is not None:
+            self._progress_bar = InlineProgressWidget()
+            layout.addWidget(self._progress_bar)
 
         buttons = QtWidgets.QHBoxLayout()
         self._btn_fit = QtWidgets.QPushButton("🎯 Fit")
@@ -158,16 +187,38 @@ class CurveFitDialog(QtWidgets.QDialog):
         self._install_table()
 
     def _install_table(self) -> None:
-        """Replace the parameter table — a new target means new parameters."""
-        if self._table is not None:
-            self._table_slot.removeWidget(self._table)
-            self._table.setParent(None)
-            self._table.deleteLater()
-            self._table = None
+        """Replace the parameter tables — a new target means new parameters."""
+        for attr in ("_table", "_data_label", "_data_table"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                self._table_slot.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                setattr(self, attr, None)
         if self._cf is None or not HAS_FIT_TABLE:
             return
-        self._table = ParameterGroupTableWidget(
-            self._cf.parameters,
+        self._table = self._make_table(self._cf.parameters)
+        self._table_slot.addWidget(self._table, 1)
+
+        # nDXplorer's own constants, if this fit can offer any. They are the
+        # live parameters of the Parameters tab, so a value fitted here is
+        # already in that table when the fit returns.
+        data_parameters = getattr(self._cf, "data_parameters", [])
+        if data_parameters:
+            self._data_label = QtWidgets.QLabel(
+                "nDXplorer parameters — a freed one moves the <b>data</b>, "
+                "which is re-derived from the equations at every step."
+            )
+            self._data_label.setWordWrap(True)
+            self._data_label.setStyleSheet("color: #555; font-size: 9pt;")
+            self._table_slot.addWidget(self._data_label)
+            self._data_table = self._make_table(data_parameters, cap=240)
+            self._table_slot.addWidget(self._data_table, 1)
+
+    def _make_table(self, params, cap: int = 360):
+        """Build one capped parameter table over ``params``."""
+        table = ParameterGroupTableWidget(
+            params,
             section=_CompactColumns(),
             parent=self,
             # These belong to a local throw-away fit the backend knows nothing
@@ -176,24 +227,42 @@ class CurveFitDialog(QtWidgets.QDialog):
         )
         # The shared widget sizes itself to show every row; cap that here so a
         # twenty-parameter equation cannot make the dialog taller than a screen.
-        inner = getattr(self._table, "_table", None)
+        inner = getattr(table, "_table", None)
         if inner is not None:
-            capped = min(360, inner.height())
+            capped = min(cap, inner.height())
             inner.setMinimumHeight(capped)
             inner.setMaximumHeight(capped)
             inner.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self._table_slot.addWidget(self._table, 1)
+        return table
 
     # -- fitting -----------------------------------------------------------
     def _do_fit(self) -> None:
         if self._cf is None:
             return
-        result = self._cf.run()
+        # Freeing a constant re-derives the plotted columns per step, so this is
+        # seconds rather than milliseconds — show a heartbeat and a way out
+        # instead of a frozen window.
+        moves_data = bool(getattr(self._cf, "free_data_parameters", list)())
+        self._btn_fit.setEnabled(False)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            QtWidgets.QApplication.processEvents()
+            if moves_data and ChiSurfProgress is not None:
+                self._status.setText("fitting — the data is re-derived at every step…")
+                self._status.setStyleSheet("color: #555; font-size: 9pt;")
+                result = self._run_with_progress()
+            else:
+                result = self._cf.run()
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self._btn_fit.setEnabled(True)
         self._refresh_table()
         if result.ok:
+            fitted = dict(result.params)
+            fitted.update(result.data_params)  # only the constants that moved
             self._status.setText(
                 f"reduced χ² = {result.chi2r:.4g}   ·   "
-                + ", ".join(f"{k}={v:.4g}" for k, v in result.params.items())
+                + ", ".join(f"{k}={v:.4g}" for k, v in fitted.items())
             )
             self._status.setStyleSheet("color: #2e7d32; font-size: 9pt;")
         else:
@@ -205,16 +274,51 @@ class CurveFitDialog(QtWidgets.QDialog):
             except Exception:
                 pass
 
-    def _refresh_table(self) -> None:
-        if self._table is None:
-            return
-        try:
-            self._table.set_params(self._cf.parameters)
-        except Exception:
+    def _run_with_progress(self):
+        """Run the fit under ChiSurf's progress bar, cancellable.
+
+        The step count is not known ahead of time (the optimiser decides), so
+        the bar is a busy indicator that reports the evaluation it is on. The
+        fit runs on the GUI thread — it drives the window's own data and
+        parameters — so the event loop is pumped from the callback rather than
+        from a worker, and Cancel is delivered by returning ``False`` there.
+        """
+        with ChiSurfProgress(
+            self, "Fitting — re-deriving the data at every step…", 0,
+            title="Curve fit",
+        ) as bar:
+
+            def step(index: int):
+                bar.update_progress(index, f"step {index}")
+                QtWidgets.QApplication.processEvents()
+                return not bar.wasCanceled()
+
             try:
-                self._table.sync()
-            except Exception:
+                self._cf.set_progress(step)
+            except AttributeError:
                 pass
+            try:
+                return self._cf.run()
+            finally:
+                try:
+                    self._cf.set_progress(None)
+                except AttributeError:
+                    pass
+
+    def _refresh_table(self) -> None:
+        for table, params in (
+            (self._table, getattr(self._cf, "parameters", None)),
+            (self._data_table, getattr(self._cf, "data_parameters", None)),
+        ):
+            if table is None:
+                continue
+            try:
+                table.set_params(params)
+            except Exception:
+                try:
+                    table.sync()
+                except Exception:
+                    pass
 
 
 __all__ = ["CurveFitDialog", "HAS_FIT_TABLE", "DEFAULT_TARGETS"]

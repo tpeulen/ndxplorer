@@ -23,6 +23,35 @@ def test_topological_order_handles_out_of_declaration_order():
     np.testing.assert_allclose(df["B"].to_numpy(), np.arange(1, 6) * 2 + 1)
 
 
+def test_targets_narrow_the_recompute_to_what_is_asked_for():
+    """A fit reads two columns; it must not pay for the other forty.
+
+    ``targets`` keeps only the outputs those columns depend on — the difference
+    between a fit step costing one equation and costing every equation the
+    constant feeds.
+    """
+    df = pd.DataFrame({"x": np.arange(1, 6, dtype=float)})
+    eqs = [
+        {"A": "'x' * 'k'"},          # the plotted column's dependency
+        {"Plotted": "'A' + 1"},      # what the fit reads
+        {"Elsewhere": "'A' * 10"},   # depends on k too, nobody is looking at it
+    ]
+    compute_values_ast(df, {"k": 2.0}, eqs)
+    elsewhere_before = df["Elsewhere"].to_numpy().copy()
+
+    recomputed = compute_values_ast(
+        df, {"k": 3.0}, eqs, changed_constants={"k"}, targets=["Plotted"]
+    )
+
+    assert set(recomputed) == {"A", "Plotted"}
+    np.testing.assert_allclose(df["Plotted"].to_numpy(), np.arange(1, 6) * 3 + 1)
+    np.testing.assert_allclose(df["Elsewhere"].to_numpy(), elsewhere_before)
+
+    # ...and the full recompute afterwards catches the column up.
+    compute_values_ast(df, {"k": 3.0}, eqs, changed_constants={"k"})
+    np.testing.assert_allclose(df["Elsewhere"].to_numpy(), np.arange(1, 6) * 30)
+
+
 def test_targeted_recompute_only_transitive_dependents():
     df = pd.DataFrame({"x": np.arange(1, 6, dtype=float)})
     eqs = [
