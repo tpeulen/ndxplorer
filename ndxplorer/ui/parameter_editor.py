@@ -88,10 +88,12 @@ if HAS_CHISURF:
                     section=_CompactColumns(),
                     parent=self,
                     on_change=self._on_change,
-                    # These constants are ndXplorer's own; no fit holds them, so
-                    # an edit must not be sent to the fitting backend, which can
-                    # only answer "fit not found" -- once per keystroke, and once
-                    # per wheel notch, with a stack trace each time.
+                    # These constants are ndXplorer's own and no fit holds them,
+                    # so an edit has no backend counterpart to send: this window
+                    # is where they live, and the value written here is the value.
+                    # Establishing a link is the exception -- it reaches into a
+                    # fit, so it is sent (addressed by UUID) and the fit is
+                    # finalised on the other side.
                     remote=False,
                 )
                 # Top-aligned: the table is sized to its rows, so the panel's
