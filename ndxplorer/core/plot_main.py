@@ -2564,8 +2564,27 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.g_2dplot.show()
         if hasattr(self.g_2dplot, 'update'):
             self.g_2dplot.update()
-        
+
+        # An overlay curve is drawn in *bin* coordinates against these very
+        # edges, so a new histogram leaves it describing the old one -- drawn
+        # over data it no longer matches, which is worse than not drawn at all.
+        # This is the one place a new histogram becomes the displayed image, so
+        # it is the one place the overlays have to follow.
+        self._refresh_curve_overlays()
+
         logging.debug(f"[DISPLAY] Completed 2D plot update: H shape={H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
+
+    def _refresh_curve_overlays(self) -> None:
+        """Redraw the overlay curves for the histogram now on screen."""
+        if getattr(self, "_refreshing_overlays", False):
+            return
+        self._refreshing_overlays = True
+        try:
+            self.update_curve_overlays()
+        except Exception as exc:
+            logging.warning("Could not update the curve overlays: %s", exc)
+        finally:
+            self._refreshing_overlays = False
 
     def bin_to_value(self, bin_idx, edges):
         """Convert a bin index to a value (center of the bin).
@@ -3123,8 +3142,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Nothing may be left pending that would recompute over this again.
         self._pending_changed_constants = set()
         self._invalidate_histogram_cache()
-        self.update_plots()
-        self.update_curve_overlays()
+        self.update_plots()   # redraws the overlays with the moved population
 
     def _invalidate_histogram_cache(self) -> None:
         """Drop cached values and histograms so the redraw re-bins the new data.

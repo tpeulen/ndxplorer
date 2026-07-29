@@ -295,3 +295,28 @@ def test_a_freed_constant_is_fitted_by_moving_the_data(qapp, monkeypatch):
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
+
+
+def test_a_new_histogram_redraws_the_overlays(qapp, monkeypatch):
+    """Curves are drawn in bin coordinates, so they follow the histogram.
+
+    Otherwise a redraw — new binning, a moved population after a constant was
+    fitted — leaves the curve describing the plot it was drawn for, over data
+    it no longer matches.
+    """
+    from ndxplorer.core.histograms import Histogram2D
+    from ndxplorer.core.plot_main import NDXplorer
+
+    _patch_histograms(monkeypatch)
+    ndx = NDXplorer()
+    ndx._deferred_init()
+    counts, xe, ye = _line_histogram()
+    ndx._histogram["2d"] = Histogram2D(H=counts.T, x_edges=xe, y_edges=ye)
+
+    redrawn = []
+    monkeypatch.setattr(NDXplorer, "update_curve_overlays",
+                        lambda self: redrawn.append(True))
+
+    ndx.update_2d_plot()
+
+    assert redrawn, "a new 2-D histogram must redraw the overlay curves"
