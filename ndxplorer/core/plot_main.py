@@ -575,7 +575,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.equation_editor = EquationEditor(parent=self, names_provider=_equation_names)
         self.curve_overlay_widget = CurveOverlayWidget(self)
         self.curve_evaluator = CurveEvaluator()
-        self.curve_items = []  # List to store curve items
 
         ui_candidates = [
             Path(__file__).resolve().with_name("plot_main.ui"),
@@ -1233,17 +1232,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # 2.5. Clear all overlays (curve overlays and Gaussian overlays)
         try:
-            # Remove any existing curve overlay items from the overlay plot
-            if hasattr(self, 'curve_items') and hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
-                for item in list(self.curve_items):
-                    try:
-                        self.overlay_plot.del_item(item)
-                    except Exception:
-                        pass
-                try:
-                    self.curve_items.clear()
-                except Exception:
-                    self.curve_items = []
+            # Remove any drawn curves from the overlay plot. It owns the curves
+            # it was handed and hands back no per-item handles, so clearing goes
+            # through the plot rather than through a list kept on this side.
+            if getattr(self, 'overlay_plot', None) is not None:
+                self.overlay_plot.clear_curves()
             # Clear curve overlay widgets (also resets internal state and emits signal)
             if hasattr(self, 'curve_overlay_widget') and self.curve_overlay_widget is not None:
                 self.curve_overlay_widget.clear_curves()
@@ -3238,9 +3231,6 @@ class NDXplorer(QtWidgets.QMainWindow):
                 value_to_bin_func=self.value_to_bin
             )
 
-            # Update the curve_items reference to maintain backward compatibility
-            self.curve_items = self.curve_overlay_widget.curve_items
-            
         except (ValueError, KeyError, IndexError, AttributeError) as e:
             logging.warning(f"Error updating curve overlays: {str(e)}")
             return
