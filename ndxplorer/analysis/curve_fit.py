@@ -421,6 +421,12 @@ def _weighted_residual(
 #: optimiser default moved from machine epsilon to 1e-6 for the same reason.)
 FINITE_DIFFERENCE_STEP = 1e-3
 
+#: How far, in displayed bins, a bin of the cloud still pulls on the curve. A
+#: burst plot is a mixture — populations plus junk — so a curve that describes
+#: the populations must not be dragged by everything else on the plot; beyond a
+#: couple of bins the pull flattens off instead of growing.
+CLOUD_SCALE = 2.0
+
 
 #: How many model evaluations the pre-fit scan may spend. ChiSurf's grid scan
 #: is the implementation; this is only what nDXplorer asks it for.
@@ -625,12 +631,18 @@ class _DataParameterHost:
         self._frozen_ey = None if ey is None else np.asarray(ey, dtype=float).copy()
 
     def _refresh_data(self, names: Sequence[str]):
-        """Recompute the data for the constants' current values."""
-        x, y, ey = self._data.refresh(list(names))
+        """Recompute the data for the constants' current values.
+
+        ``refresh`` hands back ``(x, y, ey)`` for reduced points, or
+        ``(x, y, ey, weights)`` for a cloud — passed through as it came, with
+        only the (estimated, and therefore frozen) errors substituted.
+        """
+        refreshed = tuple(self._data.refresh(list(names)))
+        x, y, ey = refreshed[0], refreshed[1], refreshed[2]
         frozen = self._frozen_ey
         if frozen is not None and ey is not None and np.shape(frozen) == np.shape(ey):
             ey = frozen
-        return x, y, ey
+        return (x, y, ey) + refreshed[3:]
 
 
 class CurveFit(_DataParameterHost):
@@ -901,6 +913,8 @@ class ParametricCurveFit(_DataParameterHost):
         y: np.ndarray,
         ey: Optional[np.ndarray] = None,
         ex: Optional[float] = None,
+        weights: Optional[np.ndarray] = None,
+        f_scale: float = CLOUD_SCALE,
     ) -> None:
         self._function = function
         self._parameters = list(parameters)
@@ -911,7 +925,44 @@ class ParametricCurveFit(_DataParameterHost):
         #: column a point was reduced from. Without it the distance would
         #: compare nanoseconds with efficiencies.
         self._ex = float(ex) if ex else self._default_ex()
+        #: Per-point weight. Set (to bin counts) the fit is against the **cloud**
+        #: — every occupied bin of the distribution, not one reduced point per
+        #: column. ``None`` keeps the reduced-point fit.
+        self._weights = None if weights is None else np.asarray(weights, dtype=float)
+        self._f_scale = float(f_scale)
+        #: What the cloud weighed when the fit was built, and what a point that
+        #: has left the plotted range costs. Without them a fit with a free
+        #: constant has a trivial way out: push the population off the axes,
+        #: and a cloud with nothing in it matches every curve perfectly.
+        self._total_weight = (
+            None if self._weights is None else float(np.sum(self._weights))
+        )
+        self._outside_penalty = (
+            None if self._weights is None
+            else float(np.log1p((self._grid_extent() / self._f_scale) ** 2))
+        )
         self._chi2r = float("nan")
+
+    def _grid_extent(self) -> float:
+        """How many bins across the displayed range is, at its widest."""
+        try:
+            return float(max(np.unique(self._x).size, np.unique(self._y).size))
+        except Exception:  # pragma: no cover - degenerate input
+            return 10.0
+
+    def _set_data(self, refreshed) -> None:
+        """Take what ``refresh`` handed back: reduced points, or a cloud.
+
+        A cloud carries a fourth array — what each of its bins counted — because
+        the population it weighs moves with the constant being fitted.
+        """
+        if len(refreshed) == 4:
+            self._x, self._y, self._ey, self._weights = (
+                np.asarray(a, dtype=float) if a is not None else None
+                for a in refreshed
+            )
+        else:
+            self._x, self._y, self._ey = refreshed
 
     def _default_ex(self) -> float:
         """Half the spacing of the data's x, when the caller did not say."""
@@ -989,8 +1040,20 @@ class ParametricCurveFit(_DataParameterHost):
         sign[sign == 0] = 1.0
 
         out = np.zeros(self._y.shape)
-        out[good] = sign * distance
-        return out
+        if self._weights is None:
+            out[good] = sign * distance
+            return out
+        # Fitting the cloud:each bin weighs what it counted, and a bin further
+        # than a few scales away stops pulling — the plot is a mixture and a
+        # curve does not have to describe the junk to describe the populations.
+        out[good] = np.sqrt(
+            self._weights[good] * np.log1p((distance / self._f_scale) ** 2)
+        )
+        # ...and one more component for everything that has left the plot: it
+        # cannot be described by a curve that is not there, so it costs what
+        # the furthest visible point would.
+        lost = max(float(self._total_weight) - float(np.sum(self._weights)), 0.0)
+        return np.append(out, np.sqrt(lost * self._outside_penalty))
 
     def _residuals(
         self, free_values: np.ndarray, free: List[Any], data_names: Sequence[str]
@@ -1001,7 +1064,7 @@ class ParametricCurveFit(_DataParameterHost):
         if data_names:
             # A freed constant moved the population, not the curve: re-derive
             # the data before comparing anything to it.
-            self._x, self._y, self._ey = self._refresh_data(data_names)
+            self._set_data(self._refresh_data(data_names))
         return self._distance_residual(self.values())
 
     def run(self, scan: Optional[bool] = None) -> CurveFitResult:
@@ -1020,7 +1083,9 @@ class ParametricCurveFit(_DataParameterHost):
         variables = free + free_data
         data_names = [p.name for p in free_data]
         start = [float(p.value) for p in variables]
-        if data_names:
+        if data_names and self._weights is None:
+            # Reduced points carry an estimated error; a cloud carries counts,
+            # which are not something the fit could inflate.
             self.freeze_weights(self._ey)
 
         try:
@@ -1034,14 +1099,14 @@ class ParametricCurveFit(_DataParameterHost):
             for param, value in zip(variables, start):
                 param.value = float(value)
             if data_names:
-                self._x, self._y, self._ey = self._refresh_data(data_names)
+                self._set_data(self._refresh_data(data_names))
             return CurveFitResult(False, message="stopped")
         except Exception as exc:
             for param, value in zip(variables, start):  # leave things as they were
                 param.value = float(value)
             if data_names:
                 try:
-                    self._x, self._y, self._ey = self._refresh_data(data_names)
+                    self._set_data(self._refresh_data(data_names))
                 except Exception:
                     pass
             return CurveFitResult(False, message=f"fit failed: {exc}")
@@ -1049,7 +1114,7 @@ class ParametricCurveFit(_DataParameterHost):
         for param, value in zip(variables, fit.x):
             param.value = float(value)
         if data_names:
-            self._x, self._y, self._ey = self._refresh_data(data_names)
+            self._set_data(self._refresh_data(data_names))
         model = self._evaluate(self.values())
         dof = max(1, int(np.isfinite(self._y).sum()) - len(variables))
         self._chi2r = float(2.0 * fit.cost / dof)
@@ -1275,6 +1340,7 @@ __all__ = [
     "CurveFitAborted",
     "SCAN_BUDGET",
     "DataParameters",
+    "CLOUD_SCALE",
     "FINITE_DIFFERENCE_STEP",
     "ParametricCurveFit",
     "RESOLUTION_PARAMETERS",

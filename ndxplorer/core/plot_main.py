@@ -2695,6 +2695,44 @@ class NDXplorer(QtWidgets.QMainWindow):
             weights = None if weights is None else weights[good]
         return d1, d2, weights
 
+    def cloud_for_fit(self, x_edges, y_edges, values=None, counts=None):
+        """The displayed distribution as weighted points: one per **bin**.
+
+        What a curve is fitted to when "Fit through the cloud" is chosen. A
+        reduction to one point per column cannot describe a *population*: a blob
+        reduces to a horizontal streak across its own columns, and no line
+        through those streaks passes through the blob and the next population as
+        well — which is what a person means by "the population is on the line".
+
+        Every bin is returned, empty ones included with a weight of zero, so
+        that the point set does not change while a fitted constant slides the
+        population from one bin into another: the optimiser's residual vector
+        has to keep its length, and a population that moves must be able to
+        arrive somewhere.
+        """
+        if counts is None:
+            if values is None:
+                read, _ = self.fit_data_reader()
+                values = read()
+            d1, d2, weights = values
+            counts = self.histogram_on_edges(d1, d2, x_edges, y_edges, weights)
+        counts = np.asarray(counts, dtype=float)
+        xc = 0.5 * (np.asarray(x_edges, float)[:-1] + np.asarray(x_edges, float)[1:])
+        yc = 0.5 * (np.asarray(y_edges, float)[:-1] + np.asarray(y_edges, float)[1:])
+        gx, gy = np.meshgrid(xc, yc, indexing="ij")
+        return gx.ravel(), gy.ravel(), counts.ravel()
+
+    def histogram_on_edges(self, d1, d2, x_edges, y_edges, weights=None):
+        """Bin values on given edges, x-first ``(nx, ny)``, without drawing."""
+        from ..utils.fast_histogram import fast_histogram_2d
+
+        counts, _, _ = fast_histogram_2d(
+            np.asarray(d1, dtype=float), np.asarray(d2, dtype=float),
+            [np.asarray(x_edges, dtype=float), np.asarray(y_edges, dtype=float)],
+            weights=weights,
+        )
+        return np.asarray(counts, dtype=float)
+
     def _constants_shaping_data(self):
         """The constants the equations actually use, as live parameters.
 
@@ -2734,7 +2772,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def build_data_parameters(self, target, x_edges, y_edges=None, keep=None,
-                              min_counts=3.0, reduction="population"):
+                              min_counts=3.0, reduction="cloud"):
         """Offer the data-shaping constants to a curve fit.
 
         Parameters
@@ -2772,7 +2810,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         def refresh(changed):
             self.recompute_for_constants(changed, targets=targets)
-            d1, d2, weights = read()
+            values = read()
+            d1, d2, weights = values
+            if target == "2d" and reduction == "cloud":
+                px, py, w = self.cloud_for_fit(edges, y_edges, values)
+                return px, py, np.full(py.shape, float(np.median(np.diff(y_edges)))), w
             if target == "2d":
                 return ridge_from_values(
                     d1, d2, edges, weights=weights, y_edges=y_edges,
@@ -2787,7 +2829,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         return DataParameters(parameters=parameters, refresh=refresh)
 
-    def build_curve_fit_for(self, curve, target="2d", reduction="population",
+    def build_curve_fit_for(self, curve, target="2d", reduction="cloud",
                             min_counts=3.0):
         """Build the fit of ``curve`` against what is displayed.
 
@@ -2831,6 +2873,11 @@ class NDXplorer(QtWidgets.QMainWindow):
             populated_columns,
             ridge_from_histogram,
         )
+        from ..analysis.curve_fit import _oriented as _oriented_histogram
+
+        def _oriented_counts(h, xe, ye):
+            """The displayed histogram, x-first, as the cloud builder wants it."""
+            return _oriented_histogram(h, xe, ye)[0]
         from ..plotting.histograms import plot_histogram
 
         equation = curve.get_equation()
@@ -2876,18 +2923,25 @@ class NDXplorer(QtWidgets.QMainWindow):
             except Exception as exc:
                 raise CurveFitError(f"no 2-D histogram displayed ({exc})") from exc
             keep = populated_columns(counts, x_edges, y_edges, min_counts=min_counts)
-            if int(keep.sum()) < 3:
-                raise CurveFitError("too few populated columns to fit (need 3)")
-            x, y, ey = ridge_from_histogram(
-                counts, x_edges, y_edges, keep=keep, reduction=reduction
-            )
-            if parametric:
-                cf = build_function_fit(curve.function, params, x, y, ey)
-            else:
-                cf = build_curve_fit(
-                    equation, x, y, ey,
-                    initial=initial, constant_names=constant_names,
+            if reduction == "cloud":
+                cf = self._build_cloud_fit(
+                    curve, x_edges, y_edges,
+                    params if parametric else None,
+                    counts=_oriented_counts(counts, x_edges, y_edges),
                 )
+            else:
+                if int(keep.sum()) < 3:
+                    raise CurveFitError("too few populated columns to fit (need 3)")
+                x, y, ey = ridge_from_histogram(
+                    counts, x_edges, y_edges, keep=keep, reduction=reduction
+                )
+                if parametric:
+                    cf = build_function_fit(curve.function, params, x, y, ey)
+                else:
+                    cf = build_curve_fit(
+                        equation, x, y, ey,
+                        initial=initial, constant_names=constant_names,
+                    )
             data_parameters = self.build_data_parameters(
                 "2d", x_edges, y_edges, keep=keep, min_counts=min_counts,
                 reduction=reduction,
@@ -2917,6 +2971,52 @@ class NDXplorer(QtWidgets.QMainWindow):
                 if p.name in const_values:
                     p.fixed = True
         return cf
+
+    def _build_cloud_fit(self, curve, x_edges, y_edges, params=None, counts=None):
+        """A fit of ``curve`` against every occupied bin of the distribution.
+
+        An equation curve is *traced* for this — evaluated on a dense grid over
+        the displayed x range — so that both kinds of curve are compared with
+        the cloud the same way: by distance, in displayed bins.
+        """
+        from ..analysis.curve_fit import (
+            RESOLUTION_PARAMETERS,
+            CurveFitError,
+            ParametricCurveFit,
+        )
+
+        group = getattr(curve, "parameter_group", None)
+        if group is None:
+            raise CurveFitError("fitting the cloud needs the chisurf parameter table")
+        parameters = list(params) if params is not None else list(group.parameters_all)
+        px, py, weights = self.cloud_for_fit(x_edges, y_edges, counts=counts)
+        if float(np.count_nonzero(weights)) < 3:
+            raise CurveFitError("too little displayed data to fit")
+
+        x_edges = np.asarray(x_edges, dtype=float)
+        y_edges = np.asarray(y_edges, dtype=float)
+        x_bin = float(np.median(np.diff(x_edges)))
+        y_bin = float(np.median(np.diff(y_edges)))
+
+        function = curve.function if getattr(curve, "is_function", False) else None
+        if function is None:
+            equation = curve.get_equation()
+            evaluator = curve.curve_evaluator
+            grid = np.linspace(x_edges[0], x_edges[-1], 400)
+
+            def function(**values):
+                y = evaluator.evaluate(equation, grid, values)
+                if isinstance(y, tuple):
+                    return y
+                return grid, np.asarray(y, dtype=float)
+
+        for p in parameters:
+            if p.name in RESOLUTION_PARAMETERS:
+                p.fixed = True
+        return ParametricCurveFit(
+            function, parameters, px, py,
+            ey=np.full(py.shape, y_bin), ex=x_bin, weights=weights,
+        )
 
     def on_fit_curve_to_data(self, curve):
         """Fit an overlay curve's parameters to the data that is displayed.
@@ -2965,7 +3065,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         if HAS_FIT_TABLE:
             dlg = CurveFitDialog(
                 self,
-                build_fit=lambda target, reduction="population": (
+                build_fit=lambda target, reduction="cloud": (
                     self.build_curve_fit_for(curve, target, reduction)
                 ),
                 on_applied=_write_back,

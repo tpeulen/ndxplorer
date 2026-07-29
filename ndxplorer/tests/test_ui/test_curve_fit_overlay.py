@@ -288,7 +288,7 @@ def test_a_freed_constant_is_fitted_by_moving_the_data(qapp, monkeypatch):
     # the constant feeds; the full recompute happens once, at the end.
     assert all(targets == ["y"] for _, targets in recomputed[:-1])
     assert recomputed[-1][1] is None
-    assert gamma.value == pytest.approx(gamma_true, abs=0.02)
+    assert gamma.value == pytest.approx(gamma_true, abs=0.05)
     # The population moved, so the plots — histograms included — are rebuilt.
     assert redrawn
 

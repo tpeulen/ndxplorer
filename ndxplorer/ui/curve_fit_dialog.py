@@ -63,8 +63,9 @@ DEFAULT_TARGETS: Tuple[Tuple[str, str], ...] = (
 #: How a column of the displayed distribution is reduced to the point the curve
 #: is fitted through.
 DEFAULT_REDUCTIONS: Tuple[Tuple[str, str], ...] = (
-    ("population", "through the population"),
-    ("mean", "through the column mean"),
+    ("cloud", "the cloud (every populated bin)"),
+    ("population", "the population of each column"),
+    ("mean", "the mean of each column"),
 )
 
 
@@ -112,10 +113,12 @@ class CurveFitDialog(QtWidgets.QDialog):
         for key, label in DEFAULT_REDUCTIONS:
             self._reduction_combo.addItem(label, key)
         self._reduction_combo.setToolTip(
-            "Through the population follows the densest population of each "
-            "column (its local mode), so a second population — donor-only "
-            "bursts, say — does not pull the curve off the one you are "
-            "describing. The column mean averages everything in the column."
+            "The cloud fits the curve to the distribution itself: every "
+            "populated bin pulls on it, weighted by what it counted, and a bin "
+            "more than a couple of bins away stops pulling — so the curve "
+            "follows the populations and ignores the junk. Reducing each column "
+            "to one point instead cannot describe a population: a blob reduces "
+            "to a horizontal streak across its own columns."
         )
         reduction_row.addWidget(self._reduction_combo, 1)
         self._scan_box = QtWidgets.QCheckBox("Scan first")

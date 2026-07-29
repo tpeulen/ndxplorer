@@ -272,3 +272,89 @@ def test_the_scan_never_returns_a_worse_answer():
     assert cf.run(scan=True).ok
     values = cf.values()
     assert values["mu"] == pytest.approx(0.6, abs=0.03)
+
+
+def _cloud(x, y, x_edges, y_edges):
+    """The distribution as every bin's centre, weighted by what it counts."""
+    counts, _, _ = np.histogram2d(x, y, bins=[x_edges, y_edges])
+    xc = 0.5 * (x_edges[:-1] + x_edges[1:])
+    yc = 0.5 * (y_edges[:-1] + y_edges[1:])
+    gx, gy = np.meshgrid(xc, yc, indexing="ij")
+    return gx.ravel(), gy.ravel(), counts.ravel()
+
+
+def test_a_curve_is_fitted_through_two_populations():
+    """What a person means by "on the line": through the blob and the next one.
+
+    Per-column reduction cannot express this — a blob reduces to a horizontal
+    streak across its own columns, and no line follows both that streak and the
+    second population.
+    """
+    from ndxplorer.analysis.curve_fit import ParametricCurveFit
+
+    rng = np.random.default_rng(0)
+    x_edges = np.linspace(0.0, 4.0, 41)
+    y_edges = np.linspace(-0.1, 1.1, 31)
+    # A "FRET" blob on the line y = 1 - x/3, and a "donor-only" blob at its end.
+    blob_x = rng.normal(1.5, 0.25, 3000)
+    blob_y = rng.normal(0.5, 0.06, 3000)
+    only_x = rng.normal(3.0, 0.12, 800)
+    only_y = rng.normal(0.0, 0.03, 800)
+    x = np.concatenate([blob_x, only_x])
+    y = np.concatenate([blob_y, only_y])
+
+    def line(end=3.0, num_points=120):
+        t = np.linspace(0.0, float(end), int(num_points))
+        return t, 1.0 - t / float(end)
+
+    end = FittingParameter(name="end", value=4.0, fixed=False, lb=1.0, ub=6.0,
+                           bounds_on=True)
+    points = FittingParameter(name="num_points", value=120, fixed=True)
+    px, py, weights = _cloud(x, y, x_edges, y_edges)
+
+    fit = ParametricCurveFit(
+        line, [end, points], px, py,
+        ey=np.full(py.shape, float(np.median(np.diff(y_edges)))),
+        ex=float(np.median(np.diff(x_edges))), weights=weights,
+    )
+    assert fit.run().ok
+    assert end.value == pytest.approx(3.0, abs=0.15)
+
+
+def test_the_cloud_cannot_be_emptied_to_win():
+    """Pushing the population off the plot must not read as a perfect fit.
+
+    A cloud with nothing in it matches every curve, so a fit with a free
+    constant would take that way out. What has left the plotted range is
+    charged for.
+    """
+    from ndxplorer.analysis.curve_fit import ParametricCurveFit
+
+    x_edges = np.linspace(0.0, 1.0, 21)
+    y_edges = np.linspace(0.0, 1.0, 21)
+    rng = np.random.default_rng(0)
+    x = rng.uniform(0.1, 0.9, 2000)
+    y = np.clip(0.5 * x + 0.2 + rng.normal(0.0, 0.03, x.size), 0.0, 1.0)
+
+    scale = FittingParameter(name="scale", value=1.0, fixed=False, lb=0.05, ub=5.0,
+                             bounds_on=True)
+
+    def line(num_points=100):
+        t = np.linspace(0.0, 1.0, int(num_points))
+        return t, 0.5 * t + 0.2
+
+    def refresh(changed):
+        px, py, w = _cloud(x, y * float(scale.value), x_edges, y_edges)
+        return px, py, np.full(py.shape, float(np.median(np.diff(y_edges)))), w
+
+    points = FittingParameter(name="num_points", value=100, fixed=True)
+    px, py, weights = _cloud(x, y, x_edges, y_edges)
+    fit = ParametricCurveFit(
+        line, [points], px, py,
+        ey=np.full(py.shape, float(np.median(np.diff(y_edges)))),
+        ex=float(np.median(np.diff(x_edges))), weights=weights,
+    )
+    fit.attach_data_parameters(DataParameters(parameters=[scale], refresh=refresh))
+
+    assert fit.run().ok
+    assert scale.value == pytest.approx(1.0, abs=0.05)   # not driven off the plot
