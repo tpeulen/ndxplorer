@@ -200,3 +200,75 @@ def test_forced_columns_keep_the_residual_length():
     x2, y2, _ = ridge_from_histogram(counts.T, x_edges, y_edges, keep=keep)
     assert x2.size == 3
     assert np.isnan(y2[1]) and np.isfinite(y2[[0, 2]]).all()
+
+
+def test_the_population_is_followed_not_the_average():
+    """A burst plot is a mixture, and the average of a mixture is nowhere.
+
+    A FRET population at E≈0.6 with a donor-only cluster at E≈0 in the same
+    columns: the mean lands between the two, the population reduction stays on
+    the one that is actually there.
+    """
+    from ndxplorer.analysis.curve_fit import ridge_from_values
+
+    rng = np.random.default_rng(0)
+    n = 4000
+    x = rng.uniform(0.5, 2.5, n)
+    y = np.where(
+        rng.random(n) < 0.75,
+        rng.normal(0.60, 0.05, n),      # the population
+        rng.normal(0.02, 0.03, n),      # donor-only, in the same columns
+    )
+    x_edges = np.linspace(0.5, 2.5, 11)
+    y_edges = np.linspace(-0.1, 1.0, 45)
+
+    _, mode, _ = ridge_from_values(x, y, x_edges, y_edges=y_edges,
+                                   reduction="population")
+    _, mean, _ = ridge_from_values(x, y, x_edges, y_edges=y_edges,
+                                   reduction="mean")
+
+    np.testing.assert_allclose(mode, 0.60, atol=0.03)
+    assert (mean < 0.55).all()          # dragged down by the second cluster
+
+
+def test_a_curve_is_not_rewarded_for_covering_less():
+    """The residual is a distance, so a shorter line does not score better.
+
+    With a vertical residual, a point the curve does not span contributes
+    nothing — so shrinking the curve until it covers only what already fits is
+    an improvement, and the optimiser takes it.
+    """
+    from ndxplorer.analysis.curve_fit import ParametricCurveFit
+
+    def line(end=2.0, num_points=200):
+        t = np.linspace(0.0, float(end), int(num_points))
+        return t, 1.0 - t / 2.0
+
+    x = np.linspace(0.1, 1.9, 19)
+    y = 1.0 - x / 2.0
+    ey = np.full(x.shape, 0.02)
+
+    end = FittingParameter(name="end", value=1.0, fixed=False, lb=0.2, ub=4.0,
+                           bounds_on=True)
+    points = FittingParameter(name="num_points", value=200, fixed=True)
+    fit = ParametricCurveFit(line, [end, points], x, y, ey)
+
+    assert fit.run().ok
+    # Anything from 1.9 on covers the data; shrinking below it must not pay.
+    assert end.value >= 1.85
+
+
+def test_the_scan_never_returns_a_worse_answer():
+    """A grid point is the deepest point, not the deepest basin."""
+    from ndxplorer.analysis.curve_fit import build_curve_fit
+
+    x = np.linspace(0.0, 1.0, 60)
+    y = 800.0 * np.exp(-((x - 0.6) ** 2) / (2 * 0.08 ** 2))
+    cf = build_curve_fit("a*exp(-(x-mu)**2/(2*sig**2))", x, y,
+                         initial={"a": 500.0, "mu": 0.5, "sig": 0.2})
+    for p in cf.parameters:
+        p.lb, p.ub, p.bounds_on = 0.0, 1000.0, True
+
+    assert cf.run(scan=True).ok
+    values = cf.values()
+    assert values["mu"] == pytest.approx(0.6, abs=0.03)

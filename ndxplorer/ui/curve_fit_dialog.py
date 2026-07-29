@@ -24,6 +24,7 @@ falls back to a direct fit when it is not.
 
 from __future__ import annotations
 
+import inspect
 from typing import Callable, Optional, Sequence, Tuple
 
 from qtpy import QtCore, QtWidgets
@@ -59,6 +60,13 @@ DEFAULT_TARGETS: Tuple[Tuple[str, str], ...] = (
     ("y", "Y marginal histogram"),
 )
 
+#: How a column of the displayed distribution is reduced to the point the curve
+#: is fitted through.
+DEFAULT_REDUCTIONS: Tuple[Tuple[str, str], ...] = (
+    ("population", "through the population"),
+    ("mean", "through the column mean"),
+)
+
 
 class CurveFitDialog(QtWidgets.QDialog):
     """Fit an overlay curve to the displayed data with per-parameter control."""
@@ -66,7 +74,7 @@ class CurveFitDialog(QtWidgets.QDialog):
     def __init__(
         self,
         parent: Optional[QtWidgets.QWidget],
-        build_fit: Callable[[str], CurveFit],
+        build_fit: Callable[[str, str], CurveFit],
         targets: Sequence[Tuple[str, str]] = DEFAULT_TARGETS,
         on_applied: Optional[Callable[[CurveFitResult], None]] = None,
         target: str = "2d",
@@ -89,11 +97,39 @@ class CurveFitDialog(QtWidgets.QDialog):
         self._target_combo.setCurrentIndex(max(0, self._target_combo.findData(target)))
         self._target_combo.setToolTip(
             "The displayed data fits y(x) to the two-dimensional distribution "
-            "(one weighted point per populated x column); a marginal fits the "
-            "curve to that axis's histogram of counts."
+            "(one point per populated x column); a marginal fits the curve to "
+            "that axis's histogram of counts."
         )
         target_row.addWidget(self._target_combo, 1)
         layout.addLayout(target_row)
+
+        # A burst plot is a mixture — a FRET population, donor-only at E≈0, a
+        # scatter of singles — so the column *average* lies where nothing is,
+        # and a line fitted through it misses the population it describes.
+        reduction_row = QtWidgets.QHBoxLayout()
+        reduction_row.addWidget(QtWidgets.QLabel("Fit through:"))
+        self._reduction_combo = QtWidgets.QComboBox()
+        for key, label in DEFAULT_REDUCTIONS:
+            self._reduction_combo.addItem(label, key)
+        self._reduction_combo.setToolTip(
+            "Through the population follows the densest population of each "
+            "column (its local mode), so a second population — donor-only "
+            "bursts, say — does not pull the curve off the one you are "
+            "describing. The column mean averages everything in the column."
+        )
+        reduction_row.addWidget(self._reduction_combo, 1)
+        self._scan_box = QtWidgets.QCheckBox("Scan first")
+        self._scan_box.setToolTip(
+            "Evaluate a coarse grid over the free parameters before the fit "
+            "and start it at the best point. A least-squares run only goes "
+            "downhill from where it starts, so a degenerate pair — a constant "
+            "that scales the data against a parameter that scales the curve — "
+            "otherwise strands it in the first dip. Costs a fixed number of "
+            "steps."
+        )
+        self._scan_box.setChecked(True)
+        reduction_row.addWidget(self._scan_box)
+        layout.addLayout(reduction_row)
 
         hint = QtWidgets.QLabel(
             "Free parameters are optimised, fixed ones held. Constants and "
@@ -141,6 +177,7 @@ class CurveFitDialog(QtWidgets.QDialog):
         layout.addLayout(buttons)
 
         self._target_combo.currentIndexChanged.connect(self._target_changed)
+        self._reduction_combo.currentIndexChanged.connect(self._target_changed)
         self._rebuild()
 
     # -- target ------------------------------------------------------------
@@ -159,18 +196,23 @@ class CurveFitDialog(QtWidgets.QDialog):
         """The key of the data the curve is currently fitted to."""
         return str(self._target_combo.currentData())
 
+    @property
+    def reduction(self) -> str:
+        """How a column is reduced to the point the curve is fitted through."""
+        return str(self._reduction_combo.currentData())
+
     def _target_changed(self) -> None:
         self._rebuild()
 
     def _rebuild(self) -> None:
-        """Build the fit for the selected target and show its parameters.
+        """Build the fit for the selected target/reduction and show its parameters.
 
         A failure here — no histogram, a selection with nothing in it — disables
         the Fit button and says why, rather than leaving a dialog that looks
         ready and does nothing.
         """
         try:
-            self._cf = self._build_fit(self.target)
+            self._cf = self._call_build()
             message = ""
         except CurveFitError as exc:
             self._cf = None
@@ -185,6 +227,21 @@ class CurveFitDialog(QtWidgets.QDialog):
             "color: #c62828; font-size: 9pt;" if message else "color: #555; font-size: 9pt;"
         )
         self._install_table()
+
+    def _call_build(self) -> CurveFit:
+        """Build the fit, telling the builder the reduction if it takes one.
+
+        The reduction is a later addition, so a builder written against the
+        original one-argument contract still works — asked, not assumed, so a
+        ``TypeError` raised *inside* a builder is never mistaken for one.
+        """
+        try:
+            takes_reduction = len(inspect.signature(self._build_fit).parameters) > 1
+        except (TypeError, ValueError):  # builtins, C callables
+            takes_reduction = False
+        if takes_reduction:
+            return self._build_fit(self.target, self.reduction)
+        return self._build_fit(self.target)
 
     def _install_table(self) -> None:
         """Replace the parameter tables — a new target means new parameters."""
@@ -252,7 +309,7 @@ class CurveFitDialog(QtWidgets.QDialog):
                 self._status.setStyleSheet("color: #555; font-size: 9pt;")
                 result = self._run_with_progress()
             else:
-                result = self._cf.run()
+                result = self._cf.run(scan=self._scan_box.isChecked())
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
             self._btn_fit.setEnabled(True)
@@ -298,7 +355,7 @@ class CurveFitDialog(QtWidgets.QDialog):
             except AttributeError:
                 pass
             try:
-                return self._cf.run()
+                return self._cf.run(scan=self._scan_box.isChecked())
             finally:
                 try:
                     self._cf.set_progress(None)
@@ -321,4 +378,5 @@ class CurveFitDialog(QtWidgets.QDialog):
                     pass
 
 
-__all__ = ["CurveFitDialog", "HAS_FIT_TABLE", "DEFAULT_TARGETS"]
+__all__ = ["CurveFitDialog", "HAS_FIT_TABLE", "DEFAULT_TARGETS",
+           "DEFAULT_REDUCTIONS"]

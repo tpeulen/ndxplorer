@@ -129,14 +129,15 @@ def ridge_from_histogram(
     *,
     min_counts: float = 3.0,
     keep: Optional[Sequence[bool]] = None,
+    reduction: str = "population",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Reduce a displayed 2-D histogram to the ``y(x)`` points a curve fits to.
 
-    Each x column of the histogram is summarised by the count-weighted mean of
-    y and the standard error of that mean, which is what makes the fit weight a
-    densely populated column more than a sparse one. Columns holding fewer than
-    ``min_counts`` events are dropped: with one or two bursts in a column the
-    mean is noise, and a point there would drag the curve as hard as a real one.
+    One point per x column: with ``reduction='population'`` (the default) the
+    centre of the column's densest population, and with ``'mean'`` its
+    count-weighted average. See :func:`ridge_from_values`, which this defers to
+    — a histogram is just its bin centres carrying the counts as weights — for
+    why the two differ and when it matters.
 
     Parameters
     ----------
@@ -154,13 +155,15 @@ def ridge_from_histogram(
         time, or the optimiser's residual vector changes length underneath it.
         A forced column that has emptied comes back as ``nan``, which the
         residual drops.
+    reduction : {'population', 'mean'}, optional
+        Which point of a column the curve is fitted through.
 
     Returns
     -------
     x, y, ey : ndarray
-        Column centres, their mean y, and the standard error of that mean
-        (floored at half a y-bin: a column can never be located better than the
-        binning it is displayed with).
+        Column centres, the reduced y, and its standard error (floored at half
+        a y bin: a column can never be located better than the binning it is
+        displayed with).
 
     Raises
     ------
@@ -169,29 +172,39 @@ def ridge_from_histogram(
         survive to fit anything.
     """
     h, xe, ye = _oriented(counts, x_edges, y_edges)
-
-    xc = bin_centers(xe)
     yc = bin_centers(ye)
-    n = h.sum(axis=1)
-    if keep is None:
-        mask = n >= float(min_counts)
-        if int(mask.sum()) < 3:
-            raise CurveFitError("too few populated columns to fit (need 3)")
-    else:
-        mask = np.asarray(keep, dtype=bool)
-        if mask.size != n.size:
-            raise CurveFitError("column mask does not match the histogram")
+    n_cols = h.shape[0]
 
-    h = h[mask]
-    n = n[mask]
-    # A forced column may have run empty; report it as nan rather than dividing
-    # by zero (the caller's residual skips the point).
-    safe = np.where(n > 0, n, np.nan)
-    mean = (h * yc).sum(axis=1) / safe
-    var = (h * (yc - mean[:, None]) ** 2).sum(axis=1) / safe
-    sem = np.sqrt(np.maximum(var, 0.0) / safe)
-    floor = 0.5 * float(np.median(np.diff(yc))) if yc.size > 1 else 1.0
-    return xc[mask], mean, np.maximum(sem, floor)
+    # A histogram *is* a weighted set of points: one per bin, at its centre,
+    # weighing what it counted. Reducing it is then the same operation as
+    # reducing the values, and there is one implementation of that.
+    x_of_bin = np.repeat(0.5 * (xe[:-1] + xe[1:]), yc.size)
+    y_of_bin = np.tile(yc, n_cols)
+    weights = h.ravel()
+    return ridge_from_values(
+        x_of_bin, y_of_bin, xe,
+        weights=weights, y_edges=ye, keep=keep, min_counts=min_counts,
+        reduction=reduction,
+    )
+
+
+#: How a column of the distribution is reduced to the one point a curve is
+#: fitted through.
+REDUCTIONS = ("population", "mean")
+
+
+def column_counts(
+    x: Sequence[float],
+    x_edges: Sequence[float],
+    weights: Optional[Sequence[float]] = None,
+) -> np.ndarray:
+    """Number of points (or their weight) in each x column."""
+    edges = np.asarray(x_edges, dtype=float)
+    n_cols = edges.size - 1
+    column = np.searchsorted(edges, np.asarray(x, dtype=float), side="right") - 1
+    inside = (column >= 0) & (column < n_cols)
+    w = None if weights is None else np.asarray(weights, dtype=float)[inside]
+    return np.bincount(column[inside], weights=w, minlength=n_cols)
 
 
 def ridge_from_values(
@@ -203,17 +216,55 @@ def ridge_from_values(
     y_edges: Optional[Sequence[float]] = None,
     keep: Optional[Sequence[bool]] = None,
     min_counts: float = 3.0,
+    reduction: str = "population",
+    bandwidth: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """The same reduction as :func:`ridge_from_histogram`, from unbinned values.
+    """Reduce each x column of the distribution to the point a curve fits through.
 
-    One weighted mean of y per x column, with its standard error. Taking it over
-    the values rather than over the displayed y bins matters as soon as a
-    constant is being fitted: a *binned* mean moves in steps, as bursts cross
-    bin edges, so the finite-difference derivative reads exactly zero and the
-    optimiser stops before it starts.
+    ``reduction='population'`` (the default) follows the **densest population**
+    in the column: the local mode, found by mean-shifting from the column's
+    kernel-density peak. ``reduction='mean'`` takes the plain weighted average
+    of the column instead.
 
-    ``y_edges`` only supplies the error floor (half a displayed y bin); ``keep``
-    pins the columns, as in :func:`ridge_from_histogram`.
+    The difference is the whole point. A burst plot is a *mixture* — a FRET
+    population, a donor-only population at E≈0, and a scatter of singles — and
+    the average of a mixture lies where nothing is. On real data the column mean
+    ran ~0.1 in E below the FRET population's ridge, so a static FRET line
+    fitted through it missed the population it was supposed to describe. The
+    local mode ignores whatever is not in the peak the column is made of.
+
+    Both are taken over the **unbinned** values, which is what keeps the
+    objective smooth while a fitted constant slides the population (a binned
+    mean moves in steps, and its derivative reads zero).
+
+    Parameters
+    ----------
+    x, y : array_like
+        The plotted values, one entry per point.
+    x_edges : array_like
+        Column edges (the displayed x bins).
+    weights : array_like, optional
+        Per-point weights.
+    y_edges : array_like, optional
+        The displayed y bins. Supplies the error floor (half a bin) and the
+        default kernel bandwidth.
+    keep : array_like of bool, optional
+        Use exactly these columns, as in :func:`ridge_from_histogram` — a fit
+        that moves the data must return the same number of points every step.
+    min_counts : float, optional
+        Minimum weight in a column for it to be used (when ``keep`` is None).
+    reduction : {'population', 'mean'}, optional
+        Which point the column is reduced to.
+    bandwidth : float, optional
+        Kernel width for the population mode. Defaults to three displayed y
+        bins, or a Silverman estimate when there are no ``y_edges``.
+
+    Returns
+    -------
+    x, y, ey : ndarray
+        Column centres, the reduced y, and its standard error (floored at half
+        a displayed y bin — a population cannot be located better than the
+        binning it is shown with).
     """
     edges = np.asarray(x_edges, dtype=float)
     n_cols = edges.size - 1
@@ -230,8 +281,6 @@ def ridge_from_values(
     )
 
     n = np.bincount(column, weights=w, minlength=n_cols)
-    total = np.bincount(column, weights=w * values, minlength=n_cols)
-    square = np.bincount(column, weights=w * values * values, minlength=n_cols)
     if keep is None:
         mask = n >= float(min_counts)
         if int(mask.sum()) < 3:
@@ -241,17 +290,96 @@ def ridge_from_values(
         if mask.size != n_cols:
             raise CurveFitError("column mask does not match the bin edges")
 
+    floor = 1.0
+    ye = None if y_edges is None else np.asarray(y_edges, dtype=float)
+    if ye is not None and ye.size > 2:
+        floor = 0.5 * float(np.median(np.diff(ye)))
+
+    if str(reduction) == "mean":
+        centre, sem = _column_mean(column, values, w, n, n_cols)
+    else:
+        centre, sem = _column_mode(
+            column, values, w, n, n_cols, ye, bandwidth
+        )
+
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers[mask], centre[mask], np.maximum(sem[mask], floor)
+
+
+def _column_mean(column, values, w, n, n_cols):
+    """Weighted mean of each column and the standard error of that mean."""
+    total = np.bincount(column, weights=w * values, minlength=n_cols)
+    square = np.bincount(column, weights=w * values * values, minlength=n_cols)
     safe = np.where(n > 0, n, np.nan)
     mean = total / safe
     var = np.maximum(square / safe - mean ** 2, 0.0)
-    sem = np.sqrt(var / safe)
-    floor = 1.0
-    if y_edges is not None:
-        ye = np.asarray(y_edges, dtype=float)
-        if ye.size > 2:
-            floor = 0.5 * float(np.median(np.diff(ye)))
-    centers = 0.5 * (edges[:-1] + edges[1:])
-    return centers[mask], mean[mask], np.maximum(sem[mask], floor)
+    return mean, np.sqrt(var / safe)
+
+
+def _column_mode(column, values, w, n, n_cols, y_edges, bandwidth, iterations: int = 8):
+    """Local mode of each column: the centre of its densest population.
+
+    Seeded at the column's smoothed density peak and refined by mean shift, so
+    the estimate is a smooth function of the values (a fitted constant slides
+    the population continuously) while a second population in the same column —
+    donor-only bursts at E≈0, say — is left where it is instead of being
+    averaged in.
+    """
+    if values.size == 0:
+        empty = np.full(n_cols, np.nan)
+        return empty, empty
+
+    grid = (
+        np.asarray(y_edges, dtype=float)
+        if y_edges is not None and np.size(y_edges) > 2
+        else np.linspace(float(values.min()), float(values.max()), 61)
+    )
+    grid_centres = 0.5 * (grid[:-1] + grid[1:])
+    n_bins = grid_centres.size
+    step = float(np.median(np.diff(grid))) if n_bins > 1 else 1.0
+    if bandwidth is None:
+        spread = float(np.std(values)) or step
+        bandwidth = max(3.0 * step, 0.0) or 1.06 * spread * values.size ** -0.2
+    h = float(bandwidth) or step
+
+    # Seed: the peak of each column's density, on the displayed y grid smoothed
+    # with the same kernel (an unsmoothed histogram's argmax is noise).
+    ybin = np.clip(np.searchsorted(grid, values, side="right") - 1, 0, n_bins - 1)
+    counts = np.bincount(column * n_bins + ybin, weights=w,
+                         minlength=n_cols * n_bins).reshape(n_cols, n_bins)
+    radius = max(1, int(round(h / step)))
+    kernel = np.exp(-0.5 * (np.arange(-2 * radius, 2 * radius + 1) / radius) ** 2)
+    kernel /= kernel.sum()
+    # Centre-slice the full convolution rather than asking for mode="same":
+    # with few y bins the kernel is longer than the row, and numpy then returns
+    # the *kernel's* length -- the argmax of which indexes past the grid.
+    offset = kernel.size // 2
+    smooth = np.apply_along_axis(
+        lambda row: np.convolve(row, kernel)[offset:offset + n_bins], 1, counts
+    )
+    centre = grid_centres[np.argmax(smooth, axis=1)]
+    centre = np.where(n > 0, centre, np.nan)
+
+    # Mean shift onto the local mode of the unbinned values.
+    for _ in range(iterations):
+        seed = centre[column]
+        weight = w * np.exp(-0.5 * ((values - seed) / h) ** 2)
+        num = np.bincount(column, weights=weight * values, minlength=n_cols)
+        den = np.bincount(column, weights=weight, minlength=n_cols)
+        moved = np.divide(num, den, out=np.full(n_cols, np.nan), where=den > 0)
+        centre = np.where(np.isfinite(moved), moved, centre)
+
+    # Spread of the population that was actually used, over its effective size.
+    seed = centre[column]
+    weight = w * np.exp(-0.5 * ((values - seed) / h) ** 2)
+    den = np.bincount(column, weights=weight, minlength=n_cols)
+    den2 = np.bincount(column, weights=weight * weight, minlength=n_cols)
+    dev = values - seed
+    var_num = np.bincount(column, weights=weight * dev * dev, minlength=n_cols)
+    safe = np.where(den > 0, den, np.nan)
+    var = np.maximum(var_num / safe, 0.0)
+    n_eff = np.divide(den * den, den2, out=np.full(n_cols, np.nan), where=den2 > 0)
+    return centre, np.sqrt(var / np.where(n_eff > 0, n_eff, np.nan))
 
 
 class CurveFitAborted(RuntimeError):
@@ -283,12 +411,94 @@ def _weighted_residual(
     return resid
 
 
-#: Finite-difference step for a fit that moves the data. Counting data changes
-#: in steps — a burst crosses a bin edge, or it does not — so the default step
-#: (~1e-8, relative) measures a derivative of exactly zero and the optimiser
-#: stops before it has started. A step of a per-mille actually moves the
-#: population, which is what the derivative has to be taken over.
-DATA_PARAMETER_STEP = 1e-3
+#: Finite-difference step for the fits in this module. Their objectives are not
+#: smooth at the 1e-8 scale the optimiser probes by default: counting data moves
+#: in steps (a burst crosses a bin edge, or it does not), and the distance to a
+#: *traced* curve is a minimum over discrete points. Probed that finely, the
+#: derivative reads zero or noise, and the fit terminates on ``xtol`` having
+#: moved nothing — a static FRET line stayed exactly where it was put while
+#: reporting success. A per-mille step is over the roughness. (ChiSurf's own
+#: optimiser default moved from machine epsilon to 1e-6 for the same reason.)
+FINITE_DIFFERENCE_STEP = 1e-3
+
+
+#: How many model evaluations the pre-fit scan may spend. ChiSurf's grid scan
+#: is the implementation; this is only what nDXplorer asks it for.
+SCAN_BUDGET = 240
+
+
+def _bounds_of(variables: Sequence[Any]) -> Tuple[np.ndarray, np.ndarray]:
+    """Lower/upper bounds of ``variables``, ``inf`` where none are armed."""
+    lower, upper = [], []
+    for p in variables:
+        bounded = bool(getattr(p, "bounds_on", False))
+        lower.append(float(p.lb) if bounded else -np.inf)
+        upper.append(float(p.ub) if bounded else np.inf)
+    return np.array(lower), np.array(upper)
+
+
+def _coarse_scan(
+    variables: Sequence[Any],
+    cost: Callable[[np.ndarray], float],
+    budget: int = SCAN_BUDGET,
+) -> bool:
+    """Move ``variables`` to the best point of a coarse grid over them.
+
+    A fit that moves the data has a rough, often degenerate landscape — a
+    detection-correction factor scales the population while a lifetime scales
+    the line, so the two trade off along a valley and a purely local optimiser
+    slides a little way down it and reports that as the answer. Scanning first
+    costs a fixed number of evaluations and starts the fit in the right basin.
+
+    The grid itself is ChiSurf's (:mod:`chisurf.core.fitting.grid_scan`), which
+    is where this kind of search belongs — nDXplorer only says what to scan.
+    Returns whether anything was moved; ``False`` when ChiSurf is not available
+    or the grid was skipped, and the local fit then runs from where the user
+    left the parameters.
+    """
+    try:
+        from chisurf.core.fitting.grid_scan import grid_scan
+    except Exception:  # pragma: no cover - depends on environment
+        return False
+    result = grid_scan(variables, cost, budget=budget, apply_best=True)
+    return bool(result and result.improved)
+
+
+def _fit_from_best_start(
+    variables: Sequence[Any],
+    residuals: Callable[[np.ndarray], np.ndarray],
+    diff_step: Optional[float] = None,
+    scan: bool = False,
+):
+    """Local fit, from the scan's best point *and* from where the user left it.
+
+    A coarse grid finds the deepest **grid point**, which is not the same thing
+    as the deepest basin: on a smooth objective the start the user chose often
+    descends further than any grid point does (observed — a Gaussian on a
+    marginal, where the grid's best point ran downhill into a corner and
+    returned ``mu = 0``). So when the scan moves the start, the local fit is run
+    from both and the better result kept. Only the scan's own budget is at risk,
+    never the answer.
+    """
+    start = np.array([float(p.value) for p in variables], dtype=float)
+    moved = _coarse_scan(variables, lambda v: float(np.sum(residuals(v) ** 2))) if scan else False
+
+    first = _least_squares(variables, residuals, diff_step=diff_step)
+    if not moved:
+        _apply(variables, first.x)
+        return first
+
+    _apply(variables, start)
+    second = _least_squares(variables, residuals, diff_step=diff_step)
+    best = first if first.cost <= second.cost else second
+    _apply(variables, best.x)
+    return best
+
+
+def _apply(variables: Sequence[Any], values: Sequence[float]) -> None:
+    """Write a solution vector back into its parameters."""
+    for parameter, value in zip(variables, values):
+        parameter.value = float(value)
 
 
 def _least_squares(
@@ -300,12 +510,7 @@ def _least_squares(
     from scipy.optimize import least_squares
 
     start = np.array([float(p.value) for p in variables], dtype=float)
-    lower, upper = [], []
-    for p in variables:
-        bounded = bool(getattr(p, "bounds_on", False))
-        lower.append(float(p.lb) if bounded else -np.inf)
-        upper.append(float(p.ub) if bounded else np.inf)
-    lower, upper = np.array(lower), np.array(upper)
+    lower, upper = _bounds_of(variables)
     # least_squares rejects a start that sits on the wrong side of a bound.
     return least_squares(
         residuals,
@@ -367,6 +572,7 @@ class _DataParameterHost:
     _data: Optional[DataParameters] = None
     _progress: Optional[Callable[[int], Any]] = None
     _steps: int = 0
+    _frozen_ey: Optional[np.ndarray] = None
 
     def attach_data_parameters(self, data_parameters: Optional[DataParameters]) -> None:
         """Offer nDXplorer's constants to this fit (``None`` to offer none)."""
@@ -405,9 +611,26 @@ class _DataParameterHost:
         """
         return {p.name: float(p.value) for p in self.free_data_parameters()}
 
+    def freeze_weights(self, ey: Optional[np.ndarray]) -> None:
+        """Hold the fit's weights at ``ey`` while the data moves.
+
+        The uncertainty of a reduced point is estimated **from the data**, so
+        letting it move with the fit hands the optimiser a way to lower chi2
+        that has nothing to do with the curve: blur the population, and every
+        residual shrinks. Observed on real bursts — the fit walked the
+        detection-correction factor to a quarter of its value and reported a
+        happier chi2 for a visibly worse line. The weights are the data's, so
+        they are taken once, at the start, and held.
+        """
+        self._frozen_ey = None if ey is None else np.asarray(ey, dtype=float).copy()
+
     def _refresh_data(self, names: Sequence[str]):
         """Recompute the data for the constants' current values."""
-        return self._data.refresh(list(names))
+        x, y, ey = self._data.refresh(list(names))
+        frozen = self._frozen_ey
+        if frozen is not None and ey is not None and np.shape(frozen) == np.shape(ey):
+            ey = frozen
+        return x, y, ey
 
 
 class CurveFit(_DataParameterHost):
@@ -493,20 +716,32 @@ class CurveFit(_DataParameterHost):
             except (TypeError, ValueError):
                 continue
 
-    def run(self) -> CurveFitResult:
-        """Optimise every free parameter (holding the fixed ones); return the result."""
+    def run(self, scan: Optional[bool] = None) -> CurveFitResult:
+        """Optimise every free parameter (holding the fixed ones); return the result.
+
+        ``scan`` runs a coarse grid over the free parameters first and starts
+        the local fit at its best point (see
+        :mod:`chisurf.core.fitting.grid_scan`). ``None`` scans when a constant
+        is free — the case whose landscape is degenerate enough to strand a
+        local optimiser.
+        """
         free = [p for p in self.parameters if not getattr(p, "fixed", False)]
         free_data = self.free_data_parameters()
         if not free and not free_data:
             return CurveFitResult(False, message="all parameters are fixed")
+        if scan is None:
+            scan = bool(free_data)
         if free_data:
             # A freed constant moves the *data*, which ChiSurf's optimiser knows
             # nothing about — equation and constants are optimised together here
             # instead, re-deriving the data at every step.
-            return self._run_joint(free, free_data)
+            return self._run_joint(free, free_data, scan=scan)
         try:
-            self._model.update_model()
-            self._fit.run()
+            if scan and free:
+                self._run_scanned(free)
+            else:
+                self._model.update_model()
+                self._fit.run()
         except Exception as exc:
             return CurveFitResult(False, message=f"fit failed: {exc}")
         params = self.values()
@@ -534,11 +769,52 @@ class CurveFit(_DataParameterHost):
         except Exception:
             pass
 
-    def _run_joint(self, free: List[Any], free_data: List[Any]) -> CurveFitResult:
+    def _model_cost(self, free: List[Any]) -> Callable[[np.ndarray], float]:
+        """``cost(values)`` for the ParseModel: the weighted sum of squares."""
+        data = getattr(self._fit, "data", None)
+        y = np.asarray(getattr(data, "y", []), dtype=float)
+        ey = getattr(data, "ey", None)
+
+        def cost(values: np.ndarray) -> float:
+            _apply(free, values)
+            self._note_step()
+            self._model.update_model()
+            model = np.asarray(self._model.y, dtype=float)
+            return float(np.sum(_weighted_residual(y, model, ey) ** 2))
+
+        return cost
+
+    def _run_scanned(self, free: List[Any]) -> None:
+        """Run the ChiSurf optimiser from the scan's best point and from the start.
+
+        Whichever ends lower is kept — a grid point is the deepest *point*, not
+        the deepest basin (see :func:`_fit_from_best_start`).
+        """
+        cost = self._model_cost(free)
+        start = np.array([float(p.value) for p in free], dtype=float)
+        if not _coarse_scan(free, cost):
+            self._model.update_model()
+            self._fit.run()
+            return
+        self._model.update_model()
+        self._fit.run()
+        scanned = np.array([float(p.value) for p in free], dtype=float)
+        scanned_cost = cost(scanned)
+
+        _apply(free, start)
+        self._model.update_model()
+        self._fit.run()
+        if cost(np.array([float(p.value) for p in free], dtype=float)) > scanned_cost:
+            _apply(free, scanned)
+            self._model.update_model()
+
+    def _run_joint(self, free: List[Any], free_data: List[Any],
+                   scan: bool = True) -> CurveFitResult:
         """Optimise equation parameters and freed constants in one vector."""
         variables = list(free) + list(free_data)
         names = [p.name for p in free_data]
         start = [float(p.value) for p in variables]
+        self.freeze_weights(getattr(getattr(self._fit, "data", None), "ey", None))
 
         def residuals(values: np.ndarray) -> np.ndarray:
             for param, value in zip(variables, values):
@@ -549,8 +825,10 @@ class CurveFit(_DataParameterHost):
             return _weighted_residual(y, np.asarray(self._model.y, dtype=float), ey)
 
         try:
-            solution = _least_squares(
-                variables, residuals, diff_step=DATA_PARAMETER_STEP
+            # The landscape is rough and often degenerate, so look for the
+            # valley before descending into it.
+            solution = _fit_from_best_start(
+                variables, residuals, diff_step=FINITE_DIFFERENCE_STEP, scan=scan
             )
         except CurveFitAborted:
             for param, value in zip(variables, start):
@@ -596,10 +874,19 @@ class ParametricCurveFit(_DataParameterHost):
 
     The predefined FRET lines are not ``y = f(x)``: they sweep a mean distance
     and return the pair of arrays they trace out. There is no ``ParseModel`` to
-    build from that, so this class optimises the function directly: for a trial
-    set of parameters it calls the function, sorts the traced curve by x, and
-    interpolates it onto the x of the data, giving one residual per data point
-    the curve actually spans.
+    build from that, so this class optimises the function directly.
+
+    A point's residual is its **distance to the traced curve**, in units of the
+    point's own uncertainties (``ex`` across, ``ey`` up). The obvious
+    alternative — interpolate the curve onto the data's x and take the vertical
+    offset — has two failure modes that a real fit walks straight into: a point
+    the curve does not span has *no* vertical offset, so the optimiser is
+    rewarded for making the curve **shorter** until it covers only the points it
+    already fits (observed: a static FRET line collapsing to ``tau_d0`` ≈ 1 ns
+    with a third of the columns and a "better" chi2); and where the curve runs
+    steeply the vertical offset is arbitrarily large for a point that is
+    perfectly close to it. A distance is defined everywhere and is what "the
+    population lies on the line" means.
 
     The parameters *are* the curve's own :class:`FittingParameter` objects — not
     copies — so the table the user is looking at is what is optimised, and the
@@ -613,13 +900,26 @@ class ParametricCurveFit(_DataParameterHost):
         x: np.ndarray,
         y: np.ndarray,
         ey: Optional[np.ndarray] = None,
+        ex: Optional[float] = None,
     ) -> None:
         self._function = function
         self._parameters = list(parameters)
         self._x = np.asarray(x, dtype=float)
         self._y = np.asarray(y, dtype=float)
         self._ey = None if ey is None else np.asarray(ey, dtype=float)
+        #: How far along x counts as "as far as one ey" — the width of the
+        #: column a point was reduced from. Without it the distance would
+        #: compare nanoseconds with efficiencies.
+        self._ex = float(ex) if ex else self._default_ex()
         self._chi2r = float("nan")
+
+    def _default_ex(self) -> float:
+        """Half the spacing of the data's x, when the caller did not say."""
+        if self._x.size > 1:
+            spacing = float(np.median(np.diff(np.sort(self._x))))
+            if spacing > 0:
+                return 0.5 * spacing
+        return 1.0
 
     @property
     def parameters(self) -> List[Any]:
@@ -642,19 +942,54 @@ class ParametricCurveFit(_DataParameterHost):
     def write_back(self, group: Any) -> None:
         """No-op: the optimiser wrote straight into the group's parameters."""
 
-    def _evaluate(self, values: Dict[str, float]) -> np.ndarray:
-        """Trace the curve and interpolate it onto the data's x.
-
-        Returns ``nan`` where the curve does not reach, so those points are
-        dropped from the residual rather than pinned to an edge value.
-        """
+    def _trace(self, values: Dict[str, float]) -> Tuple[np.ndarray, np.ndarray]:
+        """Call the curve's function; return its ``(x, y)`` sorted by x."""
         traced = self._function(**values)
         xs, ys = (np.asarray(a, dtype=float) for a in traced)
         order = np.argsort(xs)
-        xs, ys = xs[order], ys[order]
+        return xs[order], ys[order]
+
+    def _evaluate(self, values: Dict[str, float]) -> np.ndarray:
+        """The curve interpolated onto the data's x (``nan`` where it does not reach).
+
+        Only for reporting the fitted curve back to the caller — the fit itself
+        uses distances (:meth:`_distance_residual`), which are defined for every
+        point.
+        """
+        xs, ys = self._trace(values)
         inside = (self._x >= xs[0]) & (self._x <= xs[-1])
         out = np.full(self._x.shape, np.nan)
         out[inside] = np.interp(self._x[inside], xs, ys)
+        return out
+
+    def _distance_residual(self, values: Dict[str, float]) -> np.ndarray:
+        """Signed distance from each point to the curve, in units of its errors.
+
+        The sign is the point's offset in y from the nearest bit of curve, so
+        the residual passes smoothly through zero as the curve crosses a point
+        rather than bouncing off it.
+        """
+        xs, ys = self._trace(values)
+        if xs.size == 0:
+            return np.full(self._y.shape, 1e6)
+        ey = self._ey
+        if ey is None:
+            ey = np.ones(self._y.shape)
+        ey = np.where(np.isfinite(ey) & (ey > 0), ey, np.nan)
+        good = np.isfinite(self._x) & np.isfinite(self._y) & np.isfinite(ey)
+        if not good.any():
+            return np.full(self._y.shape, 1e6)
+
+        dx = (self._x[good, None] - xs[None, :]) / self._ex
+        dy = (self._y[good, None] - ys[None, :]) / ey[good, None]
+        square = dx * dx + dy * dy
+        nearest = np.argmin(square, axis=1)
+        distance = np.sqrt(square[np.arange(nearest.size), nearest])
+        sign = np.sign(self._y[good] - ys[nearest])
+        sign[sign == 0] = 1.0
+
+        out = np.zeros(self._y.shape)
+        out[good] = sign * distance
         return out
 
     def _residuals(
@@ -667,25 +1002,33 @@ class ParametricCurveFit(_DataParameterHost):
             # A freed constant moved the population, not the curve: re-derive
             # the data before comparing anything to it.
             self._x, self._y, self._ey = self._refresh_data(data_names)
-        model = self._evaluate(self.values())
-        return _weighted_residual(self._y, model, self._ey)
+        return self._distance_residual(self.values())
 
-    def run(self) -> CurveFitResult:
-        """Optimise every free parameter (holding the fixed ones)."""
+    def run(self, scan: Optional[bool] = None) -> CurveFitResult:
+        """Optimise every free parameter (holding the fixed ones).
+
+        ``scan`` runs a coarse grid first; ``None`` scans when a constant is
+        free (see :meth:`CurveFit.run`).
+        """
         free = [p for p in self._parameters if not getattr(p, "fixed", False)]
         free_data = self.free_data_parameters()
         if not free and not free_data:
             return CurveFitResult(False, message="all parameters are fixed")
+        if scan is None:
+            scan = bool(free_data)
 
         variables = free + free_data
         data_names = [p.name for p in free_data]
         start = [float(p.value) for p in variables]
+        if data_names:
+            self.freeze_weights(self._ey)
 
         try:
-            fit = _least_squares(
+            fit = _fit_from_best_start(
                 variables,
                 lambda v: self._residuals(v, variables, data_names),
-                diff_step=DATA_PARAMETER_STEP if data_names else None,
+                diff_step=FINITE_DIFFERENCE_STEP,
+                scan=scan,
             )
         except CurveFitAborted:
             for param, value in zip(variables, start):
@@ -708,8 +1051,7 @@ class ParametricCurveFit(_DataParameterHost):
         if data_names:
             self._x, self._y, self._ey = self._refresh_data(data_names)
         model = self._evaluate(self.values())
-        good = np.isfinite(model)
-        dof = max(1, int(good.sum()) - len(variables))
+        dof = max(1, int(np.isfinite(self._y).sum()) - len(variables))
         self._chi2r = float(2.0 * fit.cost / dof)
         return CurveFitResult(
             True,
@@ -931,7 +1273,9 @@ def fit_equation_to_histogram(
 __all__ = [
     "CurveFit",
     "CurveFitAborted",
+    "SCAN_BUDGET",
     "DataParameters",
+    "FINITE_DIFFERENCE_STEP",
     "ParametricCurveFit",
     "RESOLUTION_PARAMETERS",
     "build_function_fit",
@@ -939,7 +1283,9 @@ __all__ = [
     "CurveFitError",
     "CurveFitResult",
     "bin_centers",
+    "column_counts",
     "populated_columns",
+    "REDUCTIONS",
     "ridge_from_histogram",
     "ridge_from_values",
     "build_curve_fit",

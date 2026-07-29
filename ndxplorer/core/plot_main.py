@@ -2734,7 +2734,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def build_data_parameters(self, target, x_edges, y_edges=None, keep=None,
-                              min_counts=3.0):
+                              min_counts=3.0, reduction="population"):
         """Offer the data-shaping constants to a curve fit.
 
         Parameters
@@ -2749,7 +2749,10 @@ class NDXplorer(QtWidgets.QMainWindow):
             The columns the fit started with; held fixed so the residual keeps
             its length while the population moves.
         min_counts : float, optional
-            Passed through to :func:`ridge_from_histogram`.
+            Passed through to the reduction.
+        reduction : {'population', 'mean'}, optional
+            How a column is reduced to one point (see
+            :func:`~ndxplorer.analysis.curve_fit.ridge_from_values`).
 
         Returns
         -------
@@ -2772,8 +2775,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             d1, d2, weights = read()
             if target == "2d":
                 return ridge_from_values(
-                    d1, d2, edges,
-                    weights=weights, y_edges=y_edges, keep=keep, min_counts=min_counts,
+                    d1, d2, edges, weights=weights, y_edges=y_edges,
+                    keep=keep, min_counts=min_counts, reduction=reduction,
                 )
             _, counts = fast_histogram_1d(
                 d1 if target == "x" else d2, edges, weights=weights, density=density
@@ -2784,7 +2787,8 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         return DataParameters(parameters=parameters, refresh=refresh)
 
-    def build_curve_fit_for(self, curve, target="2d"):
+    def build_curve_fit_for(self, curve, target="2d", reduction="population",
+                            min_counts=3.0):
         """Build the fit of ``curve`` against what is displayed.
 
         Parameters
@@ -2795,8 +2799,14 @@ class NDXplorer(QtWidgets.QMainWindow):
             set in one place.
         target : {'2d', 'x', 'y'}
             ``'2d'`` fits ``y = f(x)`` to the displayed two-dimensional
-            distribution (one weighted point per populated x column); ``'x'`` /
-            ``'y'`` fit the curve to that axis's marginal histogram of counts.
+            distribution (one point per populated x column); ``'x'`` / ``'y'``
+            fit the curve to that axis's marginal histogram of counts.
+        reduction : {'population', 'mean'}, optional
+            Which point of a column the curve is fitted through: the densest
+            population's centre (default) or the column's average. A burst plot
+            is a mixture, and the average of a mixture lies where nothing is.
+        min_counts : float, optional
+            Minimum number of bursts for a column to be fitted.
 
         Returns
         -------
@@ -2815,11 +2825,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         from ..analysis.curve_fit import (
             CurveFitError,
+            build_curve_fit,
             build_function_fit,
-            build_function_histogram_fit,
-            build_histogram_fit,
             build_marginal_fit,
             populated_columns,
+            ridge_from_histogram,
         )
         from ..plotting.histograms import plot_histogram
 
@@ -2865,18 +2875,22 @@ class NDXplorer(QtWidgets.QMainWindow):
                 raise
             except Exception as exc:
                 raise CurveFitError(f"no 2-D histogram displayed ({exc})") from exc
+            keep = populated_columns(counts, x_edges, y_edges, min_counts=min_counts)
+            if int(keep.sum()) < 3:
+                raise CurveFitError("too few populated columns to fit (need 3)")
+            x, y, ey = ridge_from_histogram(
+                counts, x_edges, y_edges, keep=keep, reduction=reduction
+            )
             if parametric:
-                cf = build_function_histogram_fit(
-                    curve.function, params, counts, x_edges, y_edges
-                )
+                cf = build_function_fit(curve.function, params, x, y, ey)
             else:
-                cf = build_histogram_fit(
-                    equation, counts, x_edges, y_edges,
+                cf = build_curve_fit(
+                    equation, x, y, ey,
                     initial=initial, constant_names=constant_names,
                 )
             data_parameters = self.build_data_parameters(
-                "2d", x_edges, y_edges,
-                keep=populated_columns(counts, x_edges, y_edges),
+                "2d", x_edges, y_edges, keep=keep, min_counts=min_counts,
+                reduction=reduction,
             )
         else:
             try:
@@ -2951,7 +2965,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         if HAS_FIT_TABLE:
             dlg = CurveFitDialog(
                 self,
-                build_fit=lambda target: self.build_curve_fit_for(curve, target),
+                build_fit=lambda target, reduction="population": (
+                    self.build_curve_fit_for(curve, target, reduction)
+                ),
                 on_applied=_write_back,
             )
             dlg.exec_()
