@@ -2129,6 +2129,15 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.clustering_worker.deleteLater()
             self.clustering_worker = None
 
+        # The Gaussians are published as a crosslinkable parameter group; a
+        # registered group whose window is gone is a link target nothing can
+        # edit any more.
+        if getattr(self, "gaussian_fit", None) is not None:
+            try:
+                self.gaussian_fit.close()
+            except Exception:
+                logging.debug("Gaussian parameter group teardown failed", exc_info=True)
+
         # Call the base class implementation
         super(NDXplorer, self).closeEvent(event)
 

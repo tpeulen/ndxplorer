@@ -5,10 +5,16 @@ This module encapsulates the construction of the Gaussian Fit controls and
 attaches them to the main NDXplorer window, keeping plot_main.py cleaner.
 It wires all Gaussian-related signal handlers here and implements the logic
 (fitting, overlays, table I/O, marginals, and Delete-key row removal).
+
+The Gaussians themselves are **fitting parameters**, not table text: they live
+in a :class:`FittingParameterGroup` (:mod:`ndxplorer.core.gaussian_parameters`)
+rendered by chisurf's paired parameter table, one component per row. So a
+Gaussian's centre or width can be crosslinked to a parameter of an actual fit —
+or to another Gaussian — and "hold this one" is the same *fixed* flag every
+other parameter in chisurf has, rather than a checkbox in the corner of a cell.
 """
 from ..logging_config import logging
-from ..ui.table import TableItem, ValueTable
-from typing import Iterator, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 
 import json
 import csv
@@ -18,12 +24,17 @@ from datetime import datetime
 import numpy as np
 from qtpy import QtCore, QtWidgets
 
+from ..core import gaussian_parameters as gp
 from ..ui.glyphs import Glyphs, label as glyph_label
 
 #: Layer of the shared 2-D overlay the Gaussian ellipses own. The equation
 #: overlays and the server line sets share that surface, so clearing is per
 #: layer -- an unqualified clear on either side wipes the others.
 GAUSSIAN_LAYER = "gaussian"
+
+#: Registry owner id under which the Gaussians are published, so another
+#: parameter table can link *to* a population's centre or width.
+GAUSSIAN_OWNER_ID = "ndxplorer.gaussians"
 
 
 class GaussianMixtureFixedEM:
@@ -164,13 +175,11 @@ class GaussianFit(QtCore.QObject):
     initialized on `main` to minimize changes elsewhere.
     """
 
-    # ---- Table column indices (6 columns) ----
-    COL_X = 0
-    COL_Y = 1
-    COL_CXX = 2
-    COL_CYY = 3
-    COL_CXY = 4
-    COL_W = 5
+    #: Emitted on the GUI thread when a Gaussian moved because something
+    #: *outside* this panel moved -- a fit stepping a parameter one of them is
+    #: crosslinked to. Marshalled through a queued signal because the fit
+    #: client's callbacks arrive on an RPC thread.
+    _externalEvent = QtCore.Signal()
 
     @property
     def is_log_x(self) -> bool:
@@ -209,39 +218,19 @@ class GaussianFit(QtCore.QObject):
     def __init__(self, main: QtWidgets.QMainWindow):
         super().__init__(main)
         self.main = main
+        #: The Gaussians, as fitting parameters (six per component).
+        self.group = gp.build_gaussian_group()
+        self._table = None
+        self._registered = False
+        self._reg_cb = None
+        self._fc_cb = None
+        self._externalEvent.connect(self._on_external_gui, QtCore.Qt.QueuedConnection)
         self._build_ui()
         self._connect_signals()
+        self._register_group()
+        self._subscribe_external()
 
     # ------------------------------ UI ---------------------------------
-    def _num_item(self, val: float) -> TableItem:
-        # Display numbers in scientific notation with 2 decimals; align left so checkbox appears in front of text
-        it = TableItem(f"{float(val):.2e}")
-        it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        return it
-
-    def _make_fixable(self, item: TableItem, checked: bool = False):
-        # Add an in-cell checkbox without losing editability
-        flags = (item.flags()
-                 | QtCore.Qt.ItemIsUserCheckable
-                 | QtCore.Qt.ItemIsEditable
-                 | QtCore.Qt.ItemIsEnabled
-                 | QtCore.Qt.ItemIsSelectable)
-        item.setFlags(flags)
-        item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
-
-    def _is_fixed_item(self, item: TableItem) -> bool:
-        return item is not None and item.checkState() == QtCore.Qt.Checked
-
-    def _make_check_item(self, checked: bool = False) -> TableItem:
-        it = TableItem("")
-        it.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
-        it.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
-        it.setTextAlignment(QtCore.Qt.AlignCenter)
-        return it
-
-    def _is_checked(self, item: Optional[TableItem]) -> bool:
-        return (item is not None) and (item.checkState() == QtCore.Qt.Checked)
-
     def _build_ui(self):
         m = self.main
         # Button row: Fit + Clear + Select + Selection σ + Settings
@@ -276,37 +265,28 @@ class GaussianFit(QtCore.QObject):
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
-        m.tableGaussians = ValueTable(0, 6, m)
-        m.tableGaussians.setColumnCount(6)
-        m.tableGaussians.setHorizontalHeaderLabels(["x", "y", "sd_x", "sd_y", "rho", "w"])
-        header = m.tableGaussians.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
-        header.setMinimumSectionSize(20)
-        # Reduce vertical spacing between rows
-        vheader = m.tableGaussians.verticalHeader()
-        vheader.setVisible(False)
-        try:
-            # Compute a compact default row height based on current font
-            fm = m.tableGaussians.fontMetrics()
-            row_h = max(16, fm.height() + 2)  # minimal padding
-            vheader.setDefaultSectionSize(row_h)
-        except Exception:
-            pass
-        # Remove extra item padding; keep a couple of horizontal pixels for readability
-        m.tableGaussians.setStyleSheet(
-            "QTableView::item{padding:0px 2px;} QTableView{gridline-color: palette(mid);}"
-        )
-        m.tableGaussians.setWordWrap(False)
-        m.tableGaussians.setShowGrid(True)
-        m.tableGaussians.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
-        m.tableGaussians.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        m.tableGaussians.setEditTriggers(
-            QtWidgets.QAbstractItemView.DoubleClicked
-            | QtWidgets.QAbstractItemView.SelectedClicked
-            | QtWidgets.QAbstractItemView.EditKeyPressed
-        )
-        m.verticalLayout_18.addWidget(m.tableGaussians)
+        # The Gaussians themselves: chisurf's paired parameter table, one
+        # component per row, six parameter slots wide. Everything the panel
+        # used to hand-roll -- the numeric cells, the in-cell "hold this"
+        # checkbox, the delete-row menu -- is the shared table's, plus a link
+        # menu the hand-rolled one could not have.
+        self._table = self._build_parameter_table()
+        scroll = QtWidgets.QScrollArea(m)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        # The table sizes itself to its rows, so a panel with more Gaussians
+        # than fit the dock scrolls instead of losing the last ones off the
+        # bottom -- which reads as "that Gaussian is gone".
+        self._table_host = QtWidgets.QWidget(scroll)
+        host_layout = QtWidgets.QVBoxLayout(self._table_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        host_layout.addWidget(self._table, 0, QtCore.Qt.AlignTop)
+        host_layout.addStretch(1)
+        scroll.setWidget(self._table_host)
+        m.verticalLayout_18.addWidget(scroll, 1)
+        m.gaussianTable = self._table
 
         # Options row placed below the table: checkboxes + Save/Load
         options_row = QtWidgets.QHBoxLayout()
@@ -328,10 +308,157 @@ class GaussianFit(QtCore.QObject):
         m.gaussian_items = []
         # Stable palette and legacy cycle (kept for compatibility)
         m._gaussian_palette = ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"]
-        m._gaussian_color_cycle = iter(m._gaussian_palette)  # type: Iterator[str]
+        m._gaussian_color_cycle = iter(m._gaussian_palette)
         # Storage for marginal overlay curve items
         m.gaussian_marginal_items_x = []
         m.gaussian_marginal_items_y = []
+
+    def _build_parameter_table(self) -> QtWidgets.QWidget:
+        """Create the paired parameter table over :attr:`group`."""
+        from chisurf.gui.autoform.sections.parameter_table import (
+            PairedParameterTableWidget,
+        )
+
+        table = PairedParameterTableWidget(
+            self.group.parameters_all,
+            width=gp.WIDTH,
+            parent=self.main,
+            on_change=self._on_parameters_edited,
+            slot_labels=gp.SLOT_LABELS,
+            # These Gaussians belong to no fit on the chisurf backend, so an
+            # edit must not be sent there -- it could only answer "fit not
+            # found". A *link* still reaches into a fit; the table sends that.
+            remote=False,
+            context_menu_hook=self._add_table_actions,
+        )
+        self._configure_table_columns(table)
+        view = table.table_view
+        # A row is a Gaussian: selecting one highlights its ellipse, and Delete
+        # removes it, so rows are what the user selects.
+        view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        view.installEventFilter(self)
+        selection = view.selectionModel()
+        if selection is not None:
+            selection.selectionChanged.connect(self.on_gaussian_table_selection_changed)
+        return table
+
+    def _configure_table_columns(self, table) -> None:
+        """Show the columns this panel has values for, at a readable width.
+
+        Bounds are armed (a width cannot be negative, a correlation cannot pass
+        ±1) but their columns would triple the table's width, and they stay
+        reachable from a row's detail popup. The EM computes no error estimate,
+        so those columns would only be six empty ones. What is left hugs its
+        number rather than sharing out spare width — six value columns in a dock
+        is not spare width, and a stretched one renders ``0…``, which is not a
+        value the user can check.
+        """
+        table.set_bounds_visible(False)
+        table.set_error_visible(False)
+        header = table.table_view.horizontalHeader()
+        for column in range(1, table.table_model.columnCount()):
+            header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeToContents)
+
+    def _rebuild_table_rows(self) -> None:
+        """Show the group's current components (after an add / remove / load)."""
+        if self._table is None:
+            return
+        # ``set_params`` re-derives the column layout, so the panel's own choices
+        # are re-applied on top of it.
+        self._table.set_params(self.group.parameters_all)
+        self._configure_table_columns(self._table)
+        self._register_group()
+
+    def _register_group(self) -> None:
+        """Publish the Gaussians so another parameter table can link to them."""
+        try:
+            from chisurf.core.parameter_group_registry import register_parameter_group
+
+            register_parameter_group(
+                self.group, owner_id=GAUSSIAN_OWNER_ID, label="ndX Gaussians"
+            )
+            self._registered = True
+        except Exception as exc:
+            logging.debug("Could not register Gaussian parameter group: %s", exc)
+
+    def _unregister_group(self) -> None:
+        """Drop the registry entry, and with it any link into these parameters."""
+        if not self._registered:
+            return
+        try:
+            from chisurf.core.parameter_group_registry import unregister_parameter_group
+
+            unregister_parameter_group(GAUSSIAN_OWNER_ID)
+        except Exception:
+            pass
+        self._registered = False
+
+    # -- links from outside -------------------------------------------------
+    def _subscribe_external(self) -> None:
+        """Redraw when a fit moves a parameter a Gaussian is crosslinked to.
+
+        Without this a link is only half-live: the value is right the next time
+        something happens to redraw, and the ellipse on screen is stale until
+        then.
+        """
+        try:
+            from chisurf.core import parameter_group_registry as reg
+
+            reg.subscribe(self._on_external_event)
+            self._reg_cb = self._on_external_event
+        except Exception:
+            self._reg_cb = None
+        try:
+            from chisurf.gui.widgets.fitting.fitting_client import get_fitting_client
+
+            client = get_fitting_client()
+            if client is not None:
+                cb = lambda *a, **k: self._on_external_event()  # noqa: E731
+                client.subscribe("parameter.", cb)
+                client.subscribe("fit.", cb)
+                self._fc_cb = (client, cb)
+        except Exception:
+            self._fc_cb = None
+
+    def _unsubscribe_external(self) -> None:
+        try:
+            if self._reg_cb is not None:
+                from chisurf.core import parameter_group_registry as reg
+
+                reg.unsubscribe(self._reg_cb)
+        except Exception:
+            pass
+        try:
+            if self._fc_cb is not None:
+                client, cb = self._fc_cb
+                client.unsubscribe("parameter.", cb)
+                client.unsubscribe("fit.", cb)
+        except Exception:
+            pass
+        self._reg_cb = self._fc_cb = None
+
+    def _on_external_event(self, *args, **kwargs) -> None:
+        # May arrive on an RPC thread; hop to the GUI thread before touching
+        # widgets.
+        try:
+            self._externalEvent.emit()
+        except Exception:
+            pass
+
+    def _on_external_gui(self) -> None:
+        if self._table is not None:
+            try:
+                self._table.sync()
+            except Exception:
+                pass
+        self._redraw_gaussian_overlays_from_table()
+
+    def _on_parameters_edited(self) -> None:
+        """A cell was edited: redraw the ellipses from the parameters."""
+        if getattr(self.main, "_updating_gaussian_table", False):
+            return
+        self._redraw_gaussian_overlays_from_table()
 
     def _connect_signals(self):
         m = self.main
@@ -345,44 +472,30 @@ class GaussianFit(QtCore.QObject):
             m.btnGMMSettings.clicked.connect(self.on_open_gmm_settings)
         except Exception:
             pass
-        # Table edits update overlays
-        m.tableGaussians.itemChanged.connect(self.on_gaussian_table_item_changed)
-
-        # Highlight selected gaussians in overlay when selection changes
-        sel_model = m.tableGaussians.selectionModel()
-        if sel_model is not None:
-            sel_model.selectionChanged.connect(self.on_gaussian_table_selection_changed)
-        # Also connect the generic itemSelectionChanged signal to ensure updates
-        m.tableGaussians.itemSelectionChanged.connect(lambda: self.on_gaussian_table_selection_changed(None, None))
         # Marginals toggle
         m.checkBoxShowMarginals.toggled.connect(self.on_toggle_gaussian_marginals)
         # Save/Load buttons
         m.btnSaveGaussians.clicked.connect(self.on_save_gaussians)
         m.btnLoadGaussians.clicked.connect(self.on_load_gaussians)
 
-        # Install event filter on table to allow Delete key to remove rows
-        m.tableGaussians.installEventFilter(self)
-
-        # Add context menu on the Gaussians table to remove selected rows
-        try:
-            m.tableGaussians.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-            m.tableGaussians.customContextMenuRequested.connect(self._on_gaussian_table_context_menu)
-        except Exception:
-            pass
-        
     # ---------------------------- Handlers ------------------------------
-    def on_gaussian_table_selection_changed(self, selected, deselected):
+    def selected_component_rows(self) -> List[int]:
+        """Row indices of the selected Gaussians (empty when nothing is picked)."""
+        if self._table is None:
+            return []
+        view = self._table.table_view
+        selection = view.selectionModel()
+        if selection is None:
+            return []
+        return sorted({index.row() for index in selection.selectedIndexes()})
+
+    def on_gaussian_table_selection_changed(self, selected=None, deselected=None):
         """Highlight selected Gaussian overlays by increasing line width."""
         m = self.main
         items = getattr(m, 'gaussian_items', [])
-        table = getattr(m, 'tableGaussians', None)
-        if table is None or not items:
+        if not items:
             return
-        # Build set of selected row indices
-        sel = set()
-        # Source rows, not view rows: with the shared table the list can be
-        # sorted, and a view row would then point at a different Gaussian.
-        sel = set(table.selected_source_rows())
+        sel = set(self.selected_component_rows())
 
         # Update line widths
         for i, it in enumerate(items):
@@ -400,8 +513,8 @@ class GaussianFit(QtCore.QObject):
         and labeled as G2D(ParamX, ParamY).
         """
         m = self.main
-        table = getattr(m, 'tableGaussians', None)
-        if table is None:
+        components = gp.read_components(self.group)
+        if not components:
             return
         # Determine current X/Y parameter indices and names
         try:
@@ -415,58 +528,37 @@ class GaussianFit(QtCore.QObject):
         is_log_x = self.is_log_x
         is_log_y = self.is_log_y
         # Collect selected rows; if none selected, use all rows if exactly one exists
-        selected = table.selected_source_rows()
+        selected = self.selected_component_rows()
         if not selected:
-            if table.rowCount() == 1:
+            if len(components) == 1:
                 selected = [0]
             else:
                 QtWidgets.QMessageBox.information(m, "Select Gaussian", "Please select one or more Gaussian rows in the table.")
                 return
-        # For each selected row, read mu and cov and add selection
+        try:
+            sigma_val = float(m.spinSelectionSigma.value())
+        except Exception:
+            sigma_val = 1.0
+        if not np.isfinite(sigma_val) or sigma_val <= 0:
+            sigma_val = 1.0
         for r in selected:
-            try:
-                def getf(c):
-                    it = table.item(r, c)
-                    return float(it.text()) if it is not None else None
-                x = getf(self.COL_X); y = getf(self.COL_Y); sd_x = getf(self.COL_CXX); sd_y = getf(self.COL_CYY); rho = getf(self.COL_CXY)
-                if None in (x, y, sd_x, rho, sd_y):
-                    continue
-                mu_v = np.array([x, y], dtype=float)
-                try:
-                    sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
-                    rh = np.clip(rh, -1.0, 1.0)
-                    cov_xy = rh * sdx * sdy
-                    cov_v = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
-                except Exception:
-                    cov_v = np.array([[0.0, 0.0],[0.0, 0.0]], dtype=float)
-                # minimal regularization if needed
-                try:
-                    eig = np.linalg.eigvalsh(cov_v)
-                    if np.any(eig <= 0):
-                        cov_v = cov_v + 1e-9 * np.eye(2)
-                except Exception:
-                    cov_v = cov_v + 1e-9 * np.eye(2)
-                # Transform to log space for axes that are log so that selection matches displayed Gaussian
-                mu_s = mu_v.copy()
-                cov_s = cov_v.copy()
-                if self.is_log_x or self.is_log_y:
-                    mu_s, cov_s = self._transform_params_for_axes(mu_v, cov_v)
-                # Add selection to the selection table with log flags
-                try:
-                    try:
-                        sigma_val = float(m.spinSelectionSigma.value())
-                    except Exception:
-                        sigma_val = 1.0
-                    if not np.isfinite(sigma_val) or sigma_val <= 0:
-                        sigma_val = 1.0
-                    m.plot_control.addGaussianSelection(idx1, idx2, mu_s, cov_s, sigma=sigma_val, invert=False, enabled=True, name=label, log_x=is_log_x, log_y=is_log_y)
-                except Exception:
-                    # Fallback: show warning
-                    QtWidgets.QMessageBox.warning(m, "Selection Error", "Could not add Gaussian selection to the selection table.")
-                    return
-            except Exception:
+            if r < 0 or r >= len(components):
                 continue
-        # Trigger update (addGaussianSelection already triggers update)
+            component = components[r]
+            mu_v, cov_v = component.mu, component.cov
+            # Transform to log space for axes that are log so that the selection
+            # matches the displayed Gaussian
+            mu_s, cov_s = mu_v.copy(), cov_v.copy()
+            if is_log_x or is_log_y:
+                mu_s, cov_s = self._transform_params_for_axes(mu_v, cov_v)
+            try:
+                m.plot_control.addGaussianSelection(
+                    idx1, idx2, mu_s, cov_s, sigma=sigma_val, invert=False,
+                    enabled=True, name=label, log_x=is_log_x, log_y=is_log_y,
+                )
+            except Exception:
+                QtWidgets.QMessageBox.warning(m, "Selection Error", "Could not add Gaussian selection to the selection table.")
+                return
 
     def on_open_gmm_settings(self):
         """Open the GMM settings dialog and refresh cached settings if accepted."""
@@ -507,10 +599,14 @@ class GaussianFit(QtCore.QObject):
         Optimize the parameters (means, covariances, weights) of the Gaussians listed
         in the table directly against the currently selected raw data points
         (not the histogram) using a Gaussian Mixture fit.
+
+        A parameter the table holds — *fixed*, or **crosslinked** to another
+        parameter, whose value belongs to its master — is kept where it is and
+        is not written back.
         """
         m = self.main
-        rows = self._read_gaussian_table()
-        if len(rows) == 0:
+        rows_full = gp.read_components(self.group)
+        if len(rows_full) == 0:
             QtWidgets.QMessageBox.warning(m, "No Gaussians", "Add one or more Gaussians (click on the histogram) before fitting.")
             return
 
@@ -577,7 +673,6 @@ class GaussianFit(QtCore.QObject):
             X_fit = X_pos
 
         # Build init arrays (fit space) and FIX masks/values
-        rows_full = self._read_gaussian_table_with_fixed()
         n_components = len(rows_full)
 
         means_init_fit = np.zeros((n_components, 2), dtype=float)
@@ -642,17 +737,18 @@ class GaussianFit(QtCore.QObject):
 
         # --- end helpers ---
 
-        for k, r in enumerate(rows_full):
-            mu_v, cov_v, w = r["mu"], r["cov"], r["w"]
+        for k, component in enumerate(rows_full):
+            mu_v, cov_v, w = component.mu, component.cov, component.w
             mu_z, cov_z = (mu_v, cov_v)
             if np.any(log_axes):
                 mu_z, cov_z = to_fit_space(mu_v, cov_v)
             means_init_fit[k] = mu_z
             covs_fit[k]       = cov_z
             weights_init[k]   = max(0.0, float(w))
-            # fix masks
-            fix_mu_mask[k]    = r["fix_mu"]
-            fix_cov_mask[k]   = r["fix_cov"]
+            # fix masks (a crosslinked parameter counts as held: its value is
+            # its master's, so moving it here would be discarded)
+            fix_mu_mask[k]    = component.fix_mu
+            fix_cov_mask[k]   = component.fix_cov
             # fixed values (in FIT space!)
             mu_fv, cov_fv = mu_z.copy(), cov_z.copy()
             # ensure if fixed, values come from the current row
@@ -695,7 +791,7 @@ class GaussianFit(QtCore.QObject):
         covariances_fit = np.array(em.covs_, dtype=float)
         weights_fitted = np.array(em.weights_, dtype=float)
 
-        # Transform back to VALUE space and update table
+        # Transform back to VALUE space and update the parameters
         for i in range(n_components):
             mu_i = means_fit[i]
             cov_i = covariances_fit[i]
@@ -703,7 +799,10 @@ class GaussianFit(QtCore.QObject):
                 mu_v_i, cov_v_i = to_value_space(mu_i, cov_i)
             else:
                 mu_v_i, cov_v_i = mu_i, cov_i
-            self._update_gaussian_row(i, mu_v_i, cov_v_i, float(weights_fitted[i]))
+            # A held weight keeps the share the user gave it; the EM's own
+            # weights are re-normalised wherever the mixture is drawn.
+            weight = None if rows_full[i].fix_w else float(weights_fitted[i])
+            self._update_gaussian_row(i, mu_v_i, cov_v_i, weight)
 
         # Redraw overlays from the updated table
         self._redraw_gaussian_overlays_from_table()
@@ -797,15 +896,13 @@ class GaussianFit(QtCore.QObject):
             self._clear_gaussian_marginal_items()
         except Exception:
             pass
-        if hasattr(m, 'tableGaussians'):
-            try:
-                m._updating_gaussian_table = True
-                m.tableGaussians.setRowCount(0)
-            except Exception:
-                pass
-            finally:
-                m._updating_gaussian_table = False
-        
+        try:
+            m._updating_gaussian_table = True
+            gp.clear_components(self.group)
+            self._rebuild_table_rows()
+        finally:
+            m._updating_gaussian_table = False
+
         # Update display
         try:
             if hasattr(m, '_use_simple_backend') and m._use_simple_backend:
@@ -906,7 +1003,6 @@ class GaussianFit(QtCore.QObject):
         return self._compute_moments(subH, sub_x_edges, sub_y_edges)
 
     def _add_gaussian_overlay(self, mu: Tuple[float, float], cov: np.ndarray, label: str = "", color: Optional[str] = None):
-        m = self.main
         self._add_gaussian_overlay_simple(mu, cov, label, color)
 
     def _add_gaussian_overlay_simple(self, mu: Tuple[float, float], cov: np.ndarray, label: str = "", color: Optional[str] = None):
@@ -1014,177 +1110,60 @@ class GaussianFit(QtCore.QObject):
 
     def _append_gaussian_row(self, mu, cov, w: float = 1.0,
                              fix_x=False, fix_y=False, fix_cxx=False, fix_cxy=False, fix_cyy=False):
+        """Add one Gaussian and show it as a new row of the parameter table.
+
+        Parameters
+        ----------
+        mu : sequence of float
+            Centre ``(x, y)`` in value space.
+        cov : array_like, shape (2, 2)
+            Covariance; stored as ``sd_x``, ``sd_y`` and ``rho``.
+        w : float, optional
+            Mixture weight.
+        fix_x, fix_y, fix_cxx, fix_cxy, fix_cyy : bool, optional
+            Which of the component's parameters start held. ``cxx``/``cyy`` are
+            the widths and ``cxy`` the correlation, named for the covariance
+            elements they came from.
+
+        Returns
+        -------
+        int
+            The new component's row index.
+        """
         m = self.main
         try:
             m._updating_gaussian_table = True
-            row = m.tableGaussians.rowCount()
-            m.tableGaussians.insertRow(row)
-
-            # numeric items
-            ix = self._num_item(mu[0]);
-            m.tableGaussians.setItem(row, self.COL_X, ix)
-            iy = self._num_item(mu[1]);
-            m.tableGaussians.setItem(row, self.COL_Y, iy)
-            # store standard deviations and correlation instead of raw covariances
-            var_x = float(cov[0, 0]); var_y = float(cov[1, 1]); cov_xy = float(cov[0, 1])
-            sd_x = np.sqrt(max(var_x, 0.0)); sd_y = np.sqrt(max(var_y, 0.0))
-            denom = sd_x*sd_y if sd_x>0 and sd_y>0 else 0.0
-            rho = cov_xy/denom if denom>0 else 0.0
-            icxx = self._num_item(sd_x); m.tableGaussians.setItem(row, self.COL_CXX, icxx)
-            icxy = self._num_item(rho);  m.tableGaussians.setItem(row, self.COL_CXY, icxy)
-            icyy = self._num_item(sd_y); m.tableGaussians.setItem(row, self.COL_CYY, icyy)
-            iw = self._num_item(w);
-            # Override weight formatting to normal notation with two decimals
-            iw.setText(f"{float(w):.2f}")
-            iw.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-            m.tableGaussians.setItem(row, self.COL_W, iw)
-
-            # make fixable (checkbox in same cell). Weight is NOT fixable.
-            self._make_fixable(ix, fix_x)
-            self._make_fixable(iy, fix_y)
-            self._make_fixable(icxx, fix_cxx)
-            self._make_fixable(icxy, fix_cxy)
-            self._make_fixable(icyy, fix_cyy)
-
+            row = gp.append_component(
+                self.group, mu, cov, w,
+                fixed={
+                    "x": bool(fix_x), "y": bool(fix_y),
+                    "sd_x": bool(fix_cxx), "sd_y": bool(fix_cyy), "rho": bool(fix_cxy),
+                },
+            )
+            self._rebuild_table_rows()
             return row
         finally:
             m._updating_gaussian_table = False
 
     def _update_gaussian_row(self, row: int, mu: np.ndarray, cov: np.ndarray, w: float = None):
+        """Write a fitted component back into its parameters (skipping links)."""
         m = self.main
-        if not hasattr(m, 'tableGaussians'): return
-        if row < 0 or row >= m.tableGaussians.rowCount(): return
         try:
             m._updating_gaussian_table = True
-
-            def _set(col, val, fixable=False):
-                it = m.tableGaussians.item(row, col)
-                if it is None:
-                    it = self._num_item(val)
-                    if col == self.COL_W:
-                        it.setText(f"{float(val):.2f}")
-                        it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                    m.tableGaussians.setItem(row, col, it)
-                    if fixable: self._make_fixable(it, False)
-                else:
-                    # keep the current check state
-                    cs = it.checkState()
-                    if col == self.COL_W:
-                        it.setText(f"{float(val):.2f}")
-                    else:
-                        it.setText(f"{float(val):.2e}")
-                    it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                    if fixable:
-                        it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
-                        it.setCheckState(cs)
-
-            _set(self.COL_X, float(mu[0]), fixable=True)
-            _set(self.COL_Y, float(mu[1]), fixable=True)
-            # update from covariance but display as sd and rho
-            var_x = float(cov[0, 0]); var_y = float(cov[1, 1]); cov_xy = float(cov[0, 1])
-            sd_x = np.sqrt(max(var_x, 0.0)); sd_y = np.sqrt(max(var_y, 0.0))
-            denom = sd_x*sd_y if sd_x>0 and sd_y>0 else 0.0
-            rho = cov_xy/denom if denom>0 else 0.0
-            _set(self.COL_CXX, sd_x, fixable=True)
-            _set(self.COL_CXY, rho,  fixable=True)
-            _set(self.COL_CYY, sd_y, fixable=True)
-            if w is not None:
-                _set(self.COL_W, float(w), fixable=False)
+            gp.write_component(self.group, row, mu, cov, w)
+        except IndexError:
+            return
         finally:
             m._updating_gaussian_table = False
-
-    def _read_gaussian_table_with_fixed(self):
-        m = self.main
-        out = []
-        n = m.tableGaussians.rowCount()
-        for r in range(n):
-            def getf(c):
-                it = m.tableGaussians.item(r, c)
-                if it is None: return None
-                try:
-                    return float(it.text())
-                except Exception:
-                    return None
-
-            x = getf(self.COL_X);
-            y = getf(self.COL_Y)
-            sd_x = getf(self.COL_CXX);
-            rho  = getf(self.COL_CXY);
-            sd_y = getf(self.COL_CYY)
-            w = getf(self.COL_W) or 1.0
-            if None in (x, y, sd_x, rho, sd_y): continue
-
-            mu = np.array([x, y], dtype=float)
+        if self._table is not None:
             try:
-                sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
-                rh = np.clip(rh, -1.0, 1.0)
-                cov_xy = rh * sdx * sdy
-                cov = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
+                self._table.sync()
             except Exception:
-                cov = np.array([[0.0, 0.0], [0.0, 0.0]], dtype=float)
-            try:
-                ev = np.linalg.eigvalsh(cov)
-                if np.any(ev <= 0): cov = cov + 1e-9 * np.eye(2)
-            except Exception:
-                cov = cov + 1e-9 * np.eye(2)
-
-            fix_mu = np.array([
-                self._is_fixed_item(m.tableGaussians.item(r, self.COL_X)),
-                self._is_fixed_item(m.tableGaussians.item(r, self.COL_Y)),
-            ], dtype=bool)
-            fix_cov = np.array([
-                [self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXX)),
-                 self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY))],
-                [self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY)),
-                 self._is_fixed_item(m.tableGaussians.item(r, self.COL_CYY))]
-            ], dtype=bool)
-
-            out.append({"mu": mu, "cov": cov, "w": float(w),
-                        "fix_mu": fix_mu, "fix_cov": fix_cov})
-        return out
+                pass
 
     def _read_gaussian_table(self) -> List[Tuple[np.ndarray, np.ndarray, float]]:
-        """Read all rows from the table and return list of (mu(2,), cov(2,2), w)."""
-        m = self.main
-        out = []
-        if not hasattr(m, 'tableGaussians'):
-            return out
-        try:
-            n = m.tableGaussians.rowCount()
-            for r in range(n):
-                def getf(c):
-                    it = m.tableGaussians.item(r, c)
-                    if it is None:
-                        return None
-                    try:
-                        return float(it.text())
-                    except Exception:
-                        return None
-                x = getf(self.COL_X); y = getf(self.COL_Y); sd_x = getf(self.COL_CXX); sd_y = getf(self.COL_CYY); rho = getf(self.COL_CXY)
-                w = getf(self.COL_W) if m.tableGaussians.columnCount() >= 6 else 1.0
-                if None in (x, y, sd_x, rho, sd_y):
-                    continue
-                if w is None or not np.isfinite(w) or w < 0:
-                    w = 1.0
-                mu = np.array([x, y], dtype=float)
-                try:
-                    sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
-                    rh = np.clip(rh, -1.0, 1.0)
-                    cov_xy = rh * sdx * sdy
-                    cov = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
-                except Exception:
-                    cov = np.array([[0.0, 0.0], [0.0, 0.0]], dtype=float)
-                # Ensure positive semi-definite by minimal regularization
-                try:
-                    eigvals = np.linalg.eigvalsh(cov)
-                    if np.any(eigvals <= 0):
-                        cov = cov + 1e-9 * np.eye(2)
-                except Exception:
-                    cov = cov + 1e-9 * np.eye(2)
-                out.append((mu, cov, float(w)))
-        except Exception:
-            return out
-        return out
+        """Return ``(mu, cov, w)`` for every Gaussian, following crosslinks."""
+        return [(c.mu, c.cov, c.w) for c in gp.read_components(self.group)]
 
     def _redraw_gaussian_overlays_from_table(self):
         """Clear and redraw Gaussian overlays from the current table rows."""
@@ -1345,47 +1324,10 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             pass
 
-    def on_gaussian_table_item_changed(self, item: TableItem):
-        """Redraw Gaussian overlays when the user edits any cell in the table."""
-        m = self.main
-        try:
-            if getattr(m, '_updating_gaussian_table', False):
-                return
-        except Exception:
-            pass
-        try:
-            self._redraw_gaussian_overlays_from_table()
-        except Exception:
-            pass
-
     # ----------------------------- Save/Load -----------------------------
-    def _rows_to_dicts(self):
-        rows = []
-        m = self.main
-        n = m.tableGaussians.rowCount()
-        for r in range(n):
-            def getf(c):
-                it = m.tableGaussians.item(r, c)
-                if it is None: return None
-                try: return float(it.text())
-                except Exception: return None
-            x   = getf(self.COL_X)
-            y   = getf(self.COL_Y)
-            cxx = getf(self.COL_CXX)
-            cxy = getf(self.COL_CXY)
-            cyy = getf(self.COL_CYY)
-            w   = getf(self.COL_W) or 1.0
-            if None in (x, y, cxx, cxy, cyy):
-                continue
-            rows.append({
-                "x": x, "y": y, "sd_x": cxx, "rho": cxy, "sd_y": cyy, "w": w,
-                "fix_x": self._is_fixed_item(m.tableGaussians.item(r, self.COL_X)),
-                "fix_y": self._is_fixed_item(m.tableGaussians.item(r, self.COL_Y)),
-                "fix_sd_x": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXX)),
-                "fix_rho": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY)),
-                "fix_sd_y": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CYY)),
-            })
-        return rows
+    def _rows_to_dicts(self) -> List[Dict[str, Any]]:
+        """One flat record per Gaussian, in the saved file's column order."""
+        return gp.components_to_records(self.group)
 
     def _current_axes_info(self):
         """Return a dict with axis info: index, name, and scale (linear/log) for x and y.
@@ -1902,15 +1844,21 @@ class GaussianFit(QtCore.QObject):
         # Clear existing and populate
         try:
             m._updating_gaussian_table = True
-            m.tableGaussians.setRowCount(0)
+            gp.clear_components(self.group)
             for row in rows:
                 if len(row) == 8:  # from JSON/CSV with fix flags
                     mu, cov, w, fx, fy, fcx, fcy, fcyy = row
-                    self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w),
-                                              fix_x=fx, fix_y=fy, fix_cxx=fcx, fix_cxy=fcy, fix_cyy=fcyy)
                 else:  # legacy (no fix flags)
                     mu, cov, w = row
-                    self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w))
+                    fx = fy = fcx = fcy = fcyy = False
+                gp.append_component(
+                    self.group,
+                    (float(mu[0]), float(mu[1])),
+                    np.array(cov, dtype=float),
+                    float(w),
+                    fixed={"x": fx, "y": fy, "sd_x": fcx, "rho": fcy, "sd_y": fcyy},
+                )
+            self._rebuild_table_rows()
         finally:
             m._updating_gaussian_table = False
 
@@ -1921,59 +1869,41 @@ class GaussianFit(QtCore.QObject):
             pass
 
     # ------------------------- Event filtering ---------------------------
-    def _on_gaussian_table_context_menu(self, pos: QtCore.QPoint):
-        """Show context menu on the Gaussians table to remove selected gaussians.
-        Right-click -> Remove Gaussian(s) removes all selected rows.
-        """
-        m = self.main
-        try:
-            table = m.tableGaussians
-            if table is None:
-                return
-            # Map the point to global for the popup menu
-            global_pos = table.viewport().mapToGlobal(pos)
-            # Source rows: these are used to *delete* Gaussians, so a view row
-            # would remove the wrong one as soon as the table is sorted.
-            selected_rows = table.selected_source_rows()
-            menu = QtWidgets.QMenu(table)
-            act_remove = QtWidgets.QAction("Remove Gaussian(s)", menu)
-            act_remove.setEnabled(len(selected_rows) > 0)
-            menu.addAction(act_remove)
-            action = menu.exec_(global_pos)
-            if action == act_remove and selected_rows:
-                self._delete_selected_gaussian_rows(selected_rows)
-        except Exception:
-            pass
+    def _add_table_actions(self, menu: QtWidgets.QMenu, index) -> None:
+        """Add "Remove Gaussian(s)" to the parameter table's context menu."""
+        rows = self.selected_component_rows()
+        if not rows and index is not None and index.isValid():
+            rows = [index.row()]
+        action = menu.addAction(f"{Glyphs.CLEAR} Remove Gaussian(s)")
+        action.setEnabled(bool(rows))
+        action.triggered.connect(lambda: self._delete_selected_gaussian_rows(rows))
 
     def eventFilter(self, obj, event):
         """Intercept Delete key presses on the Gaussians table to delete selected rows."""
         try:
-            m = self.main
-            table = getattr(m, 'tableGaussians', None)
-            # ``owns`` because key presses arrive at the inner view when the
-            # shared table is in use, not at the container.
-            if table is not None and table.owns(obj) and event.type() == QtCore.QEvent.KeyPress:
-                if event.key() in (QtCore.Qt.Key_Delete,):
-                    rows = table.selected_source_rows()
-                    if rows:
-                        self._delete_selected_gaussian_rows(rows)
-                        return True
+            if (
+                self._table is not None
+                and obj is self._table.table_view
+                and event.type() == QtCore.QEvent.KeyPress
+                and event.key() == QtCore.Qt.Key_Delete
+            ):
+                rows = self.selected_component_rows()
+                if rows:
+                    self._delete_selected_gaussian_rows(rows)
+                    return True
         except Exception:
             pass
         return super().eventFilter(obj, event)
 
     def _delete_selected_gaussian_rows(self, rows: List[int]):
-        """Delete the given selected rows from the Gaussians table and refresh overlays."""
+        """Remove the given Gaussians and refresh the overlays."""
         m = self.main
-        if not hasattr(m, 'tableGaussians') or not rows:
+        if not rows:
             return
         try:
             m._updating_gaussian_table = True
-            for r in sorted(set(rows), reverse=True):
-                if 0 <= r < m.tableGaussians.rowCount():
-                    m.tableGaussians.removeRow(r)
-        except Exception:
-            pass
+            gp.remove_components(self.group, rows)
+            self._rebuild_table_rows()
         finally:
             m._updating_gaussian_table = False
         try:
@@ -1987,10 +1917,20 @@ class GaussianFit(QtCore.QObject):
         - If becoming visible, automatically enable 'Select point' for seamless interaction.
         - If becoming hidden, disable select mode and clear point mode in the mouse filter.
         """
-        print("on_fit_dock_visibility_changed", visible)
         m = self.main
         m.btnSelectPoint.setChecked(visible)
         if visible:
             m.mouse_event_filter.set_point_mode(visible, callback=self.on_point_selected)
         else:
             m.mouse_event_filter.set_point_mode(False, callback=None)
+
+    # ----------------------------- Teardown ------------------------------
+    def close(self) -> None:
+        """Drop the registry entry and the external subscriptions.
+
+        Called when the window goes away: a registered group whose window is
+        gone is a link target that can no longer be edited, and a live
+        subscription would keep calling into destroyed widgets.
+        """
+        self._unsubscribe_external()
+        self._unregister_group()
