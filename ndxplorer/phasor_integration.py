@@ -108,7 +108,22 @@ def draw_line_overlays(ndx: Any, overlays: list[dict], tag: str = "phasor") -> i
         n = _draw_on_overlay_widget(plot, overlays, ndx, x_edges, y_edges, store, tag)
     else:
         n = _draw_on_pyqtgraph(plot, overlays, ndx, x_edges, y_edges, store, tag)
+    # Keep the source geometry: the overlay is drawn in *bin* coordinates, so a
+    # new histogram leaves it describing the old edges and it has to be redrawn
+    # from the values (see :func:`redraw_line_overlays`).
+    entry = store.get(tag)
+    if entry is not None:
+        entry["overlays"] = overlays
     return n
+
+
+def redraw_line_overlays(ndx: Any) -> None:
+    """Redraw every stored line set against the histogram edges now on screen."""
+    store = _overlay_store(ndx)
+    for tag, entry in list(store.items()):
+        overlays = entry.get("overlays")
+        if overlays:
+            draw_line_overlays(ndx, overlays, tag=tag)
 
 
 def _marker_polyline(x: float, y: float, half: float = 0.8) -> tuple[np.ndarray, np.ndarray]:
@@ -118,22 +133,29 @@ def _marker_polyline(x: float, y: float, half: float = 0.8) -> tuple[np.ndarray,
     return x + dx, y + dy
 
 
+def _overlay_layer(tag: str) -> str:
+    """Layer name this *tag*'s curves own on the shared 2-D overlay."""
+    return f"server:{tag}"
+
+
 def _draw_on_overlay_widget(plot, overlays, ndx, x_edges, y_edges, store, tag) -> int:
     """Draw a LineSet on the painter-based ``DrawingOverlayWidget`` (bin coordinates)."""
     if x_edges is not None:
         plot.set_axis_scale("xBottom", 0, len(x_edges) - 1)
     if y_edges is not None:
         plot.set_axis_scale("yLeft", 0, len(y_edges) - 1)
+    layer = _overlay_layer(tag)
     added: list[Any] = []
-    curves = getattr(plot, "_curves", None)
 
     def _add(xc, yc, color, width):
         mask = ~(np.isnan(xc) | np.isnan(yc))
         if mask.sum() < 2:
             return
-        plot.add_curve(np.asarray(xc)[mask], np.asarray(yc)[mask], color=_qcolor(color), width=width)
-        if curves is not None and curves:
-            added.append(curves[-1])  # track our appended entry for surgical removal
+        plot.add_curve(
+            np.asarray(xc)[mask], np.asarray(yc)[mask],
+            color=_qcolor(color), width=width, layer=layer,
+        )
+        added.append(layer)
 
     for ov in overlays or []:
         x = _to_bins(ndx, ov.get("x", []), x_edges)
@@ -150,7 +172,7 @@ def _draw_on_overlay_widget(plot, overlays, ndx, x_edges, y_edges, store, tag) -
                 _add(mx, my, color, int(style.get("width", 2)))
         else:
             _add(x, y, color, int(style.get("width", 1)))
-    store[tag] = {"widget": plot, "curves": added}
+    store[tag] = {"widget": plot, "layer": layer, "curves": added}
     plot.replot()
     return len(added)
 
@@ -212,17 +234,14 @@ def clear_line_overlays(ndx: Any, tag: str = "phasor") -> None:
     entry = store.pop(tag, None)
     if not entry:
         return
-    # painter-based DrawingOverlayWidget: remove only our tracked curve tuples
+    # painter-based DrawingOverlayWidget: drop our layer, nobody else's
     if "widget" in entry:
         plot = entry["widget"]
-        curves = getattr(plot, "_curves", None)
-        if curves is not None:
-            for c in entry.get("curves", []):
-                try:
-                    curves.remove(c)
-                except ValueError:
-                    pass
-            plot.replot()
+        try:
+            plot.clear_curves(entry.get("layer", _overlay_layer(tag)))
+        except TypeError:  # a stand-in overlay without layer support
+            plot.clear_curves()
+        plot.replot()
         return
     # pyqtgraph: remove each item
     plot = entry.get("plot")

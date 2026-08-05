@@ -2568,7 +2568,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.debug(f"[DISPLAY] Completed 2D plot update: H shape={H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
 
     def _refresh_curve_overlays(self) -> None:
-        """Redraw the overlay curves for the histogram now on screen."""
+        """Redraw every overlay layer for the histogram now on screen.
+
+        The 2-D overlay is one painting surface with three producers -- the
+        equation curves, the Gaussian ellipses and the server-driven line sets
+        -- and all three are drawn in *bin* coordinates. A new histogram
+        therefore invalidates all of them, so all of them are redrawn here;
+        each producer clears only its own layer.
+        """
         if getattr(self, "_refreshing_overlays", False):
             return
         self._refreshing_overlays = True
@@ -2576,6 +2583,17 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.update_curve_overlays()
         except Exception as exc:
             logging.warning("Could not update the curve overlays: %s", exc)
+        try:
+            if getattr(self, "gaussian_fit", None) is not None:
+                self.gaussian_fit._redraw_gaussian_overlays_from_table()
+        except Exception as exc:
+            logging.warning("Could not update the Gaussian overlays: %s", exc)
+        try:
+            from ..phasor_integration import redraw_line_overlays
+
+            redraw_line_overlays(self)
+        except Exception as exc:
+            logging.warning("Could not update the server line overlays: %s", exc)
         finally:
             self._refreshing_overlays = False
 

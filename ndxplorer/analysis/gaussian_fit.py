@@ -20,6 +20,10 @@ from qtpy import QtCore, QtWidgets
 
 from ..ui.glyphs import Glyphs, label as glyph_label
 
+#: Layer of the shared 2-D overlay the Gaussian ellipses own. The equation
+#: overlays and the server line sets share that surface, so clearing is per
+#: layer -- an unqualified clear on either side wipes the others.
+GAUSSIAN_LAYER = "gaussian"
 
 
 class GaussianMixtureFixedEM:
@@ -781,9 +785,10 @@ class GaussianFit(QtCore.QObject):
         """Remove all Gaussian overlays and clear the table and marginals."""
         m = self.main
         
-        # Handle simple backend (DrawingOverlayWidget)
+        # Handle simple backend (DrawingOverlayWidget); the ellipses only, the
+        # equation curves on the same surface are not ours to remove.
         try:
-            m.overlay_plot.clear_curves()
+            m.overlay_plot.clear_curves(GAUSSIAN_LAYER)
         except Exception:
             pass
         
@@ -991,7 +996,10 @@ class GaussianFit(QtCore.QObject):
 
             # Add curve to overlay widget
             try:
-                m.overlay_plot.add_curve(np.array(x_coords), np.array(y_coords), color=qcolor, width=line_width)
+                m.overlay_plot.add_curve(
+                    np.array(x_coords), np.array(y_coords),
+                    color=qcolor, width=line_width, layer=GAUSSIAN_LAYER,
+                )
                 if not hasattr(m, 'gaussian_items'):
                     m.gaussian_items = []
                 m.gaussian_items.append(('curve', len(x_coords), len(y_coords)))
@@ -1182,7 +1190,7 @@ class GaussianFit(QtCore.QObject):
         """Clear and redraw Gaussian overlays from the current table rows."""
         m = self.main
         try:
-            m.overlay_plot.clear_curves()
+            m.overlay_plot.clear_curves(GAUSSIAN_LAYER)
         except Exception:
             pass
         # Also clear marginals prior to redraw
@@ -1216,10 +1224,16 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             pass
 
-        # Trigger resize / otherwise plot flipped ? - Ugly fix
-        def _do_update():
-            m.update_plots()
-        QtCore.QTimer.singleShot(1, _do_update)
+        # A repaint, not a replot. This used to schedule a full ``update_plots``
+        # a millisecond later, because the overlay froze its curves into pixels
+        # at add time and needed a resize to pick the axes up; the overlay now
+        # maps at paint time. That deferred update was also what made the
+        # ellipses vanish a moment after appearing -- it redrew the equation
+        # overlays, which cleared the whole shared surface.
+        try:
+            m.overlay_plot.replot()
+        except Exception:
+            pass
 
     def _clear_gaussian_marginal_items(self):
         m = self.main

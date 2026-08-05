@@ -25,6 +25,11 @@ except Exception:  # pragma: no cover - nDXplorer also runs without chisurf
 #: stable owner id: two curves of the same equation must not claim one entry.
 _CURVE_SEQ = [0]
 
+#: Layer of the shared 2-D overlay these equation curves own. Clearing is per
+#: layer so a redraw here leaves the Gaussian ellipses and the server-driven
+#: line sets alone.
+EQUATION_LAYER = "equations"
+
 # Names that appear in an equation but are NOT free parameters: the independent
 # variables and the maths functions/constants the evaluator provides. Without
 # this, a regex that harvests identifiers turns ``exp``/``sqrt``/``pi`` into
@@ -871,7 +876,10 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             curve_evaluator: Class for evaluating curve equations
             value_to_bin_func: Function to convert values to bin indices
         """
-        overlay_plot.clear_curves()
+        # Only this widget's own curves: the overlay is shared with the Gaussian
+        # ellipses and the server-driven line sets, and an unqualified clear
+        # here used to take those down on every histogram redraw.
+        overlay_plot.clear_curves(EQUATION_LAYER)
 
         try:
             _, x_edges, y_edges = histogram_data
@@ -965,7 +973,8 @@ class CurveOverlayWidget(QtWidgets.QWidget):
                 np.array(x_coords),
                 np.array(y_coords),
                 color=color,
-                width=2
+                width=2,
+                layer=EQUATION_LAYER,
             )
 
         overlay_plot.replot()

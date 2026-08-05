@@ -43,6 +43,16 @@ class Histogram1D:
         """Return as (edges, counts) tuple."""
         return self.edges, self.counts
 
+    def __iter__(self):
+        """Unpack as ``edges, counts``.
+
+        Both this container and a plain tuple reach ``_histogram`` depending on
+        which computation path ran, and most readers spell it ``edges, counts =
+        ndx._histogram["x"]`` inside a bare ``except`` -- so a container that
+        refuses to unpack does not raise, it silently drops the overlay.
+        """
+        return iter(self.as_tuple())
+
 
 @dataclass
 class Histogram2D:
@@ -95,6 +105,10 @@ class Histogram2D:
     def as_tuple(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return as (H, x_edges, y_edges) tuple."""
         return self.H, self.x_edges, self.y_edges
+
+    def __iter__(self):
+        """Unpack as ``H, x_edges, y_edges`` (see :meth:`Histogram1D.__iter__`)."""
+        return iter(self.as_tuple())
 
     def get_x_marginal(self) -> Histogram1D:
         """Get X marginal histogram (sum along Y axis)."""
@@ -170,6 +184,10 @@ class Histogram3D:
     def as_tuple(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Return as (H, x_edges, y_edges, z_edges) tuple."""
         return self.H, self.x_edges, self.y_edges, self.z_edges
+
+    def __iter__(self):
+        """Unpack as ``H, x_edges, y_edges, z_edges`` (see :meth:`Histogram1D.__iter__`)."""
+        return iter(self.as_tuple())
 
     def get_xy_marginal(self) -> Histogram2D:
         """Get XY marginal histogram (sum along Z axis)."""
