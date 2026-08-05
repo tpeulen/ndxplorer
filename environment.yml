@@ -15,3 +15,5 @@ dependencies:
   - scipy
   - hdbscan
   - scikit-learn
+  # Mask image I/O: TIFF via tttrlib's bundled libtiff.
+  - tttrlib >=0.27

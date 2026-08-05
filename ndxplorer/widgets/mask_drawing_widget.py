@@ -142,7 +142,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
             self,
             "Load Mask",
             "",
-            "TIFF files (*.tif *.tiff);;All files (*.*)"
+            "TIFF files (*.tif *.tiff)"
         )
         
         if filename:
@@ -183,7 +183,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
             self,
             "Load Image as Category",
             "",
-            "TIFF files (*.tif *.tiff);;All files (*.*)"
+            "TIFF files (*.tif *.tiff)"
         )
         
         if filename:
@@ -228,7 +228,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
             self,
             "Save Mask",
             "",
-            "TIFF files (*.tif *.tiff);;All files (*.*)"
+            "TIFF files (*.tif *.tiff)"
         )
         
         if filename:
@@ -247,7 +247,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
                 )
     
     def save_binary(self):
-        """Save the current mask as a binary bitmap."""
+        """Save the current mask as a binary TIFF."""
         if self._mask is None:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -260,7 +260,7 @@ class MaskDrawingWidget(QtWidgets.QWidget):
             self,
             "Save Binary Mask",
             "",
-            "TIFF files (*.tif *.tiff);;PNG files (*.png);;All files (*.*)"
+            "TIFF files (*.tif *.tiff)"
         )
         
         if filename:

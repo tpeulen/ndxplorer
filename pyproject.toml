@@ -39,10 +39,12 @@ dependencies = [
     "pyarrow>=10.0.0",
     "pandas>=1.5.0",
     "click>=8.0.0",
-    # Mask bitmaps (ndxplorer.utils.mask_helpers). Previously read through
+    # Mask images (ndxplorer.utils.mask_helpers) are TIFF, read and written
+    # with tttrlib's bundled libtiff -- ndxplorer is a TTTR explorer, so that is
+    # a dependency it has anyway. Previously this went through
     # scikit-image/tifffile, neither of which was declared here, so loading a
-    # mask raised ImportError on a clean install.
-    "pillow",
+    # mask raised ImportError on a clean install. The array TIFF API needs 0.27.
+    "tttrlib>=0.27",
 ]
 
 [project.urls]

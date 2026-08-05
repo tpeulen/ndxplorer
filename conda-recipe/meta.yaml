@@ -45,6 +45,8 @@ requirements:
     - umap-learn
     - pyarrow
     - boost-histogram
+    # Mask image I/O: TIFF via tttrlib's bundled libtiff.
+    - tttrlib >=0.27
 
 test:
   imports:

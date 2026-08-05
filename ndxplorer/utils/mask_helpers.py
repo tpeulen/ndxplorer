@@ -4,7 +4,7 @@ Mask drawing and loading utilities for NDXplorer.
 Provides functionality to:
 - Draw masks with specified category/class values
 - Load integer TIFF files as masks (different ints = different classes)
-- Save masks as binary bitmaps
+- Save masks as binary or integer TIFFs
 - Convert between mask formats
 """
 from typing import Optional, Dict, List, Tuple
@@ -17,14 +17,18 @@ from qtpy import QtCore, QtWidgets
 def load_mask_from_tiff(filename: str) -> Tuple[np.ndarray, List[int]]:
     """
     Load a mask from an integer TIFF file.
-    
+
     Different integer values in the TIFF correspond to different classes/categories.
-    
+    Read with tttrlib's bundled libtiff, which returns the file's own integer
+    type unchanged -- a mask with more than 255 classes stays uint16 and is not
+    quietly rescaled. TIFF is the only format: a mask is measurement data, and
+    the lossy consumer formats have no business holding class labels.
+
     Parameters
     ----------
     filename : str
         Path to the TIFF file
-        
+
     Returns
     -------
     mask : np.ndarray
@@ -32,25 +36,24 @@ def load_mask_from_tiff(filename: str) -> Tuple[np.ndarray, List[int]]:
     classes : List[int]
         List of unique class values found in the mask
     """
-    from PIL import Image
+    import tttrlib
 
-    with Image.open(str(filename)) as handle:
-        mask = np.asarray(handle)
+    mask = np.asarray(tttrlib.imread(str(filename)))
 
     # Ensure integer type
     if mask.dtype.kind == 'f':
         mask = mask.astype(np.int32)
-    
+
     # Get unique classes (excluding 0 which is typically background)
     classes = sorted([int(c) for c in np.unique(mask) if c != 0])
-    
+
     return mask, classes
 
 
 def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) -> None:
     """
-    Save a mask as a binary bitmap or integer TIFF.
-    
+    Save a mask as a binary or integer TIFF.
+
     Parameters
     ----------
     mask : np.ndarray
@@ -60,7 +63,7 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
     binary : bool
         If True, save as binary (0/255). If False, save integer values as-is.
     """
-    from PIL import Image
+    import tttrlib
 
     output = mask.copy()
 
@@ -74,7 +77,7 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
         else:
             output = output.astype(np.uint16)
 
-    Image.fromarray(output).save(str(filename))
+    tttrlib.imwrite(str(filename), output)
 
 
 def create_empty_mask(shape: Tuple[int, int], dtype=np.int32) -> np.ndarray:
