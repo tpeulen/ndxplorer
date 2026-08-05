@@ -102,49 +102,49 @@ def test_the_gaussians_are_published_for_crosslinking(panel):
 
 def test_a_free_gaussian_is_fitted_onto_its_population(panel):
     panel.on_fit_2d_gaussian()
-    fitted = gp.read_components(panel.group)
+    fitted = panel.group.components()
     for component, (cx, cy, _, _) in zip(fitted, BLOBS):
         assert component.mu[0] == pytest.approx(cx, abs=0.01)
         assert component.mu[1] == pytest.approx(cy, abs=0.01)
 
 
 def test_a_fixed_centre_is_left_exactly_where_it_was(panel):
-    held = gp.parameters_of(panel.group, 0)["x"]
+    held = panel.group.parameters_of(0)["x"]
     held.fixed = True
     before = float(held.value)
     panel.on_fit_2d_gaussian()
     assert float(held.value) == pytest.approx(before, abs=1e-12)
     # ...while the free coordinate of the same component did move onto the data.
-    assert gp.read_components(panel.group)[0].mu[1] == pytest.approx(BLOBS[0][1], abs=0.01)
+    assert panel.group.components()[0].mu[1] == pytest.approx(BLOBS[0][1], abs=0.01)
 
 
 def test_a_crosslinked_centre_is_held_at_its_master(panel):
     from chisurf.core.fitting.parameter import FittingParameter
 
     master = FittingParameter(name="tau_donor", value=0.31)
-    gp.parameters_of(panel.group, 0)["x"].link = master
+    panel.group.parameters_of(0)["x"].link = master
 
     panel.on_fit_2d_gaussian()
 
-    assert gp.read_components(panel.group)[0].mu[0] == pytest.approx(0.31)
+    assert panel.group.components()[0].mu[0] == pytest.approx(0.31)
     # The master itself is untouched: the fit may not reach through a link.
     assert float(master.value) == pytest.approx(0.31)
     # And the ellipse follows the master when *it* moves.
     master.value = 0.44
-    assert gp.read_components(panel.group)[0].mu[0] == pytest.approx(0.44)
+    assert panel.group.components()[0].mu[0] == pytest.approx(0.44)
 
 
 def test_deleting_a_row_removes_that_gaussian(panel):
-    first_y = gp.read_components(panel.group)[1].mu[1]
+    first_y = panel.group.components()[1].mu[1]
     panel._delete_selected_gaussian_rows([0])
-    remaining = gp.read_components(panel.group)
+    remaining = panel.group.components()
     assert len(remaining) == 1
     assert remaining[0].mu[1] == pytest.approx(first_y)
     assert panel._table.table_model.rowCount() == 1
 
 
 def test_saved_records_carry_the_held_flags(panel):
-    gp.parameters_of(panel.group, 1)["rho"].fixed = True
+    panel.group.parameters_of(1)["rho"].fixed = True
     records = panel._rows_to_dicts()
     assert len(records) == 2
     assert records[1]["fix_rho"] is True

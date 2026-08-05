@@ -36,6 +36,11 @@ GAUSSIAN_LAYER = "gaussian"
 #: parameter table can link *to* a population's centre or width.
 GAUSSIAN_OWNER_ID = "ndxplorer.gaussians"
 
+#: How many Gaussians the table asks room for. The dock has a fixed height, so
+#: a table sized to *all* its rows would push the ones past it off the bottom;
+#: past this many it scrolls, and a taller dock shows more.
+MIN_VISIBLE_GAUSSIANS = 3
+
 
 class GaussianMixtureFixedEM:
     """
@@ -265,28 +270,12 @@ class GaussianFit(QtCore.QObject):
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
-        # The Gaussians themselves: chisurf's paired parameter table, one
-        # component per row, six parameter slots wide. Everything the panel
-        # used to hand-roll -- the numeric cells, the in-cell "hold this"
-        # checkbox, the delete-row menu -- is the shared table's, plus a link
-        # menu the hand-rolled one could not have.
-        self._table = self._build_parameter_table()
-        scroll = QtWidgets.QScrollArea(m)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        # The table sizes itself to its rows, so a panel with more Gaussians
-        # than fit the dock scrolls instead of losing the last ones off the
-        # bottom -- which reads as "that Gaussian is gone".
-        self._table_host = QtWidgets.QWidget(scroll)
-        host_layout = QtWidgets.QVBoxLayout(self._table_host)
-        host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(0)
-        host_layout.addWidget(self._table, 0, QtCore.Qt.AlignTop)
-        host_layout.addStretch(1)
-        scroll.setWidget(self._table_host)
-        m.verticalLayout_18.addWidget(scroll, 1)
-        m.gaussianTable = self._table
+        # The Gaussians themselves. They are a parameter group with append/pop,
+        # so the panel does not build a table: chisurf's ``dynamic_group``
+        # section renders it -- the same component table, add/remove buttons and
+        # columns a model editor uses for lifetimes and rotations.
+        self.form = self._build_form()
+        m.verticalLayout_18.addWidget(self.form)
 
         # Options row placed below the table: checkboxes + Save/Load
         options_row = QtWidgets.QHBoxLayout()
@@ -313,61 +302,61 @@ class GaussianFit(QtCore.QObject):
         m.gaussian_marginal_items_x = []
         m.gaussian_marginal_items_y = []
 
-    def _build_parameter_table(self) -> QtWidgets.QWidget:
-        """Create the paired parameter table over :attr:`group`."""
+    def _default_component(self):
+        """Where a Gaussian added from the table's "add" button starts.
+
+        The middle of the displayed map, a tenth of it wide — a component added
+        with no coordinates has to land somewhere the user can see it, and the
+        panel is what knows where the axes currently are.
+        """
+        H, x_edges, y_edges = self.main._histogram["2d"]
+        x0, x1 = float(x_edges[0]), float(x_edges[-1])
+        y0, y1 = float(y_edges[0]), float(y_edges[-1])
+        mu = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+        cov = np.diag([((x1 - x0) / 10.0) ** 2, ((y1 - y0) / 10.0) ** 2])
+        return mu, cov
+
+    def _build_form(self) -> QtWidgets.QWidget:
+        """Render the mixture through AutoForm's ``dynamic_group`` section."""
+        from chisurf.gui.autoform.auto_form import AutoForm
+
+        self.group.default_component = self._default_component
+        self.view = gp.GaussianMixtureView(self.group, on_changed=self._on_parameters_edited)
+        form = AutoForm(self.view, parent=self.main)
+        self._table = self._find_table(form)
+        if self._table is not None:
+            # The dock has a fixed height, so a table that grows with its
+            # content would drop the last Gaussians off the bottom of it.
+            self._table.set_scrollable(MIN_VISIBLE_GAUSSIANS)
+            view = self._table.table_view
+            # A row is a Gaussian: selecting one highlights its ellipse, "del"
+            # removes that one, and so does the Delete key.
+            view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+            view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+            view.installEventFilter(self)
+            selection = view.selectionModel()
+            if selection is not None:
+                selection.selectionChanged.connect(self.on_gaussian_table_selection_changed)
+        return form
+
+    @staticmethod
+    def _find_table(form):
+        """Return the component table AutoForm built for the section."""
         from chisurf.gui.autoform.sections.parameter_table import (
             PairedParameterTableWidget,
         )
 
-        table = PairedParameterTableWidget(
-            self.group.parameters_all,
-            width=gp.WIDTH,
-            parent=self.main,
-            on_change=self._on_parameters_edited,
-            slot_labels=gp.SLOT_LABELS,
-            # These Gaussians belong to no fit on the chisurf backend, so an
-            # edit must not be sent there -- it could only answer "fit not
-            # found". A *link* still reaches into a fit; the table sends that.
-            remote=False,
-            context_menu_hook=self._add_table_actions,
-        )
-        self._configure_table_columns(table)
-        view = table.table_view
-        # A row is a Gaussian: selecting one highlights its ellipse, and Delete
-        # removes it, so rows are what the user selects.
-        view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        view.installEventFilter(self)
-        selection = view.selectionModel()
-        if selection is not None:
-            selection.selectionChanged.connect(self.on_gaussian_table_selection_changed)
-        return table
-
-    def _configure_table_columns(self, table) -> None:
-        """Show the columns this panel has values for, at a readable width.
-
-        Bounds are armed (a width cannot be negative, a correlation cannot pass
-        ±1) but their columns would triple the table's width, and they stay
-        reachable from a row's detail popup. The EM computes no error estimate,
-        so those columns would only be six empty ones. What is left hugs its
-        number rather than sharing out spare width — six value columns in a dock
-        is not spare width, and a stretched one renders ``0…``, which is not a
-        value the user can check.
-        """
-        table.set_bounds_visible(False)
-        table.set_error_visible(False)
-        header = table.table_view.horizontalHeader()
-        for column in range(1, table.table_model.columnCount()):
-            header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeToContents)
+        return form.findChild(PairedParameterTableWidget)
 
     def _rebuild_table_rows(self) -> None:
-        """Show the group's current components (after an add / remove / load)."""
-        if self._table is None:
-            return
-        # ``set_params`` re-derives the column layout, so the panel's own choices
-        # are re-applied on top of it.
-        self._table.set_params(self.group.parameters_all)
-        self._configure_table_columns(self._table)
+        """Show the group's current components (after an add / remove / load).
+
+        The section's own add/remove buttons do this for themselves; this is for
+        the panel's other routes into the group -- a click on the map, a loaded
+        file, "Clear".
+        """
+        if self._table is not None:
+            self._table.set_params(self.group.rows())
         self._register_group()
 
     def _register_group(self) -> None:
@@ -513,7 +502,7 @@ class GaussianFit(QtCore.QObject):
         and labeled as G2D(ParamX, ParamY).
         """
         m = self.main
-        components = gp.read_components(self.group)
+        components = self.group.components()
         if not components:
             return
         # Determine current X/Y parameter indices and names
@@ -605,7 +594,7 @@ class GaussianFit(QtCore.QObject):
         is not written back.
         """
         m = self.main
-        rows_full = gp.read_components(self.group)
+        rows_full = self.group.components()
         if len(rows_full) == 0:
             QtWidgets.QMessageBox.warning(m, "No Gaussians", "Add one or more Gaussians (click on the histogram) before fitting.")
             return
@@ -898,7 +887,7 @@ class GaussianFit(QtCore.QObject):
             pass
         try:
             m._updating_gaussian_table = True
-            gp.clear_components(self.group)
+            self.group.clear()
             self._rebuild_table_rows()
         finally:
             m._updating_gaussian_table = False
@@ -1133,8 +1122,8 @@ class GaussianFit(QtCore.QObject):
         m = self.main
         try:
             m._updating_gaussian_table = True
-            row = gp.append_component(
-                self.group, mu, cov, w,
+            row = self.group.append(
+                mu, cov, w,
                 fixed={
                     "x": bool(fix_x), "y": bool(fix_y),
                     "sd_x": bool(fix_cxx), "sd_y": bool(fix_cyy), "rho": bool(fix_cxy),
@@ -1150,7 +1139,7 @@ class GaussianFit(QtCore.QObject):
         m = self.main
         try:
             m._updating_gaussian_table = True
-            gp.write_component(self.group, row, mu, cov, w)
+            self.group.write(row, mu, cov, w)
         except IndexError:
             return
         finally:
@@ -1163,7 +1152,7 @@ class GaussianFit(QtCore.QObject):
 
     def _read_gaussian_table(self) -> List[Tuple[np.ndarray, np.ndarray, float]]:
         """Return ``(mu, cov, w)`` for every Gaussian, following crosslinks."""
-        return [(c.mu, c.cov, c.w) for c in gp.read_components(self.group)]
+        return [(c.mu, c.cov, c.w) for c in self.group.components()]
 
     def _redraw_gaussian_overlays_from_table(self):
         """Clear and redraw Gaussian overlays from the current table rows."""
@@ -1327,7 +1316,7 @@ class GaussianFit(QtCore.QObject):
     # ----------------------------- Save/Load -----------------------------
     def _rows_to_dicts(self) -> List[Dict[str, Any]]:
         """One flat record per Gaussian, in the saved file's column order."""
-        return gp.components_to_records(self.group)
+        return self.group.records()
 
     def _current_axes_info(self):
         """Return a dict with axis info: index, name, and scale (linear/log) for x and y.
@@ -1844,15 +1833,14 @@ class GaussianFit(QtCore.QObject):
         # Clear existing and populate
         try:
             m._updating_gaussian_table = True
-            gp.clear_components(self.group)
+            self.group.clear()
             for row in rows:
                 if len(row) == 8:  # from JSON/CSV with fix flags
                     mu, cov, w, fx, fy, fcx, fcy, fcyy = row
                 else:  # legacy (no fix flags)
                     mu, cov, w = row
                     fx = fy = fcx = fcy = fcyy = False
-                gp.append_component(
-                    self.group,
+                self.group.append(
                     (float(mu[0]), float(mu[1])),
                     np.array(cov, dtype=float),
                     float(w),
@@ -1869,17 +1857,12 @@ class GaussianFit(QtCore.QObject):
             pass
 
     # ------------------------- Event filtering ---------------------------
-    def _add_table_actions(self, menu: QtWidgets.QMenu, index) -> None:
-        """Add "Remove Gaussian(s)" to the parameter table's context menu."""
-        rows = self.selected_component_rows()
-        if not rows and index is not None and index.isValid():
-            rows = [index.row()]
-        action = menu.addAction(f"{Glyphs.CLEAR} Remove Gaussian(s)")
-        action.setEnabled(bool(rows))
-        action.triggered.connect(lambda: self._delete_selected_gaussian_rows(rows))
-
     def eventFilter(self, obj, event):
-        """Intercept Delete key presses on the Gaussians table to delete selected rows."""
+        """Intercept Delete key presses on the Gaussians table to delete selected rows.
+
+        The section's own "del" button removes the selected component too; this
+        is the keyboard route to the same thing.
+        """
         try:
             if (
                 self._table is not None
@@ -1902,7 +1885,8 @@ class GaussianFit(QtCore.QObject):
             return
         try:
             m._updating_gaussian_table = True
-            gp.remove_components(self.group, rows)
+            for row in sorted(set(rows), reverse=True):
+                self.group.pop(row)
             self._rebuild_table_rows()
         finally:
             m._updating_gaussian_table = False
