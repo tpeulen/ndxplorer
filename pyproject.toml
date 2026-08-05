@@ -39,6 +39,10 @@ dependencies = [
     "pyarrow>=10.0.0",
     "pandas>=1.5.0",
     "click>=8.0.0",
+    # Mask bitmaps (ndxplorer.utils.mask_helpers). Previously read through
+    # scikit-image/tifffile, neither of which was declared here, so loading a
+    # mask raised ImportError on a clean install.
+    "pillow",
 ]
 
 [project.urls]

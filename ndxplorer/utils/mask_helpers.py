@@ -32,14 +32,11 @@ def load_mask_from_tiff(filename: str) -> Tuple[np.ndarray, List[int]]:
     classes : List[int]
         List of unique class values found in the mask
     """
-    try:
-        import skimage.io as skio
-    except ImportError:
-        import tifffile
-        mask = tifffile.imread(filename)
-    else:
-        mask = skio.imread(filename)
-    
+    from PIL import Image
+
+    with Image.open(str(filename)) as handle:
+        mask = np.asarray(handle)
+
     # Ensure integer type
     if mask.dtype.kind == 'f':
         mask = mask.astype(np.int32)
@@ -63,16 +60,10 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
     binary : bool
         If True, save as binary (0/255). If False, save integer values as-is.
     """
-    try:
-        import skimage.io as skio
-    except ImportError:
-        import tifffile
-        save_func = tifffile.imwrite
-    else:
-        save_func = skio.imsave
-    
+    from PIL import Image
+
     output = mask.copy()
-    
+
     if binary:
         # Convert to binary: any non-zero value becomes 255
         output = np.where(output > 0, 255, 0).astype(np.uint8)
@@ -82,8 +73,8 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
             output = output.astype(np.uint8)
         else:
             output = output.astype(np.uint16)
-    
-    save_func(filename, output)
+
+    Image.fromarray(output).save(str(filename))
 
 
 def create_empty_mask(shape: Tuple[int, int], dtype=np.int32) -> np.ndarray:
