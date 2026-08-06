@@ -1200,6 +1200,20 @@ def coerce_numeric_majority(df: pd.DataFrame, threshold: float = 0.55, verbose: 
     return out
 
 
+def _pandas_kwargs(kwargs: Dict) -> Dict:
+    """Return *kwargs* without the private flags, for handing to pandas.
+
+    `_detect_and_build_kwargs` mixes two things into one dict: arguments for the
+    CSV reader, and decisions about WHICH reader to use (`_tttrlib`). The second
+    kind is prefixed and has to be dropped before the dict is splatted, or pandas
+    raises `unexpected keyword argument '_tttrlib'` -- and every caller catches
+    that as "could not read the file", so a perfectly ordinary comma-delimited
+    file with a header on line 1 reads as empty and reports nothing but a
+    warning. One function, so a third call site cannot forget.
+    """
+    return {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
+
 def read_csv_file(filename: str) -> pd.DataFrame:
     """
     Read a CSV-like text file or a .zip containing exactly one CSV-like text file.
@@ -1221,13 +1235,13 @@ def read_csv_file(filename: str) -> pd.DataFrame:
             kwargs = _detect_and_build_kwargs(head)
             with zf.open(inner) as bio:
                 tio = io.TextIOWrapper(bio, encoding="utf-8", errors="ignore")
-                df = pd.read_csv(tio, **kwargs)
+                df = pd.read_csv(tio, **_pandas_kwargs(kwargs))
     else:
         with open(p, "r", encoding="utf-8", errors="ignore") as f:
             head = _read_head_lines(f)
             kwargs = _detect_and_build_kwargs(head)
             f.seek(0)
-            df = pd.read_csv(f, **kwargs)
+            df = pd.read_csv(f, **_pandas_kwargs(kwargs))
 
     logging.info("[read_csv_file] Read %d rows from %s", len(df), filename)
     logging.info("[read_csv_file] Columns: %s", ", ".join(map(str, df.columns)))
