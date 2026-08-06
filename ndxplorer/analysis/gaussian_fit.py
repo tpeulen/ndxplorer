@@ -36,10 +36,11 @@ GAUSSIAN_LAYER = "gaussian"
 #: parameter table can link *to* a population's centre or width.
 GAUSSIAN_OWNER_ID = "ndxplorer.gaussians"
 
-#: How many Gaussians the table asks room for. The dock has a fixed height, so
-#: a table sized to *all* its rows would push the ones past it off the bottom;
-#: past this many it scrolls, and a taller dock shows more.
-MIN_VISIBLE_GAUSSIANS = 3
+#: How many table rows the panel asks room for — one Gaussian's six parameters.
+#: The dock has a fixed height, so a table sized to *all* its rows would push
+#: the ones past it off the bottom; past this many it scrolls, and a taller dock
+#: shows more.
+MIN_VISIBLE_ROWS = 6
 
 
 class GaussianMixtureFixedEM:
@@ -327,7 +328,7 @@ class GaussianFit(QtCore.QObject):
         if self._table is not None:
             # The dock has a fixed height, so a table that grows with its
             # content would drop the last Gaussians off the bottom of it.
-            self._table.set_scrollable(MIN_VISIBLE_GAUSSIANS)
+            self._table.set_scrollable(MIN_VISIBLE_ROWS)
             view = self._table.table_view
             # A row is a Gaussian: selecting one highlights its ellipse, "del"
             # removes that one, and so does the Delete key.
@@ -341,12 +342,21 @@ class GaussianFit(QtCore.QObject):
 
     @staticmethod
     def _find_table(form):
-        """Return the component table AutoForm built for the section."""
+        """Return the parameter table AutoForm built for the section.
+
+        Either layout the section can be given — one row per parameter or one
+        per component — is a table with the same public surface, so the panel
+        asks for whichever is there rather than for a particular class.
+        """
         from chisurf.gui.autoform.sections.parameter_table import (
             PairedParameterTableWidget,
+            ParameterGroupTableWidget,
         )
 
-        return form.findChild(PairedParameterTableWidget)
+        for widget in form.findChildren(QtWidgets.QWidget):
+            if isinstance(widget, (ParameterGroupTableWidget, PairedParameterTableWidget)):
+                return widget
+        return None
 
     def _rebuild_table_rows(self) -> None:
         """Show the group's current components (after an add / remove / load).
@@ -469,14 +479,17 @@ class GaussianFit(QtCore.QObject):
 
     # ---------------------------- Handlers ------------------------------
     def selected_component_rows(self) -> List[int]:
-        """Row indices of the selected Gaussians (empty when nothing is picked)."""
+        """Indices of the selected Gaussians (empty when nothing is picked).
+
+        The table shows one *parameter* per row, so a selected row names the
+        Gaussian it belongs to — six rows at a time.
+        """
         if self._table is None:
             return []
-        view = self._table.table_view
-        selection = view.selectionModel()
+        selection = self._table.table_view.selectionModel()
         if selection is None:
             return []
-        return sorted({index.row() for index in selection.selectedIndexes()})
+        return sorted({index.row() // gp.WIDTH for index in selection.selectedIndexes()})
 
     def on_gaussian_table_selection_changed(self, selected=None, deselected=None):
         """Highlight selected Gaussian overlays by increasing line width."""

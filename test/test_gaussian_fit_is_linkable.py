@@ -84,10 +84,19 @@ def panel(window):
     gf.on_clear_gaussians()
 
 
-def test_the_panel_shows_one_row_per_gaussian(panel):
+def test_the_panel_stacks_a_gaussian_s_parameters(panel):
+    """One row per *parameter*: six numbers side by side would not fit the dock."""
     model = panel._table.table_model
-    assert model.rowCount() == 2
-    assert model.width == gp.WIDTH
+    assert model.rowCount() == 2 * gp.WIDTH
+    assert [p.name for p in model.parameters][: gp.WIDTH] == [
+        f"{slot}_1" for slot in gp.SLOTS
+    ]
+
+
+def test_a_selected_row_names_the_gaussian_it_belongs_to(panel):
+    view = panel._table.table_view
+    view.selectRow(gp.WIDTH + 2)  # a parameter of the second component
+    assert panel.selected_component_rows() == [1]
 
 
 def test_the_gaussians_are_published_for_crosslinking(panel):
@@ -140,7 +149,7 @@ def test_deleting_a_row_removes_that_gaussian(panel):
     remaining = panel.group.components()
     assert len(remaining) == 1
     assert remaining[0].mu[1] == pytest.approx(first_y)
-    assert panel._table.table_model.rowCount() == 1
+    assert panel._table.table_model.rowCount() == gp.WIDTH
 
 
 def test_saved_records_carry_the_held_flags(panel):

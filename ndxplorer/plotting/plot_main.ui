@@ -766,8 +766,8 @@
   <widget class="QDockWidget" name="dockWidget_Fit">
    <property name="minimumSize">
     <size>
-     <width>420</width>
-     <height>220</height>
+     <width>300</width>
+     <height>340</height>
     </size>
    </property>
    <property name="windowTitle">

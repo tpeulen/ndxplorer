@@ -449,10 +449,13 @@ class GaussianMixtureView:
                             target="group",
                             rows_source="rows",
                             row_width=WIDTH,
-                            style="table",
-                            slot_labels=SLOT_LABELS,
+                            # One parameter per row. Six numbers side by side is
+                            # a dozen columns, and the dock this lives in does
+                            # not have them: the panel is tall and narrow, so
+                            # the components stack rather than spread.
+                            style="list",
                             # No fit optimises these, so there is no error to show.
-                            columns=("value", "fixed", "bounds_lo", "bounds_hi", "bounds_on"),
+                            columns=("name", "value", "fixed", "bounds_lo", "bounds_hi", "bounds_on"),
                             remote=False,
                             min_rows=0,
                             collapsible=False,
