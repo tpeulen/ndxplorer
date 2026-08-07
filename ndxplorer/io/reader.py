@@ -346,6 +346,15 @@ def read_burst_analysis(
         app = QApplication.instance() or QApplication([])
 
     base_path = pathlib.Path(base_path)
+
+    # A measurement container holds the bursts *and* the photons they were found
+    # in, so there is no folder to look inside. Dispatched before anything else
+    # because everything below is about the text layout.
+    from ndxplorer.io import pto_reader
+
+    if pto_reader.is_container(base_path):
+        return pto_reader.read_container(base_path)
+
     if additional_endings is None:
         # Settings *and* whatever the folder actually contains. The configured
         # list was the only source, so a companion nobody had thought to add to
