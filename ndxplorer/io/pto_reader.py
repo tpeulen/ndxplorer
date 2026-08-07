@@ -148,6 +148,15 @@ def _burst_frames(
             except Exception:  # noqa: BLE001
                 logging.debug("could not read %r from %s", obj.name, path, exc_info=True)
                 return None
+            # The container stores a `.bur` as that file holds it -- the 2N+1
+            # interleave included -- so that unpacking reproduces the file. The
+            # padding comes off here, which is the same stride the folder
+            # reader applies to the same rows.
+            from chisurf.core.fio.fluorescence.burst_container import (
+                deinterleave_bursts,
+            )
+
+            store = deinterleave_bursts(store)
             built = pd.DataFrame(
                 {name: _column(store, name) for name in column_names(store)}
             )
