@@ -10,14 +10,6 @@ from __future__ import annotations
 from typing import Optional, Tuple
 import numpy as np
 
-try:
-    import numba as nb
-    _HAVE_NUMBA = True
-except ImportError:
-    nb = None
-    _HAVE_NUMBA = False
-
-
 # ---- Vectorized percentile computation ----
 
 def fast_percentile_range(
@@ -62,87 +54,47 @@ def fast_percentile_range(
     if len(valid_data) == 1:
         val = float(valid_data[0])
         return val, val
-    
-    # Use partition for speed (O(n) vs O(n log n))
+
+    # Use partition for speed (O(n) vs O(n log n)). The index is the rank in
+    # SORTED order, so `(n - 1) * pct / 100` -- the same position NumPy
+    # interpolates at -- rounded to a whole rank, not `n * pct / 100`, which
+    # runs one element long at the top.
     n = len(valid_data)
-    low_idx = int(n * low_pct / 100.0)
-    high_idx = int(n * high_pct / 100.0)
-    
-    # Clamp indices
-    low_idx = max(0, min(low_idx, n - 1))
-    high_idx = max(0, min(high_idx, n - 1))
-    
+
+    def _rank(pct: float) -> int:
+        return int(max(0, min(round((n - 1) * pct / 100.0), n - 1)))
+
+    low_idx, high_idx = _rank(low_pct), _rank(high_pct)
+
     if low_idx == high_idx:
-        val = float(valid_data[low_idx])
+        # Both percentiles land on the same rank -- a narrow percentile window
+        # on a short array. It is still an ORDER STATISTIC: reading
+        # `valid_data[low_idx]` returns whatever element happens to sit at that
+        # position of the unsorted array, which is not a percentile of anything
+        # and moves when the rows are reordered.
+        val = float(np.partition(valid_data, low_idx)[low_idx])
         return val, val
-    
+
     # Use partition for O(n) performance
     # This is much faster than full sort for large arrays
     low_val = float(np.partition(valid_data, low_idx)[low_idx])
     high_val = float(np.partition(valid_data, high_idx)[high_idx])
-    
+
     return low_val, high_val
 
 
-# ---- Vectorized binning operations ----
-
-if _HAVE_NUMBA:
-    @nb.njit(cache=True, parallel=True, fastmath=True)
-    def digitize_parallel(data: np.ndarray, bins: np.ndarray) -> np.ndarray:
-        """
-        Parallel version of np.digitize using Numba.
-        
-        About 2-3x faster for large arrays.
-        """
-        n = len(data)
-        result = np.empty(n, dtype=np.int64)
-        n_bins = len(bins)
-        
-        for i in nb.prange(n):
-            val = data[i]
-            if not np.isfinite(val):
-                result[i] = -1
-                continue
-            
-            # Binary search
-            left, right = 0, n_bins
-            while left < right:
-                mid = (left + right) // 2
-                if val < bins[mid]:
-                    right = mid
-                else:
-                    left = mid + 1
-            result[i] = left
-        
-        return result
-else:
-    digitize_parallel = None
-
-
-def fast_digitize(data: np.ndarray, bins: np.ndarray, use_numba: bool = True) -> np.ndarray:
-    """
-    Fast binning with optional Numba acceleration.
-    
-    Parameters
-    ----------
-    data : np.ndarray
-        Data to bin
-    bins : np.ndarray
-        Bin edges
-    use_numba : bool
-        Use Numba if available
-    
-    Returns
-    -------
-    indices : np.ndarray
-        Bin indices for each data point
-    """
-    if use_numba and _HAVE_NUMBA and digitize_parallel is not None:
-        return digitize_parallel(
-            np.ascontiguousarray(data, dtype=np.float64),
-            np.ascontiguousarray(bins, dtype=np.float64)
-        )
-    return np.digitize(data, bins)
+# The parallel `np.digitize` kernel that lived here is gone, and so is the
+# `fast_digitize` wrapper around it. Nothing in ndxplorer digitized -- the only
+# references were its own tests, so the accelerator was carrying a function the
+# application never called. Binning goes through ndxplorer.utils.fast_histogram,
+# which is tttrlib's C++ fill and does the binning inside the histogram rather
+# than handing back per-point indices.
+#
+# It is worth recording why the kernel looked worth keeping, so it is not
+# rebuilt on the same reasoning: on 2,000,000 points it ran in 7.2 ms (64 bins)
+# and 20.1 ms (512) against 111.4 / 275.5 ms for `np.searchsorted(side='right')`
+# and 168.5 / 139.4 ms for `np.digitize`. A real speedup over a call that was
+# never made.
 
 
 # ---- Vectorized statistics ----
@@ -238,117 +190,16 @@ def combine_masks_fast(
     return result
 
 
-if _HAVE_NUMBA:
-    @nb.njit(cache=True, parallel=True, fastmath=True)
-    def rectangular_selection_numba(
-        data: np.ndarray,
-        lower: float,
-        upper: float,
-        invert: bool
-    ) -> np.ndarray:
-        """Fast rectangular selection using Numba."""
-        n = len(data)
-        mask = np.zeros(n, dtype=np.bool_)
-        
-        if invert:
-            # Mask points inside range
-            for i in nb.prange(n):
-                val = data[i]
-                if np.isfinite(val) and val > lower and val < upper:
-                    mask[i] = True
-        else:
-            # Mask points outside range
-            for i in nb.prange(n):
-                val = data[i]
-                if not np.isfinite(val) or val < lower or val > upper:
-                    mask[i] = True
-        
-        return mask
-    
-    @nb.njit(cache=True, fastmath=True)
-    def gaussian_2d_selection_numba(
-        x: np.ndarray,
-        y: np.ndarray,
-        mu_x: float,
-        mu_y: float,
-        inv_cov_00: float,
-        inv_cov_01: float,
-        inv_cov_11: float,
-        sigma_sq: float,
-        invert: bool
-    ) -> np.ndarray:
-        """Fast 2D Gaussian selection using Numba."""
-        n = len(x)
-        mask = np.zeros(n, dtype=np.bool_)
-        
-        for i in range(n):
-            x_val = x[i]
-            y_val = y[i]
-            
-            if not np.isfinite(x_val) or not np.isfinite(y_val):
-                mask[i] = True
-                continue
-            
-            dx = x_val - mu_x
-            dy = y_val - mu_y
-            d2 = inv_cov_00 * dx * dx + 2.0 * inv_cov_01 * dx * dy + inv_cov_11 * dy * dy
-            
-            if invert:
-                if d2 <= sigma_sq:
-                    mask[i] = True
-            else:
-                if d2 > sigma_sq:
-                    mask[i] = True
-        
-        return mask
-else:
-    rectangular_selection_numba = None
-    gaussian_2d_selection_numba = None
-
-
-def fast_rectangular_selection(
-    data: np.ndarray,
-    lower: float,
-    upper: float,
-    invert: bool = False,
-    use_numba: bool = True
-) -> np.ndarray:
-    """
-    Fast rectangular (1D interval) selection.
-    
-    Parameters
-    ----------
-    data : np.ndarray
-        Input data
-    lower : float
-        Lower bound
-    upper : float
-        Upper bound
-    invert : bool
-        If True, select inside range; if False, select outside
-    use_numba : bool
-        Use Numba if available
-    
-    Returns
-    -------
-    mask : np.ndarray
-        Boolean mask (True = exclude)
-    """
-    if use_numba and _HAVE_NUMBA and rectangular_selection_numba is not None:
-        return rectangular_selection_numba(
-            np.ascontiguousarray(data, dtype=np.float64),
-            float(lower),
-            float(upper),
-            bool(invert)
-        )
-    
-    # Numpy fallback
-    if invert:
-        mask = (data > lower) & (data < upper)
-    else:
-        mask = (data < lower) | (data > upper) | ~np.isfinite(data)
-    
-    return mask
+# The gate kernels that used to live here -- rectangular_selection_numba,
+# gaussian_2d_selection_numba, fast_rectangular_selection,
+# fast_gaussian_2d_selection -- are gone. They were a fourth copy of a predicate
+# that already had three, and they did not agree with the others: this one
+# excluded every non-finite value under BOTH polarities, while the selection
+# classes keep a NaN inside a rectangle and drop it inside an ellipse. One
+# import away from a silently different scientific answer.
+#
+# The one implementation is ndxplorer.core.tttrlib_selection, evaluated in the
+# store. See DataSource.selection_mask.
 
 
 # ---- Memory-efficient array operations ----
