@@ -47,52 +47,41 @@ def get_kmeans():
     return __kmeans_cls
 
 
-class _SklearnHdbscanShim:
-    """Expose scikit-learn's HDBSCAN under the standalone package's interface.
+class _HdbscanNamespace:
+    """Expose a class under the module-with-a-``.HDBSCAN``-attribute interface.
 
-    The two implementations agree on everything this codebase uses -- ``fit``,
-    ``labels_``, ``probabilities_`` -- but differ in construction: the
-    standalone package takes ``prediction_data``, which scikit-learn has no
-    equivalent for and would reject. Dropping that one keyword is the whole
-    adaptation, and it lets the clustering path work on a plain scikit-learn
-    install instead of silently reporting "HDBSCAN is not installed".
+    The call sites were written against the standalone ``hdbscan`` *package*,
+    so they say ``backend.HDBSCAN(...)``. Keeping that spelling costs one
+    wrapper and saves touching every caller.
     """
 
     def __init__(self, cls):
         self._cls = cls
 
     def HDBSCAN(self, *args, **kwargs):  # noqa: N802 - mirrors the upstream name
-        """Construct a clusterer, ignoring keywords scikit-learn does not take."""
-        kwargs.pop("prediction_data", None)
+        """Construct a clusterer."""
         return self._cls(*args, **kwargs)
 
 
 def get_hdbscan():
     """Return an object exposing ``.HDBSCAN``, or ``None`` if unavailable.
 
-    Prefers the standalone ``hdbscan`` package and falls back to
-    ``sklearn.cluster.HDBSCAN`` (scikit-learn >= 1.3). Without the fallback,
-    HDBSCAN is reported as missing on any environment that has scikit-learn but
-    not the standalone package -- which is most of them, since scikit-learn is
-    already a dependency and the standalone package is not.
+    The implementation is ChiSurf's own (``chisurf.core.ml.cluster.HDBSCAN``),
+    which accepts the standalone package's keywords -- including
+    ``prediction_data``, which it ignores -- and prefers a compiled k-d tree /
+    Borůvka kernel from the photon library when that is importable.
     """
     global __hdbscan
     if __hdbscan is not None:
         return __hdbscan
     try:
-        import hdbscan as _hdbscan  # type: ignore
-        __hdbscan = _hdbscan
-        logging.debug("lazy_imports: hdbscan imported on demand")
-        return __hdbscan
-    except Exception:
-        logging.debug("standalone hdbscan not available; trying scikit-learn")
-    try:
-        from sklearn.cluster import HDBSCAN as _SkHdbscan  # type: ignore
-        __hdbscan = _SklearnHdbscanShim(_SkHdbscan)
-        logging.debug("lazy_imports: using sklearn.cluster.HDBSCAN")
+        from chisurf.core.ml.cluster import HDBSCAN as _HDBSCAN  # type: ignore
+
+        __hdbscan = _HdbscanNamespace(_HDBSCAN)
+        logging.debug("lazy_imports: chisurf.core.ml HDBSCAN imported on demand")
     except Exception:
         __hdbscan = None
-        logging.debug("HDBSCAN not available")
+        logging.debug("chisurf.core.ml HDBSCAN not available")
     return __hdbscan
 
 

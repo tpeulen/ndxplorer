@@ -2,10 +2,11 @@
 
 The clustering machinery has been here for a while with no test of any kind, and
 the first thing this suite found is that it was **switched off**: ``get_hdbscan``
-only tried the standalone ``hdbscan`` package, so on any environment carrying
-scikit-learn but not that package — which is most of them, since scikit-learn is
-already a dependency — HDBSCAN reported itself missing and the whole path
-silently did nothing.
+only tried an optional third-party package, so on the environments that did not
+happen to carry it — most of them — HDBSCAN reported itself missing and the
+whole path silently did nothing. The implementation is ChiSurf's own now, so
+there is nothing left to be missing, but the reachability tests stay: a lazy
+getter that returns ``None`` is exactly the failure that hides.
 
 Three levels, deliberately:
 
@@ -72,25 +73,24 @@ def purity(labels, truth):
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Are the backends reachable?
 # ──────────────────────────────────────────────────────────────────────────────
-def test_hdbscan_is_reachable_without_the_standalone_package():
-    """HDBSCAN must be available wherever scikit-learn is.
+def test_hdbscan_is_reachable():
+    """HDBSCAN must be reachable from a plain ChiSurf install.
 
-    This is the regression that motivated the suite. ``get_hdbscan`` used to try
-    only ``import hdbscan``; scikit-learn has shipped ``sklearn.cluster.HDBSCAN``
-    since 1.3, so the clustering path was dead on environments that had
-    everything it needed.
+    This is the regression that motivated the suite: the getter used to try only
+    ``import hdbscan``, an optional package, so the clustering path was dead on
+    environments that had everything it needed. The implementation is now
+    ChiSurf's own and there is nothing optional left to miss.
     """
     backend = get_hdbscan()
-    assert backend is not None, "HDBSCAN unreachable although scikit-learn is installed"
+    assert backend is not None, "HDBSCAN unreachable although ChiSurf is installed"
     assert hasattr(backend, "HDBSCAN")
 
 
-def test_whichever_hdbscan_is_installed_accepts_the_call_the_code_makes():
-    """The call site passes ``prediction_data``; both backends must take it.
+def test_hdbscan_accepts_the_call_the_code_makes():
+    """The call site passes ``prediction_data``, a keyword of the old package.
 
-    The standalone package has that keyword natively; scikit-learn does not and
-    would raise, so the shim drops it. Which one is in use depends on the
-    environment, so this exercises whatever ``get_hdbscan`` returns.
+    ChiSurf's implementation accepts and ignores it, so the call sites did not
+    have to change when the dependency went away.
     """
     backend = get_hdbscan()
     clusterer = backend.HDBSCAN(min_samples=5, min_cluster_size=5, prediction_data=True)
@@ -100,19 +100,10 @@ def test_whichever_hdbscan_is_installed_accepts_the_call_the_code_makes():
     assert hasattr(clusterer, "probabilities_"), "the write-back path reads probabilities_"
 
 
-def test_the_sklearn_shim_is_exercised_even_when_the_real_package_is_installed():
-    """Pin the fallback directly, so installing ``hdbscan`` does not hide it.
-
-    Once the standalone package is present ``get_hdbscan`` prefers it and the
-    shim stops being reached — which would leave the path that every
-    scikit-learn-only environment depends on quietly untested.
-    """
-    from sklearn.cluster import HDBSCAN as SkHdbscan
-
-    from ndxplorer.utils.lazy_imports import _SklearnHdbscanShim
-
-    shim = _SklearnHdbscanShim(SkHdbscan)
-    clusterer = shim.HDBSCAN(min_samples=5, min_cluster_size=20, prediction_data=True)
+def test_hdbscan_recovers_planted_blobs():
+    """The backend must find the structure, not merely return arrays."""
+    backend = get_hdbscan()
+    clusterer = backend.HDBSCAN(min_samples=5, min_cluster_size=20, prediction_data=True)
     data, truth = three_blobs()
     clusterer.fit(data)
     assert hasattr(clusterer, "probabilities_")

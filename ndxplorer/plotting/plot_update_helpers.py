@@ -9,13 +9,7 @@ from qtpy import QtWidgets
 
 from ..logging_config import logging
 
-try:  # Optional dependency
-    import hdbscan as _hdbscan  # type: ignore
-except ImportError:  # pragma: no cover - optional dep
-    _hdbscan = None
-
-hdbscan = _hdbscan
-
+from ..utils.lazy_imports import get_hdbscan
 from ..utils.performance import compute_percentile_range_optimized
 
 def _as_edges_counts(hist):
@@ -542,16 +536,10 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
 
     logging.debug(f"update_plots: Checking clustering: _use_clustering={ndxplorer._use_clustering}, skip_clustering={skip_clustering}")
     if ndxplorer._use_clustering and ndxplorer._cluster_labels is None and not skip_clustering:
-        global hdbscan  # noqa: PLW0603
-        if hdbscan is None:
-            try:  # pragma: no cover - optional
-                import hdbscan as _hdbscan  # type: ignore
-
-                hdbscan = _hdbscan
-                logging.debug("Imported hdbscan library")
-            except ImportError:
-                hdbscan = None
-        if hdbscan:
+        # The clusterer is loaded through the shared getter, which caches and
+        # logs; a second private import here is how the two paths drifted into
+        # disagreeing about whether clustering was available at all.
+        if get_hdbscan() is not None:
             ndxplorer.on_apply_clustering()
             return
 
