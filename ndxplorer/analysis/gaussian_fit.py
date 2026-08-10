@@ -13,6 +13,8 @@ Gaussian's centre or width can be crosslinked to a parameter of an actual fit �
 or to another Gaussian — and "hold this one" is the same *fixed* flag every
 other parameter in chisurf has, rather than a checkbox in the corner of a cell.
 """
+from __future__ import annotations
+
 from ..logging_config import logging
 from typing import Any, Dict, Optional, Tuple, List
 
@@ -23,6 +25,8 @@ from datetime import datetime
 
 import numpy as np
 from qtpy import QtCore, QtWidgets
+
+from chisurf.core.ml import GaussianMixture
 
 from ..core import gaussian_parameters as gp
 from ..ui.glyphs import Glyphs, label as glyph_label
@@ -44,129 +48,76 @@ MIN_VISIBLE_ROWS = 6
 
 
 class GaussianMixtureFixedEM:
+    """2D GMM EM with per-component mean/covariance locking.
+
+    Thin compatibility wrapper over :class:`chisurf.core.ml.GaussianMixture`,
+    which gained the ``fix_means`` / ``fix_covariances`` masks this companion
+    tool originally wrote an entire private EM for. Works in the caller's "fit
+    space" (log-transformed axes as needed) — that is entirely upstream.
     """
-    Minimal 2D GMM EM implementation that supports fixing subset of means/covariances per component.
-    Work in 'fit space' (i.e., already log-transformed axes if needed).
-    """
+
     def __init__(self, means_init, covs_init, weights_init=None,
                  reg_covar=1e-6, max_iter=200, tol=1e-3, verbose=0, weight_floor=0.0):
-        self.means_ = np.array(means_init, dtype=float)         # (K,2)
-        self.covs_  = np.array(covs_init, dtype=float)          # (K,2,2)
-        K = self.means_.shape[0]
+        self.means_init = np.array(means_init, dtype=float)
+        self.covs_init = np.array(covs_init, dtype=float)
+        K = self.means_init.shape[0]
         if weights_init is None:
-            self.weights_ = np.ones(K, dtype=float) / K
+            self.weights_init = np.ones(K, dtype=float) / K
         else:
             w = np.array(weights_init, dtype=float)
-            s = float(np.sum(w)); self.weights_ = (w/s) if s > 0 else (np.ones(K)/K)
-        self.reg_covar   = float(reg_covar)
-        self.max_iter    = int(max_iter)
-        self.tol         = float(tol)
-        self.verbose     = int(verbose)
-        self.weight_floor= float(max(0.0, weight_floor))
-        self.converged_  = False
-        self.n_iter_     = 0
-        self.lower_bound_= -np.inf
-
-    @staticmethod
-    def _log_gaussian_2d(X, mu, cov):
-        # X: (N,2), mu: (2,), cov: (2,2)
-        # return log N(x|mu,cov) for each row
-        try:
-            L = np.linalg.cholesky(cov)
-        except Exception:
-            # fallback via eig-clip
-            ev, V = np.linalg.eigh(cov)
-            ev = np.maximum(ev, 1e-12)
-            cov = (V @ np.diag(ev) @ V.T)
-            L = np.linalg.cholesky(cov)
-        diff = X - mu[None, :]
-        # solve L y = diff^T  -> y^T = L^{-1} diff
-        y = np.linalg.solve(L, diff.T)  # (2,N)
-        maha = np.sum(y*y, axis=0)      # (N,)
-        log_det = 2.0 * np.sum(np.log(np.diag(L)))
-        return -0.5*(maha + log_det + 2*np.log(2*np.pi))
-
-    @staticmethod
-    def _nearest_psd(M, eps=1e-12):
-        M = 0.5*(M + M.T)
-        ev, V = np.linalg.eigh(M)
-        ev = np.maximum(ev, eps)
-        return (V @ np.diag(ev) @ V.T)
+            s = float(np.sum(w))
+            self.weights_init = (w / s) if s > 0 else (np.ones(K) / K)
+        self.reg_covar = float(reg_covar)
+        self.max_iter = int(max_iter)
+        self.tol = float(tol)
+        self.verbose = int(verbose)
+        self.weight_floor = float(max(0.0, weight_floor))
+        self.means_ = None
+        self.covs_ = None
+        self.weights_ = None
+        self.converged_ = False
+        self.n_iter_ = 0
+        self.lower_bound_ = -np.inf
+        self._em = None
 
     def fit(self, X, fix_mu_mask, fix_cov_mask, mu_fixed_vals, cov_fixed_vals):
+        """Fit the mixture with component locks and return ``self``.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            ``(N, 2)`` fit-space coordinates.
+        fix_mu_mask : numpy.ndarray (K, 2) bool
+            ``True`` holds that mean element at ``mu_fixed_vals``.
+        fix_cov_mask : numpy.ndarray (K, 2, 2) bool
+            ``True`` holds that covariance element (its mate mirrored for
+            symmetry) at ``cov_fixed_vals``.
+        mu_fixed_vals, cov_fixed_vals : numpy.ndarray
+            Anchor values for the locked parameters.
         """
-        X: (N,2)
-        fix_mu_mask: (K,2) bool   (True=fix that mean element)
-        fix_cov_mask:(K,2,2) bool (True=fix that cov element; symmetric)
-        mu_fixed_vals: (K,2) float
-        cov_fixed_vals:(K,2,2) float
-        """
-        X = np.asarray(X, dtype=float)
-        N = X.shape[0]
-        K = self.means_.shape[0]
-
-        # regularize initial covs
-        for k in range(K):
-            self.covs_[k] = self._nearest_psd(self.covs_[k]) + self.reg_covar*np.eye(2)
-
-        def e_step():
-            # compute responsibilities (N,K)
-            log_prob = np.empty((N, K), dtype=float)
-            for k in range(K):
-                log_prob[:, k] = (np.log(self.weights_[k]+1e-300) +
-                                  self._log_gaussian_2d(X, self.means_[k], self.covs_[k]))
-            # log-sum-exp
-            m = np.max(log_prob, axis=1, keepdims=True)
-            lse = m + np.log(np.sum(np.exp(log_prob - m), axis=1, keepdims=True))
-            log_resp = log_prob - lse
-            resp = np.exp(log_resp)
-            lower_bound = float(np.sum(lse))
-            return resp, lower_bound
-
-        def m_step(resp):
-            Nk = np.clip(np.sum(resp, axis=0), 1e-12, np.inf)  # (K,)
-            self.weights_ = Nk / float(N)
-
-            # means
-            new_means = (resp.T @ X) / Nk[:, None]  # (K,2)
-            # apply mean constraints
-            for k in range(K):
-                if fix_mu_mask[k, 0]: new_means[k, 0] = mu_fixed_vals[k, 0]
-                if fix_mu_mask[k, 1]: new_means[k, 1] = mu_fixed_vals[k, 1]
-            self.means_ = new_means
-
-            # covariances
-            new_covs = np.zeros_like(self.covs_)
-            for k in range(K):
-                diff = X - self.means_[k][None, :]
-                Sk = (resp[:, k][:, None] * diff).T @ diff / Nk[k]
-                Sk = self._nearest_psd(Sk) + self.reg_covar*np.eye(2)
-                # apply element-wise constraints (keep symmetry)
-                Cfix = cov_fixed_vals[k]
-                Mfix = fix_cov_mask[k]
-                if np.any(Mfix):
-                    Sk[Mfix] = Cfix[Mfix]
-                    Sk = 0.5*(Sk + Sk.T)
-                    Sk = self._nearest_psd(Sk) + self.reg_covar*np.eye(2)
-                new_covs[k] = Sk
-            self.covs_ = new_covs
-
-        # EM loop
-        prev_lb = -np.inf
-        for it in range(1, self.max_iter+1):
-            resp, lb = e_step()
-            m_step(resp)
-            improve = lb - prev_lb
-            if self.verbose and (it % 10 == 0 or it == 1):
-                print(f"[EM] iter={it}  lower_bound={lb:.6f}  +{improve:.6f}")
-            if improve < self.tol:
-                self.converged_ = True
-                self.lower_bound_ = lb
-                self.n_iter_ = it
-                return self
-            prev_lb = lb
-        self.lower_bound_ = prev_lb
-        self.n_iter_ = self.max_iter
+        fixed_mus = np.asarray(mu_fixed_vals, dtype=float)
+        fixed_covs = np.asarray(cov_fixed_vals, dtype=float)
+        # The fixed-parameter anchors are the row's current values; they are
+        # fed as the mixture's init so the EM can lock exactly onto them.
+        self._em = GaussianMixture(
+            n_components=self.means_init.shape[0],
+            covariance_type="full",
+            means_init=fixed_mus,
+            covariances_init=fixed_covs,
+            weights_init=self.weights_init,
+            reg_covar=self.reg_covar,
+            max_iter=self.max_iter,
+            tol=self.tol,
+            init_params="random",
+            fix_means=np.asarray(fix_mu_mask, dtype=bool),
+            fix_covariances=np.asarray(fix_cov_mask, dtype=bool),
+        ).fit(np.asarray(X, dtype=float))
+        self.means_ = self._em.means_
+        self.covs_ = self._em.covariances_
+        self.weights_ = self._em.weights_
+        self.converged_ = self._em.converged_
+        self.n_iter_ = self._em.n_iter_
+        self.lower_bound_ = self._em.lower_bound_
         return self
 
 

@@ -13,7 +13,6 @@ from ..logging_config import logging
 # Caches
 __umap: Optional[Any] = None
 __kmeans_cls: Optional[Any] = None
-__gmm_cls: Optional[Any] = None
 __hdbscan: Optional[Any] = None
 __napari: Optional[Any] = None
 __pca: Optional[Any] = None
@@ -38,27 +37,14 @@ def get_kmeans():
     if __kmeans_cls is not None:
         return __kmeans_cls
     try:
-        from sklearn.cluster import KMeans as _KMeans  # type: ignore
+        from chisurf.core.ml.cluster import KMeans as _KMeans  # type: ignore
+
         __kmeans_cls = _KMeans
-        logging.debug("lazy_imports: sklearn KMeans imported on demand")
+        logging.debug("lazy_imports: chisurf.core.ml KMeans imported on demand")
     except Exception:
         __kmeans_cls = None
-        logging.debug("scikit-learn not available")
+        logging.debug("chisurf.core.ml KMeans not available")
     return __kmeans_cls
-
-
-def get_gmm():
-    global __gmm_cls
-    if __gmm_cls is not None:
-        return __gmm_cls
-    try:
-        from sklearn.mixture import GaussianMixture as _GMM  # type: ignore
-        __gmm_cls = _GMM
-        logging.debug("lazy_imports: sklearn GaussianMixture imported on demand")
-    except Exception:
-        __gmm_cls = None
-        logging.debug("scikit-learn not available")
-    return __gmm_cls
 
 
 class _SklearnHdbscanShim:
@@ -111,7 +97,7 @@ def get_hdbscan():
 
 
 def get_pca():
-    """Return ``(PCA, IncrementalPCA)`` from scikit-learn, or ``None``.
+    """Return ``(PCA, IncrementalPCA)`` from ``chisurf.core.ml``, or ``None``.
 
     Both are returned because the choice is a size question, not a modelling
     one: ``PCA`` decomposes the whole matrix at once, which is exact and fine up
@@ -122,13 +108,13 @@ def get_pca():
     if __pca is not None:
         return __pca
     try:
-        from sklearn.decomposition import IncrementalPCA, PCA  # type: ignore
+        from chisurf.core.ml.decomposition import IncrementalPCA, PCA  # type: ignore
 
         __pca = (PCA, IncrementalPCA)
-        logging.debug("lazy_imports: sklearn PCA imported on demand")
+        logging.debug("lazy_imports: chisurf.core.ml PCA imported on demand")
     except Exception:
         __pca = None
-        logging.debug("scikit-learn PCA not available")
+        logging.debug("chisurf.core.ml PCA not available")
     return __pca
 
 
