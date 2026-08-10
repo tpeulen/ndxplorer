@@ -1328,6 +1328,17 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Add napari option - allows sending the current 2D histogram to Napari
         action_napari = menu.addAction("Send to Napari")
 
+        # Picking, offered here rather than on left-click: that button already
+        # pans and paints masks, and stealing it would break two gestures to
+        # add a third.
+        menu.addSeparator()
+        action_pick = menu.addAction("Fit gate to the population here")
+        action_pick.setToolTip(
+            "Fit a 2-D Gaussian to the points around the cursor and add the "
+            "ellipse as a gate. The click is a seed: the fit re-centres on the "
+            "population."
+        )
+
         # Hand the gated bursts to a real analysis (FCS, TCSPC, PDA, PCH).
         # Offered here as well as on the selection table because the gate is
         # usually drawn on this canvas, and going hunting for the table to act
@@ -1349,6 +1360,109 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.copy_1d_hists_to_clipboard_csv()
         elif action == action_napari:
             self.send_to_napari()
+        elif action == action_pick:
+            self.pick_population_from_canvas(pos)
+
+    # ── picking a population off the 2-D plane ──────────────────────────
+    def pick_population_at(self, x: float, y: float, *, radius: float = 0.0,
+                           name: str = "") -> str:
+        """Fit a gate to the population at ``(x, y)`` and add it.
+
+        The model half of the gesture, in the **parameters' own units**, so it
+        is testable without a plot and so the coordinate mapping is somebody
+        else's problem exactly once.
+
+        Parameters
+        ----------
+        x, y : float
+            Where the user clicked, in parameter units.
+        radius : float, optional
+            Capture radius. Zero takes a twentieth of the shorter displayed
+            axis, which is a starting point rather than an answer: a density
+            has no edge, so how much of a cloud is "one population" is a
+            decision, and this one is merely a reasonable default to adjust
+            from.
+        name : str, optional
+            Gate name; a numbered default otherwise.
+
+        Returns
+        -------
+        str
+            Empty on success, or why the pick was refused.
+        """
+        from ..core.region_selection import pick_population
+
+        data = self.values
+        if data is None or not len(data):
+            return "no data loaded"
+
+        # The points as displayed: every gate already applied. Fitting to what
+        # is on screen is the point — a population that is half hidden by an
+        # earlier gate is not the population the user is looking at.
+        names = list(self.data_source.parameter_names)
+        x_param = self.plot_control.comboBoxSelX.currentText()
+        y_param = self.plot_control.comboBoxSelY.currentText()
+        idx1 = names.index(x_param) if x_param in names else -1
+        idx2 = names.index(y_param) if y_param in names else -1
+        if idx1 < 0 or idx2 < 0:
+            return f"could not find the parameters {x_param!r} and {y_param!r}"
+        if not radius:
+            x_range = self.plot_control.x_range
+            y_range = self.plot_control.y_range
+            span_x = abs(float(x_range[1]) - float(x_range[0]))
+            span_y = abs(float(y_range[1]) - float(y_range[0]))
+            radius = max(min(span_x, span_y) / 20.0, 1e-12)
+
+        count = sum(1 for sel in self.plot_control._selections
+                    if getattr(sel, "roi", None) is not None)
+        selection, reason = pick_population(
+            np.asarray(data), (idx1, idx2), float(x), float(y),
+            radius=float(radius), name=name or f"Population {count + 1}",
+        )
+        if selection is None:
+            return reason
+
+        self.plot_control._selections.append(selection)
+        self.plot_control.addRegionSelection(selection)
+        self.request_plot_update()
+        return ""
+
+    def pick_population_from_canvas(self, pos) -> None:
+        """Fit a gate to the population under the cursor, from a canvas click.
+
+        The coordinate half. ``pos`` is in the canvas viewport's own pixels, so
+        it goes through the scene to the view box, which is the only mapping
+        that respects pan, zoom and whatever transform the image item carries.
+        A point that lands outside the displayed ranges is **refused**: it means
+        the mapping did not do what this code thinks it did, and fitting
+        somewhere arbitrary would produce a gate that is merely plausible.
+        """
+        try:
+            view = self.g_2dplot.plot_widget
+            box = view.getPlotItem().getViewBox()
+            point = box.mapSceneToView(view.mapToScene(pos))
+            x, y = float(point.x()), float(point.y())
+        except Exception as exc:
+            logging.debug("could not map the click to data coordinates", exc_info=True)
+            self.statusBar().showMessage(f"Could not read the click position: {exc}")
+            return
+
+        x_range = self.plot_control.x_range
+        y_range = self.plot_control.y_range
+        inside = (min(x_range) <= x <= max(x_range)
+                  and min(y_range) <= y <= max(y_range))
+        if not inside:
+            self.statusBar().showMessage(
+                f"That click maps to ({x:.4g}, {y:.4g}), outside the plotted "
+                "range — not fitting a gate there"
+            )
+            return
+
+        reason = self.pick_population_at(x, y)
+        self.statusBar().showMessage(
+            f"No gate: {reason}" if reason
+            else f"Gate fitted to the population at ({x:.4g}, {y:.4g})"
+        )
 
     def onMaskChanged(self) -> None:
         """

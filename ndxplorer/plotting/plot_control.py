@@ -1232,6 +1232,63 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
         logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}, invert={invert}, enabled={enabled}, log_x={log_x}, log_y={log_y}")
 
+    def addRegionSelection(self, selection, invert: bool = False, enabled: bool = True):
+        """Add a region-backed gate to the table.
+
+        The row carries only the ``selection_id``; the gate itself stays in
+        ``_selections``. That is deliberate and matches how the table already
+        rebuilds a ``Region`` row — a region can be a polygon or a composite,
+        and round-tripping one through table metadata would flatten it to
+        whatever the metadata schema happened to cover.
+
+        Parameters
+        ----------
+        selection : RegionDataSelection
+            Already appended to ``_selections`` by the caller.
+        invert, enabled : bool
+            Initial flag states.
+        """
+        table = self.tableWidget
+        row = table.rowCount()
+        table.setRowCount(row + 1)
+
+        meta = {
+            "type": "Region",
+            "idx1": int(selection.idx1),
+            "idx2": int(selection.idx2),
+            "selection_id": selection.selection_id,
+        }
+        item0 = QtWidgets.QTableWidgetItem(str(selection.name))
+        item0.setFlags(QtCore.Qt.ItemIsEnabled)
+        item0.setData(1, int(selection.idx1))
+        try:
+            item0.setData(32, json.dumps(meta))  # Qt.UserRole
+        except Exception:
+            item0.setData(1, int(selection.idx1))
+        table.setItem(row, 0, item0)
+
+        for column in (1, 2):
+            placeholder = QtWidgets.QTableWidgetItem()
+            placeholder.setText(str(0.0))
+            placeholder.setData(0, float(0.0))
+            placeholder.setFlags(QtCore.Qt.ItemIsEnabled)
+            placeholder.setTextAlignment(QtCore.Qt.AlignCenter)
+            table.setItem(row, column, placeholder)
+
+        cb_invert = QtWidgets.QCheckBox(table)
+        table.setCellWidget(row, 3, cb_invert)
+        cb_invert.setChecked(bool(invert))
+
+        cb_enable = QtWidgets.QCheckBox(table)
+        table.setCellWidget(row, 4, cb_enable)
+        cb_enable.setChecked(bool(enabled))
+
+        self.parent.request_plot_update(skip_clustering=True)
+        cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
+        cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
+        logging.log(0, f"Added region selection {selection.name!r} for idxs "
+                       f"({selection.idx1}, {selection.idx2})")
+
     def addMaskSelection(self, name, mask, edges1, edges2, idx1, idx2, invert=False, enabled=True, selection_id=None):
         """Add a mask-based selection to the table."""
         table = self.tableWidget
