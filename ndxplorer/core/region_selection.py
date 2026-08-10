@@ -78,6 +78,36 @@ class RegionDataSelection(DataSelection):
         """The kind of region, for the selection table."""
         return type(self.roi).__name__.replace("ROI", "").lower()
 
+    def gate_key(self) -> tuple:
+        """See :func:`ndxplorer.core.data.mask_state.gate_key`."""
+        try:
+            shape = self.roi.to_dict()
+        except Exception:
+            shape = id(self.roi)
+        return ("region", self.idx1, self.idx2, self.invert, self.enabled, shape)
+
+    def __eq__(self, other) -> bool:
+        """Equal when the same shape gates the same plane the same way.
+
+        Not identity, which is what the default would give. The selection table
+        edits a gate *in place* -- toggling ``enabled`` or ``invert`` on the very
+        object the cache already holds -- so an identity comparison says nothing
+        changed and the plot keeps showing the previous population. Comparing
+        the serialised geometry costs a dict per gate per redraw and is the
+        difference between the checkbox working and not.
+        """
+        if not isinstance(other, RegionDataSelection):
+            return False
+        if (self.idx1, self.idx2, self.invert, self.enabled) != \
+                (other.idx1, other.idx2, other.invert, other.enabled):
+            return False
+        try:
+            return self.roi.to_dict() == other.roi.to_dict()
+        except Exception:
+            return self.roi is other.roi
+
+    __hash__ = None  # mutable, and compared by value: not hashable
+
     def get_mask(self, data: np.ndarray) -> np.ndarray:
         """Return ``True`` where a point is excluded, ``(n_parameters, n_points)``.
 
@@ -295,3 +325,74 @@ __all__ = [
     "selections_from_label_mask",
     "label_mask_from_selections",
 ]
+
+def pick_population(
+    data: np.ndarray,
+    axes: Tuple[int, int],
+    x: float,
+    y: float,
+    *,
+    radius: float,
+    sigma: float = 2.0,
+    name: str = "",
+) -> Tuple[Optional["RegionDataSelection"], str]:
+    """Return the gate around the population clicked at ``(x, y)``.
+
+    The third way a gate gets made, beside dragging a shape and fitting a
+    mixture over the whole plane: click the population you mean, and the fit
+    decides where it is and how wide it is. It is the same gesture the imaging
+    side offers on a frame, and deliberately the same code —
+    :func:`chisurf.core.roi.fit_gaussian_cluster` re-centres on the points and
+    :func:`chisurf.core.roi.ellipse_from_covariance` turns the covariance into
+    the ellipse — so a gate picked here and a region picked there are the same
+    object with the same conventions.
+
+    **The click is a seed, not the answer.** A click on the shoulder of a
+    population returns a centre on the shoulder unless the estimate re-centres,
+    and a covariance inflated by the empty half of the disc it sampled.
+
+    **Everything is in the parameters' own units**, including the click. A
+    region gates raw values (:meth:`RegionDataSelection.get_mask` asks the ROI
+    whether a point is inside), so a plane drawn on a logarithmic axis has to
+    convert the click back before calling — fitting in log space and gating in
+    linear space produces an ellipse that is wrong everywhere except its centre,
+    and says nothing about it.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        ``(n_parameters, n_points)``, as the rest of ndXplorer holds it.
+    axes : tuple of int
+        The two parameter indices the plane shows.
+    x, y : float
+        Where the user clicked, in the parameters' units.
+    radius : float
+        Capture radius in those units. A *setting*, not something fitted: a
+        density has no edge, and the same cloud is one population or three
+        depending on how far one is willing to look.
+    sigma : float, optional
+        Mahalanobis radius of the resulting gate.
+    name : str, optional
+        Gate name.
+
+    Returns
+    -------
+    selection : RegionDataSelection or None
+        ``None`` when the pick was refused.
+    reason : str
+        Why it was refused; empty on success.
+    """
+    from chisurf.core.roi import cluster_roi, fit_gaussian_cluster
+
+    idx1, idx2 = int(axes[0]), int(axes[1])
+    values = np.asarray(data, dtype=float)
+    if idx1 >= values.shape[0] or idx2 >= values.shape[0]:
+        return None, f"no parameters {idx1} and {idx2} on this plane"
+
+    plane = np.stack([values[idx1, :], values[idx2, :]], axis=1)
+    cluster = fit_gaussian_cluster(plane, x, y, radius=radius)
+    if not cluster.success:
+        return None, cluster.reason
+
+    roi = cluster_roi(cluster, name or "picked", sigma=sigma)
+    return RegionDataSelection(roi, idx1, idx2, name=name or "picked"), ""
