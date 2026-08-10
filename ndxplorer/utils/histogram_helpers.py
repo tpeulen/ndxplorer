@@ -13,7 +13,6 @@ from typing import Dict, Any, Optional, Tuple
 from ..logging_config import logging
 from ..utils.performance_optimizations import (
     compute_histogram2d_adaptive,
-    compute_histogram1d_adaptive,
     downsample_for_display,
     get_performance_monitor,
 )
