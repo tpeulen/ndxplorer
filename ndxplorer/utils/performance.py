@@ -4,7 +4,6 @@ Main performance optimization module for ndxplorer.
 This module provides a unified interface to all performance optimizations:
 - Bitfield masks (8x memory reduction)
 - Histogram caching (2-5x speedup on repeated operations)
-- Numba acceleration (2-10x speedup on computations)
 - Vectorized operations (SIMD-optimized)
 
 Usage Examples
@@ -191,10 +190,10 @@ def compute_histogram_1d_optimized(
     """
     Compute 1D histogram with all available optimizations.
     
-    Automatically uses caching and Numba acceleration when available.
+    Automatically uses caching; the fill itself is tttrlib's threaded C++.
     """
     if _HAVE_FAST_HISTOGRAM and fast_histogram_1d:
-        return fast_histogram_1d(data, bins, weights, density, use_cache=True, use_numba=True)
+        return fast_histogram_1d(data, bins, weights, density, use_cache=True)
     else:
         # Fallback to numpy
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -212,10 +211,10 @@ def compute_histogram_2d_optimized(
     """
     Compute 2D histogram with all available optimizations.
     
-    Automatically uses caching and Numba acceleration when available.
+    Automatically uses caching; the fill itself is tttrlib's threaded C++.
     """
     if _HAVE_FAST_HISTOGRAM and fast_histogram_2d:
-        return fast_histogram_2d(x, y, bins, weights, density, use_cache=True, use_numba=True)
+        return fast_histogram_2d(x, y, bins, weights, density, use_cache=True)
     else:
         # Fallback to numpy
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -343,7 +342,7 @@ def benchmark_histogram(
         times = []
         for _ in range(n_iterations):
             t0 = time.perf_counter()
-            fast_histogram_1d(data, n_bins, use_cache=False, use_numba=True)
+            fast_histogram_1d(data, n_bins, use_cache=False)
             t1 = time.perf_counter()
             times.append(t1 - t0)
         results['optimized_mean_ms'] = np.mean(times) * 1000

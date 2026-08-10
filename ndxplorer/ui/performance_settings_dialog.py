@@ -129,15 +129,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         )
         group_layout.addWidget(self.boost_hist_cb)
         
-        # Numba checkbox
-        self.numba_cb = QtWidgets.QCheckBox("Use Numba JIT Compilation")
-        self.numba_cb.setToolTip(
-            "Numba compiles Python code to machine code for significant speedup in\n"
-            "numerical operations. May cause slight startup delays for first compilation.\n"
-            "Disable if Numba causes startup delays or compatibility issues."
-        )
-        group_layout.addWidget(self.numba_cb)
-        
         # Fast histogram checkbox
         self.fast_hist_cb = QtWidgets.QCheckBox("Use Fast Histogram Optimizations")
         self.fast_hist_cb.setToolTip(
@@ -321,7 +312,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         
         # Computation settings
         self.boost_hist_cb.setChecked(config.use_boost_histogram)
-        self.numba_cb.setChecked(config.use_numba)
         self.fast_hist_cb.setChecked(config.use_fast_histogram)
         self.parallel_cb.setChecked(config.parallel_histogram)
         self.threads_spin.setValue(config.histogram_threads)
@@ -349,7 +339,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
                 use_bitfield_masks=self.bitfield_cb.isChecked(),
                 use_histogram_cache=self.hist_cache_cb.isChecked(),
                 use_boost_histogram=self.boost_hist_cb.isChecked(),
-                use_numba=self.numba_cb.isChecked(),
                 use_fast_histogram=self.fast_hist_cb.isChecked(),
                 histogram_cache_memory_mb=float(self.hist_cache_spin.value()),
                 general_cache_memory_mb=float(self.gen_cache_spin.value()),
@@ -401,7 +390,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
             settings_data['environment'] = {
                 'NDXPLORER_ENABLE_BACKGROUND_WORKER': self.bg_worker_cb.isChecked(),
                 'NDXPLORER_USE_BOOST_HISTOGRAM': config.use_boost_histogram,
-                'NDXPLORER_USE_NUMBA': config.use_numba,
                 'NDXPLORER_USE_FAST_HISTOGRAM': config.use_fast_histogram,
                 'NDXPLORER_USE_HISTOGRAM_CACHE': config.use_histogram_cache,
                 'NDXPLORER_PARALLEL_HISTOGRAM': config.parallel_histogram,

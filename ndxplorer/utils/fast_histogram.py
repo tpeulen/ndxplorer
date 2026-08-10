@@ -16,9 +16,11 @@ back to the corresponding NumPy routine, so callers get the fast path for free
 without having to reason about bin spacing themselves.
 
 The public functions ``fast_histogram_1d`` / ``fast_histogram_2d`` match the
-signatures expected by :mod:`ndxplorer.utils.performance`. The ``use_cache`` /
-``use_numba`` keywords are accepted for API compatibility; the bincount path is
-already vectorised and dependency-free, so they are currently no-ops.
+signatures expected by :mod:`ndxplorer.utils.performance`. The ``use_cache``
+keyword is accepted for API compatibility; the bincount path is already
+vectorised and dependency-free, so it is currently a no-op. The companion
+``use_numba`` keyword is gone with numba itself -- a parameter named for a
+library the package no longer depends on is a claim, not a no-op.
 """
 
 from __future__ import annotations
@@ -101,7 +103,6 @@ def fast_histogram_1d(
     weights: Optional[np.ndarray] = None,
     density: bool = False,
     use_cache: bool = True,
-    use_numba: bool = True,
     data_range: Optional[Tuple[float, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute a 1D histogram, using a fast uniform-bin path when possible.
@@ -117,7 +118,7 @@ def fast_histogram_1d(
         Per-sample weights.
     density : bool
         If True, normalise so the histogram integrates to 1 (as in NumPy).
-    use_cache, use_numba : bool
+    use_cache : bool
         Accepted for API compatibility; currently unused.
     data_range : tuple of float, optional
         ``(lo, hi)`` range, required when ``bins`` is an integer.
@@ -164,7 +165,6 @@ def fast_histogram_2d(
     weights: Optional[np.ndarray] = None,
     density: bool = False,
     use_cache: bool = True,
-    use_numba: bool = True,
     x_range: Optional[Tuple[float, float]] = None,
     y_range: Optional[Tuple[float, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

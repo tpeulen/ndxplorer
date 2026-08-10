@@ -4,7 +4,6 @@ Performance configuration and optimization settings for ndxplorer.
 Provides centralized control over performance features:
 - Bitfield masks
 - Histogram caching
-- Numba acceleration
 - Memory limits
 """
 
@@ -32,8 +31,6 @@ class PerformanceConfig:
         Cache histogram computations (default: True)
     use_boost_histogram : bool
         Use boost-histogram library when available (fastest, default: True)
-    use_numba : bool
-        Use Numba JIT compilation when available (default: True)
     use_fast_histogram : bool
         Use optimized histogram implementation (default: True)
     histogram_cache_memory_mb : float
@@ -43,7 +40,7 @@ class PerformanceConfig:
     bitfield_threshold : int
         Minimum number of points to use bitfield masks (default: 100000)
     parallel_histogram : bool
-        Use parallel histogram computation (requires Numba, default: True)
+        Use parallel histogram computation (default: True)
     aggressive_caching : bool
         Enable aggressive caching for all operations (default: True)
     histogram_threads : int
@@ -55,7 +52,6 @@ class PerformanceConfig:
     use_bitfield_masks: bool = True
     use_histogram_cache: bool = True
     use_boost_histogram: bool = True
-    use_numba: bool = True
     use_fast_histogram: bool = True
     histogram_cache_memory_mb: float = 200.0
     general_cache_memory_mb: float = 50.0
@@ -72,7 +68,6 @@ class PerformanceConfig:
             use_bitfield_masks=_get_env_with_settings_override("NDXPLORER_USE_BITFIELD", True),
             use_histogram_cache=_get_env_with_settings_override("NDXPLORER_USE_HISTOGRAM_CACHE", True),
             use_boost_histogram=_get_env_with_settings_override("NDXPLORER_USE_BOOST_HISTOGRAM", True),
-            use_numba=_get_env_with_settings_override("NDXPLORER_USE_NUMBA", True),
             use_fast_histogram=_get_env_with_settings_override("NDXPLORER_USE_FAST_HISTOGRAM", True),
             histogram_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_HISTOGRAM_CACHE_MB", 200.0),
             general_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_GENERAL_CACHE_MB", 50.0),
@@ -90,7 +85,6 @@ class PerformanceConfig:
             use_bitfield_masks=True,
             use_histogram_cache=True,
             use_boost_histogram=True,
-            use_numba=True,
             use_fast_histogram=True,
             histogram_cache_memory_mb=500.0,
             general_cache_memory_mb=100.0,
@@ -108,7 +102,6 @@ class PerformanceConfig:
             use_bitfield_masks=True,
             use_histogram_cache=True,
             use_boost_histogram=True,
-            use_numba=True,
             use_fast_histogram=True,
             histogram_cache_memory_mb=50.0,
             general_cache_memory_mb=20.0,
@@ -129,7 +122,6 @@ class PerformanceConfig:
         logging.info(f"  Bitfield masks: {self.use_bitfield_masks} (threshold: {self.bitfield_threshold})")
         logging.info(f"  Histogram cache: {self.use_histogram_cache} ({self.histogram_cache_memory_mb} MB)")
         logging.info(f"  Boost-histogram: {self.use_boost_histogram} (threads: {self.histogram_threads})")
-        logging.info(f"  Numba acceleration: {self.use_numba}")
         logging.info(f"  Fast histogram: {self.use_fast_histogram}")
         logging.info(f"  Parallel histogram: {self.parallel_histogram}")
         logging.info(f"  Aggressive caching: {self.aggressive_caching}")
