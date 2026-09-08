@@ -114,6 +114,10 @@ class PGRangeSelection:
     def __init__(self, min_val: float, max_val: float, is_log=None) -> None:
         """``is_log`` is a callable, not a flag: the axis can be toggled later."""
         self._is_log = is_log if callable(is_log) else (lambda: False)
+        #: Which projection the item's stored numbers are currently in. The item
+        #: holds *view* coordinates and does not know the axis changed under it,
+        #: so this is what :meth:`reproject` compares against.
+        self._drawn_log = bool(self._is_log())
         low, high = self._to_view(float(min_val), float(max_val))
         self.item = pg.LinearRegionItem(
             values=(low, high),
@@ -127,9 +131,13 @@ class PGRangeSelection:
             return float(low), float(high)
         return _as_log_view_range(low, high)
 
-    def _from_view(self, low: float, high: float) -> tuple[float, float]:
-        """The inverse, guarded against the overflow a stale range can hold."""
-        if not self._is_log():
+    def _from_view(self, low: float, high: float, log=None) -> tuple[float, float]:
+        """The inverse, guarded against the overflow a stale range can hold.
+
+        *log* names the projection to invert; it defaults to the axis's current
+        one, but :meth:`reproject` has to undo the *previous* one.
+        """
+        if not (self._is_log() if log is None else log):
             return float(low), float(high)
         out = []
         for value in (low, high):
@@ -158,12 +166,35 @@ class PGRangeSelection:
     def get_range(self) -> tuple[float, float]:
         """Return the current selected range, in **data** coordinates."""
         low, high = self.item.getRegion()
-        return self._from_view(float(low), float(high))
+        return self._from_view(float(low), float(high), log=self._drawn_log)
 
     def set_range(self, min_val: float, max_val: float) -> None:
         """Set the selected range, given in **data** coordinates."""
+        self._drawn_log = bool(self._is_log())
         low, high = self._to_view(float(min_val), float(max_val))
         self.item.setRegion((low, high))
+
+    def reproject(self) -> None:
+        """Redraw the same *data* range after the axis scale changed.
+
+        The region item stores view coordinates and nothing tells it the axis
+        was toggled, so its numbers silently change meaning: a range set on a
+        log axis (view 1.78 to 5.65 for counts of 60 to 450 094) becomes, the
+        moment the axis goes linear, a selection of 1.78 to 5.65 *counts* —
+        a sliver at the left edge that gates away the whole measurement while
+        the range boxes still read 60 and 450 094. The other direction is the
+        one that leaves the plot entirely, at 10**60.
+
+        So the range is read back through the projection it was *written* in and
+        written again in the current one. A no-op when the scale has not moved.
+        """
+        now = bool(self._is_log())
+        if now == self._drawn_log:
+            return
+        low, high = self.item.getRegion()
+        data_low, data_high = self._from_view(float(low), float(high),
+                                              log=self._drawn_log)
+        self.set_range(data_low, data_high)
 
 
 class PGHistogramPlot(pg.PlotWidget):
@@ -185,6 +216,10 @@ class PGHistogramPlot(pg.PlotWidget):
             "left": "linear",
             "right": "linear",
         }
+        #: Range selections drawn on this plot, so a scale change can re-project
+        #: them: they store view coordinates and would otherwise keep the
+        #: numbers while losing the meaning.
+        self._range_selections: list[PGRangeSelection] = []
 
     def add_histogram(
         self,
@@ -213,6 +248,7 @@ class PGHistogramPlot(pg.PlotWidget):
             is_log=lambda: self._axis_scales.get("bottom") == "log",
         )
         self.getPlotItem().addItem(selection.item)
+        self._range_selections.append(selection)
         return selection
 
     def enableAxis(self, axis, enabled: bool) -> None:
@@ -261,6 +297,11 @@ class PGHistogramPlot(pg.PlotWidget):
             self.getPlotItem().setLogMode(x=scale == "log")
         elif name in {"left", "right"}:
             self.getPlotItem().setLogMode(y=scale == "log")
+        # The regions are drawn against the x axis, so only that direction
+        # moves them -- but re-projecting is a no-op when the scale is
+        # unchanged, so there is nothing to guard.
+        for selection in self._range_selections:
+            selection.reproject()
 
     def set_axis_font(self, axis: str, font: QFont) -> None:
         """Apply a tick font to a visible axis."""

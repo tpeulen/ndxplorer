@@ -201,15 +201,51 @@ def _filtered_values(values, scale: str):
     return filtered
 
 
-def compute_axis_min(values, scale: str = "lin") -> float:
+#: Percentiles "Auto" ranges to, instead of the extremes. A burst table's
+#: photon count is the case that forces this: on a real measurement the largest
+#: burst held 450 094 photons against a 99.9th percentile of 1 108 -- four
+#: hundred times the bulk of the distribution -- so auto-ranging to the maximum
+#: drew every burst in the first pixel of the axis and called it a histogram.
+AUTO_RANGE_PERCENTILES = (0.1, 99.9)
+
+#: How close an extreme has to be, as a fraction of the robust span, to be taken
+#: instead of the percentile. Without this an axis with no outliers at all --
+#: an efficiency running 0 to 1 -- would still lose a sliver off each end for no
+#: reason, and "Auto" would stop meaning "all of it" on exactly the data where
+#: it already worked.
+AUTO_RANGE_SNAP = 0.05
+
+
+def robust_axis_range(values, scale: str = "lin") -> tuple[float, float]:
+    """``(min, max)`` for "Auto": the data's range, less its outliers.
+
+    Percentiles rather than extremes, then each end snapped back out to the true
+    extreme when that extreme is close anyway. So a clean axis auto-ranges to
+    exactly its data, and one with a runaway tail auto-ranges to where the data
+    actually is.
+    """
     filtered = _filtered_values(values, scale)
     if filtered.size == 0:
-        return 0.0
-    return float(np.min(filtered))
+        return 0.0, 0.0
+    low = float(np.min(filtered))
+    high = float(np.max(filtered))
+    if filtered.size < 3 or not (high > low):
+        return low, high
+    q_low, q_high = (float(v) for v in
+                     np.percentile(filtered, AUTO_RANGE_PERCENTILES))
+    span = q_high - q_low
+    if not (span > 0):
+        return low, high
+    if q_low - low <= AUTO_RANGE_SNAP * span:
+        q_low = low
+    if high - q_high <= AUTO_RANGE_SNAP * span:
+        q_high = high
+    return q_low, q_high
+
+
+def compute_axis_min(values, scale: str = "lin") -> float:
+    return robust_axis_range(values, scale)[0]
 
 
 def compute_axis_max(values, scale: str = "lin") -> float:
-    filtered = _filtered_values(values, scale)
-    if filtered.size == 0:
-        return 0.0
-    return float(np.max(filtered))
+    return robust_axis_range(values, scale)[1]
