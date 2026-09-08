@@ -136,7 +136,7 @@ def test_live_crosslink_follows_and_signals_recompute(qapp):
 
 
 def test_add_parameter_appends_constant_and_fires_callback(qapp, monkeypatch):
-    """The ➕ button adds a new constant without hand-editing JSON."""
+    """The add button adds a new constant without hand-editing JSON."""
     from qtpy import QtWidgets
 
     from ndxplorer.ui.parameter_editor import ParameterEditor

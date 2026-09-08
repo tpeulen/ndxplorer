@@ -131,7 +131,7 @@ class CurveWidget(QtWidgets.QGroupBox):
         color_layout.addWidget(self.color_button)
         color_layout.addStretch(1)
         # Fit this curve's free parameters to the data that is displayed.
-        self.fit_button = QtWidgets.QPushButton("🎯 Fit")
+        self.fit_button = QtWidgets.QPushButton("Fit")
         self.fit_button.setToolTip(
             "Fit this curve's free parameters to the displayed data "
             "(the 2-D distribution, or a marginal histogram)"

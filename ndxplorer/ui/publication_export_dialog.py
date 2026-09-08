@@ -215,7 +215,7 @@ def add_publication_export_button(ndxplorer) -> Optional[QtWidgets.QToolButton]:
         return None
 
     btn = QtWidgets.QToolButton(anchor.parentWidget())
-    btn.setText("🖼️")
+    btn.setText("Export…")
     btn.setToolTip("Publication export… (vector PDF/SVG or high-DPI PNG)")
     btn.setObjectName("toolButton_publication_export")
     btn.setMinimumSize(QtCore.QSize(28, 18))

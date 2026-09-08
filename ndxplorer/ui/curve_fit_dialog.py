@@ -169,7 +169,7 @@ class CurveFitDialog(QtWidgets.QDialog):
             layout.addWidget(self._progress_bar)
 
         buttons = QtWidgets.QHBoxLayout()
-        self._btn_fit = QtWidgets.QPushButton("🎯 Fit")
+        self._btn_fit = QtWidgets.QPushButton("Fit")
         self._btn_fit.setToolTip("Optimise every free parameter against the selected data")
         self._btn_fit.clicked.connect(self._do_fit)
         buttons.addWidget(self._btn_fit)

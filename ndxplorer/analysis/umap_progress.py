@@ -152,7 +152,7 @@ class UMAPProgressDialog(QtWidgets.QDialog):
         cursor.movePosition(QtGui.QTextCursor.End)
         self.text_area.setTextCursor(cursor)
 
-        self.status_label.setText("✅ UMAP computation completed successfully! Auto-closing in 3 seconds...")
+        self.status_label.setText("UMAP computation completed successfully! Auto-closing in 3 seconds...")
         self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
         self.auto_close_timer.start(3000)
 
@@ -168,7 +168,7 @@ class UMAPProgressDialog(QtWidgets.QDialog):
         cursor = self.text_area.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
         self.text_area.setTextCursor(cursor)
-        self.status_label.setText(f"❌ UMAP computation failed: {error_message}")
+        self.status_label.setText(f"UMAP computation failed: {error_message}")
         self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
         self.button_box.setVisible(True)
 

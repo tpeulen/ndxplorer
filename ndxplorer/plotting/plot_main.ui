@@ -62,7 +62,7 @@
           <string>Change working path</string>
          </property>
          <property name="text">
-          <string>📁</string>
+          <string>Browse</string>
          </property>
         </widget>
       </item>
@@ -292,7 +292,7 @@
                   <string>Data</string>
                  </property>
                  <property name="text">
-                  <string>📊</string>
+                  <string>Data</string>
                  </property>
                 </widget>
                </item>
@@ -314,7 +314,7 @@
                   <string>Contrast</string>
                  </property>
                  <property name="text">
-                  <string>🎨</string>
+                  <string>Contrast</string>
                  </property>
                 </widget>
                </item>
@@ -384,7 +384,7 @@
                    <string>Update plot</string>
                   </property>
                   <property name="text">
-                   <string>🔄</string>
+                   <string>Update</string>
                   </property>
                  </widget>
                 </item>
@@ -409,7 +409,7 @@
                    <string>Clear plot</string>
                   </property>
                   <property name="text">
-                   <string>🧹</string>
+                   <string>Clear</string>
                   </property>
                  </widget>
                 </item>
@@ -431,7 +431,7 @@
                   <string>Screenshot</string>
                  </property>
                  <property name="text">
-                  <string>📷</string>
+                  <string>Screenshot</string>
                  </property>
                 </widget>
                </item>
@@ -670,7 +670,7 @@
            <string>Save parameters</string>
           </property>
           <property name="text">
-           <string>💾</string>
+           <string>Save</string>
           </property>
          </widget>
        </item>

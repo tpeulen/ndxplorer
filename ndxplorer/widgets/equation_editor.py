@@ -81,15 +81,15 @@ class _LocalEquationEditor(QtWidgets.QWidget):
 
         bar = QtWidgets.QHBoxLayout()
         self._btn_add = QtWidgets.QToolButton()
-        self._btn_add.setText("➕")  # heavy plus
+        self._btn_add.setText("+")
         self._btn_add.setToolTip("Add an equation")
         self._btn_add.clicked.connect(self._add_row)
         self._btn_del = QtWidgets.QToolButton()
-        self._btn_del.setText("➖")  # heavy minus
+        self._btn_del.setText("\u2212")  # minus sign, not a hyphen
         self._btn_del.setToolTip("Remove the selected equation")
         self._btn_del.clicked.connect(self._remove_selected)
         self._btn_names = QtWidgets.QToolButton()
-        self._btn_names.setText("\U0001f524 Names")  # input latin letters glyph
+        self._btn_names.setText("Names")
         self._btn_names.setToolTip("Show the column / constant names you can reference")
         self._btn_names.clicked.connect(self._show_names)
         self._btn_apply = QtWidgets.QPushButton("Apply")

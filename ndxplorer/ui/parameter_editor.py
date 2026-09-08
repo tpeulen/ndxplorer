@@ -106,7 +106,7 @@ if HAS_CHISURF:
                 # without hand-editing the JSON.
                 add_bar = QtWidgets.QHBoxLayout()
                 btn_add = QtWidgets.QToolButton()
-                btn_add.setText("➕ parameter")
+                btn_add.setText("Add parameter")
                 btn_add.setToolTip("Add a new constant (name + value)")
                 btn_add.clicked.connect(self._add_parameter)
                 add_bar.addWidget(btn_add)

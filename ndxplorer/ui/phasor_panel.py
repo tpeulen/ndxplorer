@@ -95,12 +95,12 @@ class PhasorControlPanel(QtWidgets.QDockWidget):
 
         buttons = QtWidgets.QHBoxLayout()
         draw = QtWidgets.QToolButton()
-        draw.setText("◐ Draw overlays")
+        draw.setText("Draw overlays")
         draw.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         draw.clicked.connect(self._on_draw_overlays)
         buttons.addWidget(draw)
         clear = QtWidgets.QToolButton()
-        clear.setText("✕ Clear")
+        clear.setText("Clear")
         clear.clicked.connect(self._on_clear)
         buttons.addWidget(clear)
         buttons.addStretch(1)
@@ -141,7 +141,7 @@ class PhasorControlPanel(QtWidgets.QDockWidget):
         form.addRow("Points", self._fret_n)
 
         draw = QtWidgets.QToolButton()
-        draw.setText("📈 Draw FRET line")
+        draw.setText("Draw FRET line")
         draw.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         draw.clicked.connect(self._on_draw_fret)
         form.addRow(draw)

@@ -77,7 +77,7 @@ def test_overlay_has_fit_button(qapp):
     from ndxplorer.plotting.curve_overlay import CurveWidget
 
     cw = CurveWidget(name="c", equation_or_function="a*x+b", is_function=False)
-    assert cw.fit_button.text() == "🎯 Fit"
+    assert cw.fit_button.text() == "Fit"
 
 
 def test_function_names_are_not_parameters(qapp):
