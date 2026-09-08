@@ -24,8 +24,14 @@
     'Sg(PIE)' - 'Bg'
 - Sr(PIE): >-
     'S prompt red (kHz)'
+# 'beta' is ndX's name for the direct-excitation coefficient (Hellenkamp's
+# delta): the fraction of the acceptor-excitation signal that the DONOR laser
+# also produces. It was defined, carried and pushed in by the calibration --
+# and never used here, so every efficiency ignored direct excitation however
+# carefully it had been determined. Restoring the term makes this identical to
+# chisurf.core.fluorescence.burst.es.corrected_es.
 - Fr(PIE): >-
-    'Sr(PIE)' - 'Br' - 'alpha' * 'Sg(PIE)'
+    'Sr(PIE)' - 'Br' - 'alpha' * 'Sg(PIE)' - 'beta' * 'Fy(PIE)'
 - Sy(PIE): >-
     'S delayed yellow (kHz)'
 - Fy(PIE): >-
@@ -52,8 +58,12 @@
     ('Sr(PIE)' + 'Sg(PIE)') / ('Sr(PIE)' + 'Sy(PIE)' + 'Sg(PIE)')
 - Sapp(PIE,F): >-
     ('Fr(PIE)' + 'Fg(PIE)') / ('Fr(PIE)' + 'Fy(PIE)' + 'Fg(PIE)')
+# Fr(PIE) already has the leakage and the direct excitation removed, so the
+# numerator must not remove them again -- it used to subtract both a second
+# time here, which is why S disagreed with the accurate value even when every
+# constant was right.
 - Stoichiometry (PIE): >-
-    ('Fr(PIE)' - 'beta' * 'Fy(PIE)' - 'alpha' * 'Fg(PIE)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(PIE)') / ('Fr(PIE)' - 'beta' * 'Fy(PIE)' - 'alpha' * 'Fg(PIE)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(PIE)' + 'r' * 'Fy(PIE)')
+    ('Fr(PIE)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(PIE)') / ('Fr(PIE)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(PIE)' + 'r' * 'Fy(PIE)')
 - Tg-Tr(ms): >-
     'Duration (green) (ms)' - 'Duration (red) (ms)'
 - <tauD(A)>x: >-
@@ -79,8 +89,9 @@
 # expects same constants as PIE: Bg, Br, By, alpha, beta, r, gG/gR, PhiA, PhiD
 - Fg(ALEX): >-
     'Sg(ALEX)' - 'Bg'
+# The direct-excitation term, as in Fr(PIE) above -- it was missing here too.
 - Fr(ALEX): >-
-    'Sr(ALEX)' - 'Br' - 'alpha' * 'Sg(ALEX)'
+    'Sr(ALEX)' - 'Br' - 'alpha' * 'Sg(ALEX)' - 'beta' * 'Fy(ALEX)'
 - Fy(ALEX): >-
     'Sy(ALEX)' - 'By'
 
@@ -103,9 +114,10 @@
     ('Fr(ALEX)' + 'Fg(ALEX)') / ('Fr(ALEX)' + 'Fy(ALEX)' + 'Fg(ALEX)')
 
 # ---- Full ALEX stoichiometry (same form as PIE, just using ALEX channels) ----
+# Fr(ALEX) already has leakage and direct excitation removed; not again here.
 - Stoichiometry (ALEX): >-
-    ('Fr(ALEX)' - 'beta' * 'Fy(ALEX)' - 'alpha' * 'Fg(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)') /
-    ('Fr(ALEX)' - 'beta' * 'Fy(ALEX)' - 'alpha' * 'Fg(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)' + 'r' * 'Fy(ALEX)')
+    ('Fr(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)') /
+    ('Fr(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)' + 'r' * 'Fy(ALEX)')
 
 # ---- Convenience sums (ALEX) ----
 - Total count rate (ALEX): >-

@@ -99,23 +99,71 @@ class PGHistogramItem:
 
 
 class PGRangeSelection:
-    """Compatibility wrapper for an editable 1D range selection."""
+    """Compatibility wrapper for an editable 1D range selection.
 
-    def __init__(self, min_val: float, max_val: float) -> None:
+    Speaks **data** coordinates on the outside and *view* coordinates to
+    pyqtgraph, because on a log axis those are not the same thing: the region
+    item lives at ``log10(value)``. Handing it a raw range put a selection over
+    photon counts of 60 to 450 094 at view-x 60 to 450 094 — that is 10**60 to
+    10**450094, so the region left the plot entirely — and reading it back gave
+    log10 values that the range spin boxes then displayed as counts. "Auto"
+    looked broken for the same reason: it fits the region to the data range, and
+    the fit was being written in the wrong units.
+    """
+
+    def __init__(self, min_val: float, max_val: float, is_log=None) -> None:
+        """``is_log`` is a callable, not a flag: the axis can be toggled later."""
+        self._is_log = is_log if callable(is_log) else (lambda: False)
+        low, high = self._to_view(float(min_val), float(max_val))
         self.item = pg.LinearRegionItem(
-            values=(float(min_val), float(max_val)),
+            values=(low, high),
             orientation="vertical",
             movable=True,
         )
 
+    def _to_view(self, low: float, high: float) -> tuple[float, float]:
+        """Data coordinates to the ones the region item is drawn in."""
+        if not self._is_log():
+            return float(low), float(high)
+        return _as_log_view_range(low, high)
+
+    def _from_view(self, low: float, high: float) -> tuple[float, float]:
+        """The inverse, guarded against the overflow a stale range can hold."""
+        if not self._is_log():
+            return float(low), float(high)
+        out = []
+        for value in (low, high):
+            try:
+                out.append(float(10.0 ** float(value)))
+            except OverflowError:
+                out.append(float("inf"))
+        return out[0], out[1]
+
+    @property
+    def changed(self):
+        """Emitted continuously while the range is dragged.
+
+        Exposed because the region *says* when it moves, and a caller that does
+        not listen is left asking. The one here polled ``get_range`` twice a
+        second, which is neither the rate the region moves at nor the rate the
+        plot could be redrawn at.
+        """
+        return self.item.sigRegionChanged
+
+    @property
+    def change_finished(self):
+        """Emitted once, when the drag ends."""
+        return self.item.sigRegionChangeFinished
+
     def get_range(self) -> tuple[float, float]:
-        """Return the current selected range."""
+        """Return the current selected range, in **data** coordinates."""
         low, high = self.item.getRegion()
-        return float(low), float(high)
+        return self._from_view(float(low), float(high))
 
     def set_range(self, min_val: float, max_val: float) -> None:
-        """Set the selected range."""
-        self.item.setRegion((float(min_val), float(max_val)))
+        """Set the selected range, given in **data** coordinates."""
+        low, high = self._to_view(float(min_val), float(max_val))
+        self.item.setRegion((low, high))
 
 
 class PGHistogramPlot(pg.PlotWidget):
@@ -154,8 +202,16 @@ class PGHistogramPlot(pg.PlotWidget):
         )
 
     def add_range_selection(self, min_val: float, max_val: float) -> PGRangeSelection:
-        """Create and attach a guiqwt-compatible range selection."""
-        selection = PGRangeSelection(min_val, max_val)
+        """Create and attach a guiqwt-compatible range selection.
+
+        The selection is told how to ask whether its axis is logarithmic, rather
+        than being given the answer once: the user can toggle the scale at any
+        time and the region has to keep meaning the same data range.
+        """
+        selection = PGRangeSelection(
+            min_val, max_val,
+            is_log=lambda: self._axis_scales.get("bottom") == "log",
+        )
         self.getPlotItem().addItem(selection.item)
         return selection
 
@@ -170,9 +226,21 @@ class PGHistogramPlot(pg.PlotWidget):
         return self._axis_enabled.get(_axis_name(axis), False)
 
     def setAxisScale(self, axis, min_val: float, max_val: float) -> None:
-        """Set a view range using Qwt-compatible naming."""
+        """Set a view range using Qwt-compatible naming.
+
+        Whether to convert to log coordinates is decided by the axis
+        *direction*, not by the name asked for. Qwt has four independent axes;
+        pyqtgraph has two, so "bottom" and "top" are one x axis and setting
+        either one sets both. Reading the scale per name meant a caller looping
+        over ``("bottom", "top")`` -- which is what the marginal autoscaling
+        does -- converted the range for "bottom" and then overwrote it with the
+        raw values for "top", whose entry still said linear. On a log axis that
+        put the view at 10**60 to 10**450094, clamped to the float limits: the
+        axis read -307 to 308 and the histogram was an unreadable block.
+        """
         name = _axis_name(axis)
-        if self._axis_scales.get(name) == "log":
+        direction = "bottom" if name in {"bottom", "top"} else "left"
+        if self._axis_scales.get(direction) == "log":
             min_val, max_val = _as_log_view_range(min_val, max_val)
         if name in {"bottom", "top"}:
             self.setXRange(float(min_val), float(max_val), padding=0)
@@ -180,9 +248,15 @@ class PGHistogramPlot(pg.PlotWidget):
             self.setYRange(float(min_val), float(max_val), padding=0)
 
     def set_axis_scale(self, axis: str, scale: str) -> None:
-        """Set linear or logarithmic scaling for the requested axis."""
+        """Set linear or logarithmic scaling for the requested axis.
+
+        Recorded for *both* names of the same direction, so the two cannot
+        disagree about an axis they share.
+        """
         name = _axis_name(axis)
-        self._axis_scales[name] = scale
+        for shared in (("bottom", "top") if name in {"bottom", "top"}
+                       else ("left", "right")):
+            self._axis_scales[shared] = scale
         if name in {"bottom", "top"}:
             self.getPlotItem().setLogMode(x=scale == "log")
         elif name in {"left", "right"}:
