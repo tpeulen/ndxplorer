@@ -32,207 +32,29 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
 
-# Optional Numba acceleration
-try:
-    import numba as nb
-    _HAVE_NUMBA = True
-except ImportError:
-    nb = None
-    _HAVE_NUMBA = False
-
-# Optional PyArrow for faster numeric conversion
-try:
-    import pyarrow as pa
-    import pyarrow.compute as pc
-    _HAVE_PYARROW = True
-except ImportError:
-    pa = None
-    pc = None
-    _HAVE_PYARROW = False
-
-
-
-# ----------------------------------------
-# Numba-accelerated mask computation
-# ----------------------------------------
-
-if _HAVE_NUMBA:
-    @nb.njit(cache=True, parallel=True, fastmath=True)
-    def _rectangular_mask_numba(
-        vals: np.ndarray,
-        lower: float,
-        upper: float,
-        invert: bool,
-        mask: np.ndarray,
-    ) -> None:
-        """Apply rectangular selection mask in-place using Numba."""
-        n = vals.shape[0]
-        for i in nb.prange(n):
-            v = vals[i]
-            if invert:
-                if v > lower and v < upper:
-                    mask[i] = True
-            else:
-                if v < lower or v > upper:
-                    mask[i] = True
-    
-    @nb.njit(cache=True, fastmath=True)
-    def _gaussian2d_mask_numba(
-        x: np.ndarray,
-        y: np.ndarray,
-        mu0: float,
-        mu1: float,
-        inv_cov00: float,
-        inv_cov01: float,
-        inv_cov11: float,
-        sigma_sq: float,
-        invert: bool,
-        log_x: bool,
-        log_y: bool,
-        mask: np.ndarray,
-    ) -> None:
-        """Apply Gaussian 2D selection mask in-place using Numba."""
-        n = x.shape[0]
-        for i in range(n):
-            xv = x[i]
-            yv = y[i]
-            
-            # Apply log transform if needed
-            if log_x:
-                if xv > 0.0:
-                    xv = np.log(xv)
-                else:
-                    mask[i] = True
-                    continue
-            if log_y:
-                if yv > 0.0:
-                    yv = np.log(yv)
-                else:
-                    mask[i] = True
-                    continue
-            
-            # Check for invalid values
-            if not np.isfinite(xv) or not np.isfinite(yv):
-                mask[i] = True
-                continue
-            
-            dx = xv - mu0
-            dy = yv - mu1
-            d2 = inv_cov00 * dx * dx + 2.0 * inv_cov01 * dx * dy + inv_cov11 * dy * dy
-            
-            if invert:
-                if d2 <= sigma_sq:
-                    mask[i] = True
-            else:
-                if d2 > sigma_sq:
-                    mask[i] = True
-
-    @nb.njit(cache=True, parallel=True, fastmath=True)
-    def _mask_nan_inf_numba(col: np.ndarray, mask: np.ndarray, do_nan: bool, do_inf: bool) -> None:
-        """Mask NaN and/or Inf values in-place."""
-        n = col.shape[0]
-        for i in nb.prange(n):
-            v = col[i]
-            if do_nan and np.isnan(v):
-                mask[i] = True
-            elif do_inf and np.isinf(v):
-                mask[i] = True
-
-else:
-    _rectangular_mask_numba = None
-    _gaussian2d_mask_numba = None
-    _mask_nan_inf_numba = None
-
-
 # ---------------------------
 # Fast numeric conversion
 # ---------------------------
 
 def _fast_to_numeric(df: pd.DataFrame, use_float32: bool = True) -> pd.DataFrame:
-    """
-    Convert DataFrame columns to numeric efficiently.
-    
-    Uses PyArrow when available for ~2-5x faster conversion on large DataFrames.
-    Falls back to pandas apply() otherwise.
-    
+    """Convert DataFrame columns to numeric; anything that is not a number becomes NaN.
+
     Parameters
     ----------
     df : pd.DataFrame
         Input DataFrame with potentially mixed types
     use_float32 : bool
         If True (default), use float32 to halve memory usage.
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with all columns converted to numeric (non-numeric → NaN)
     """
     if df.empty:
         return df.copy()
-    
-    import time
-    t0 = time.perf_counter()
-    
-    # Target dtype for memory efficiency
     target_dtype = np.float32 if use_float32 else np.float64
-    
-    if _HAVE_PYARROW:
-        pa_target = pa.float32() if use_float32 else pa.float64()
-        try:
-            # Convert to Arrow Table for fast processing
-            table = pa.Table.from_pandas(df, preserve_index=False)
-            
-            # Convert each column to target float type
-            new_columns = []
-            for i, col_name in enumerate(table.column_names):
-                col = table.column(i)
-                col_type = col.type
-                
-                # If already numeric, cast to target type
-                if pa.types.is_floating(col_type) or pa.types.is_integer(col_type):
-                    new_columns.append(pc.cast(col, pa_target, safe=False))
-                elif pa.types.is_boolean(col_type):
-                    new_columns.append(pc.cast(col, pa_target, safe=False))
-                else:
-                    # String or other type: try to convert
-                    try:
-                        # Use Arrow's string-to-float conversion
-                        new_columns.append(pc.cast(col, pa_target, safe=False))
-                    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
-                        # Fall back to pandas for this column
-                        series = col.to_pandas()
-                        numeric_series = pd.to_numeric(series, errors='coerce').astype(target_dtype)
-                        new_columns.append(pa.array(numeric_series.values))
-            
-            # Reconstruct table and convert back to pandas
-            result_table = pa.Table.from_arrays(new_columns, names=table.column_names)
-            result = result_table.to_pandas(
-                self_destruct=True,
-                split_blocks=True,
-                zero_copy_only=False,
-            )
-            
-            t1 = time.perf_counter()
-            logging.debug("[_fast_to_numeric] PyArrow (%s): %d rows × %d cols in %.3fs",
-                         'float32' if use_float32 else 'float64',
-                         len(df), len(df.columns), t1 - t0)
-            return result
-            
-        except Exception as e:
-            logging.debug("[_fast_to_numeric] PyArrow failed: %s, falling back to pandas", e)
-    
-    # Fallback to pandas (still optimized)
     result = df.copy()
     for col in result.columns:
         if not pd.api.types.is_numeric_dtype(result[col]):
             result[col] = pd.to_numeric(result[col], errors='coerce').astype(target_dtype)
         elif result[col].dtype != target_dtype:
             result[col] = result[col].astype(target_dtype)
-    
-    t1 = time.perf_counter()
-    logging.debug("[_fast_to_numeric] pandas (%s): %d rows × %d cols in %.3fs",
-                 'float32' if use_float32 else 'float64',
-                 len(df), len(df.columns), t1 - t0)
     return result
 
 
@@ -317,7 +139,29 @@ def compute_values(
 # Selection API
 # ---------------------------
 
+def _array_digest(values) -> tuple:
+    """An array reduced to comparable values: shape, dtype and a content hash."""
+    import hashlib
+    arr = np.ascontiguousarray(values)
+    return (arr.shape, arr.dtype.str, hashlib.blake2b(arr.tobytes(), digest_size=16).digest())
+
+
 class DataSelection(abc.ABC):
+    """A gate on the data.
+
+    ``gate_key`` names everything that decides the gate's answer, by value, so
+    an edit made in place (the selection table edits the object the mask cache
+    already holds) changes the key; ``__eq__`` compares those keys.
+    """
+
+    def gate_key(self) -> tuple:
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        return type(self) is type(other) and self.gate_key() == other.gate_key()
+
+    __hash__ = None  # mutable, and compared by value: not hashable
+
     @abc.abstractmethod
     def get_mask(self, data: np.ndarray) -> np.ndarray:
         """
@@ -368,24 +212,13 @@ class Gaussian2DSelection(DataSelection):
         # Deterministic ID for cache stability
         self.selection_id = f"g2d_{self.parameter_idx1}_{self.parameter_idx2}_{self.mu.tolist()}_{self.sigma}_{self.invert}_{self.enabled}"
 
-    def __eq__(self, other):
-        if not isinstance(other, Gaussian2DSelection):
-            return False
-        # Fast path check using selection_id if available
-        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
-            if self.selection_id == other.selection_id:
-                # If IDs match, check if properties changed (e.g. enabled/invert)
-                return (self.enabled == other.enabled and self.invert == other.invert)
-        
-        return (self.parameter_idx1 == other.parameter_idx1 and
-                self.parameter_idx2 == other.parameter_idx2 and
-                np.allclose(self.mu, other.mu) and
-                np.allclose(self.cov, other.cov) and
-                np.allclose(self.sigma, other.sigma) and
-                self.invert == other.invert and
-                self.enabled == other.enabled and
-                self.log_x == other.log_x and
-                self.log_y == other.log_y)
+    def gate_key(self) -> tuple:
+        """See :func:`ndxplorer.core.data.mask_state.gate_key`."""
+        return ("gaussian", self.parameter_idx1, self.parameter_idx2,
+                tuple(np.asarray(self.mu, dtype=float).ravel().tolist()),
+                tuple(np.asarray(self.cov, dtype=float).ravel().tolist()),
+                float(self.sigma), bool(self.invert), bool(self.enabled),
+                bool(self.log_x), bool(self.log_y))
 
     def get_mask(self, data: np.ndarray) -> np.ndarray:
         n_param, n_pts = data.shape
@@ -454,19 +287,10 @@ class RectangularDataSelection(DataSelection):
         # Deterministic ID for cache stability when reconstructed from UI
         self.selection_id = f"rect_{self.parameter_idx}_{self.lower:.6f}_{self.upper:.6f}_{self.invert}_{self.enabled}"
 
-    def __eq__(self, other):
-        if not isinstance(other, RectangularDataSelection):
-            return False
-        # Fast path check using selection_id
-        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
-            if self.selection_id == other.selection_id:
-                return (self.enabled == other.enabled and self.invert == other.invert)
-                
-        return (self.parameter_idx == other.parameter_idx and
-                np.allclose(self.lower, other.lower) and
-                np.allclose(self.upper, other.upper) and
-                self.invert == other.invert and
-                self.enabled == other.enabled)
+    def gate_key(self) -> tuple:
+        """See :func:`ndxplorer.core.data.mask_state.gate_key`."""
+        return ("interval", int(self.parameter_idx), float(self.lower), float(self.upper),
+                bool(self.invert), bool(self.enabled))
 
     def __str__(self) -> str:  # pragma: no cover
         return (f"RectangularDataSelection:\nBounds: {self.lower}, {self.upper}\n"
@@ -517,23 +341,51 @@ class MaskDataSelection(DataSelection):
         self.enabled = bool(enabled)
         self.name = name
 
-    def __eq__(self, other):
-        if not isinstance(other, MaskDataSelection):
-            return False
-        # Fast path check using selection_id
-        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
-            if self.selection_id == other.selection_id:
-                # If IDs match, only check binary properties
-                return (self.enabled == other.enabled and self.invert == other.invert)
-        
-        # Slow path (fallback)
-        return (self.idx1 == other.idx1 and
-                self.idx2 == other.idx2 and
-                self.invert == other.invert and
-                self.enabled == other.enabled and
-                np.array_equal(self.mask, other.mask) and
-                np.array_equal(self.edges1, other.edges1) and
-                np.array_equal(self.edges2, other.edges2))
+    def gate_key(self) -> tuple:
+        """See :func:`ndxplorer.core.data.mask_state.gate_key`.
+
+        The brush paints into ``mask`` in place, so the key hashes its content;
+        the construction-time ``selection_id`` would never change.
+        """
+        return ("bitmap", int(self.idx1), int(self.idx2), bool(self.invert), bool(self.enabled),
+                _array_digest(self.mask), _array_digest(np.asarray(self.edges1, dtype=float)),
+                _array_digest(np.asarray(self.edges2, dtype=float)))
+
+    def inside(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Which points fall in a painted bin. Points outside the edges, or with a
+        missing coordinate, are not inside.
+
+        The mask is stored transposed, as displayed: ``(len(edges2)-1, len(edges1)-1)``.
+        A mask in the histogram's own ``(nx, ny)`` orientation is read that way; one
+        of another shape is padded or trimmed to the edges, as the brush's off-by-one
+        results used to be.
+        """
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        edges1 = np.asarray(self.edges1, dtype=float)
+        edges2 = np.asarray(self.edges2, dtype=float)
+        nx_bins = len(edges1) - 1
+        ny_bins = len(edges2) - 1
+        mask = np.asarray(self.mask)
+        transposed = mask.shape == (ny_bins, nx_bins)
+        if not transposed and mask.shape != (nx_bins, ny_bins):
+            fitted = np.zeros((ny_bins, nx_bins), dtype=mask.dtype)
+            m_ny = min(mask.shape[0], ny_bins)
+            m_nx = min(mask.shape[1], nx_bins)
+            fitted[:m_ny, :m_nx] = mask[:m_ny, :m_nx]
+            mask = fitted
+            transposed = True
+        ix = np.searchsorted(edges1, x, side='right') - 1
+        iy = np.searchsorted(edges2, y, side='right') - 1
+        ix = np.where(x == edges1[-1], nx_bins - 1, ix)
+        iy = np.where(y == edges2[-1], ny_bins - 1, iy)
+        valid = (ix >= 0) & (ix < nx_bins) & (iy >= 0) & (iy < ny_bins)
+        result = np.zeros(x.shape[0], dtype=bool)
+        if transposed:
+            result[valid] = mask[iy[valid], ix[valid]] > 0
+        else:
+            result[valid] = mask[ix[valid], iy[valid]] > 0
+        return result
 
     def get_mask(self, data: np.ndarray) -> np.ndarray:
         from ..logging_config import logging
@@ -659,6 +511,54 @@ class MaskDataSelection(DataSelection):
 # DataSource wrapper
 # ---------------------------
 
+
+def _numeric_column(series) -> np.ndarray:
+    """One DataFrame column as a contiguous float32 array.
+
+    float32 rather than float64 throughout: it halves the table, and no plot
+    axis, gate boundary or histogram edge in this program can show the
+    difference. A column that is not numeric becomes NaN, which is the store's
+    "not measured" and gates as such.
+
+    RECONSTRUCTED after the working-tree copy of this file was lost; the
+    docstring and the names it referred to came from the compiled bytecode.
+    """
+    import pandas as pd
+    try:
+        if pd.api.types.is_bool_dtype(series):
+            return np.ascontiguousarray(series.to_numpy(dtype=np.float32))
+        if pd.api.types.is_numeric_dtype(series):
+            return np.ascontiguousarray(series.to_numpy(dtype=np.float32))
+        coerced = pd.to_numeric(series, errors="coerce")
+        return np.ascontiguousarray(coerced.to_numpy(dtype=np.float32))
+    except (TypeError, ValueError):
+        return np.full(len(series), np.nan, dtype=np.float32)
+
+
+def build_store(frame, label: str = ""):
+    """A :class:`tttrlib.DataStore` holding `frame`'s columns as float32.
+
+    The store is the numeric representation -- there is no second one. Gates are
+    evaluated in it, histograms fill out of it, and :attr:`DataSource.values`
+    is assembled from it when a caller still wants the whole table at once.
+
+    Columns are addressed by POSITION, never by the name given here: a
+    DataFrame may carry the same column name twice, and a lookup by name would
+    silently answer with the first.
+
+    RECONSTRUCTED after the working-tree copy of this file was lost.
+    """
+    import tttrlib
+    store = tttrlib.DataStore()
+    n_rows = int(len(frame))
+    for i in range(frame.shape[1]):
+        store.add(str(frame.columns[i]), _numeric_column(frame.iloc[:, i]))
+    store.set_n_rows(n_rows)
+    if label:
+        store.set_label(label)
+    return store
+
+
 class DataSource:
     """
     Light wrapper around a DataFrame that provides:
@@ -716,7 +616,17 @@ class DataSource:
         """
         if self._cached_values_array is not None:
             return self._cached_values_array
-        
+
+        if self._data is None:
+            # A store-backed source: the columns are read from the store, not
+            # from a DataFrame nobody asked to build.
+            store = self.store
+            columns = [np.asarray(store[i].numpy(), dtype=np.float32)
+                       for i in range(self.n_parameters)]
+            self._cached_values_array = (np.vstack(columns) if columns
+                                         else np.zeros((0, 0), dtype=np.float32))
+            return self._cached_values_array
+
         # Get underlying numpy array - avoid DataFrame overhead
         numeric_data = self._data_numeric.values
         
@@ -732,6 +642,202 @@ class DataSource:
         
         return self._cached_values_array
 
+    @property
+    def store(self):
+        """The :class:`tttrlib.DataStore` holding the numeric columns.
+
+        Built once when the data changes. Gates are evaluated in it and
+        histograms fill out of it, so nothing on either path copies the table.
+        """
+        store = getattr(self, "_store", None)
+        if store is None:
+            store = build_store(self.data)
+            self._store = store
+        return store
+
+    @property
+    def n_parameters(self) -> int:
+        """How many parameter columns the table has."""
+        return len(self._parameter_names)
+
+    @classmethod
+    def from_store(cls, store, is_computed: bool = False) -> "DataSource":
+        """Wrap a :class:`tttrlib.DataStore` -- the store IS the data.
+
+        The shortest path from a file to a plot. A columnar HDF5 or a CSV read
+        by tttrlib arrives as a store already, and this takes it as it is: no
+        DataFrame is built, no column is converted, and nothing is copied. The
+        table can be most of the memory in the process, so "nothing is copied"
+        is the difference between a file opening and not.
+
+        The DataFrame is built lazily, and only by the things that genuinely
+        need one -- the equation engine, the table editor, a pandas ``query``.
+        Loading, gating, histogramming and plotting never ask for it.
+        """
+        source = cls()
+        source._store = store
+        source._data = None
+        source._data_numeric = None
+        source._parameter_names = [store.column(i).name()
+                                   for i in range(store.n_columns())]
+        source.is_computed = is_computed
+        source._invalidate_caches()
+        return source
+
+    def column_index(self, name: str) -> int:
+        """The position of `name`, or -1.
+
+        Case-insensitive and on the part left of ``|``, as everywhere else. By
+        position rather than by name because a table may carry the same column
+        name twice and a lookup by name would silently answer with the first.
+        """
+        wanted = str(name).split("|")[0].strip().lower()
+        for i, candidate in enumerate(list(self._parameter_names)):
+            if str(candidate).split("|")[0].strip().lower() == wanted:
+                return i
+        return -1
+
+    def column_view(self, index: int) -> Optional[np.ndarray]:
+        """One column as a float32 view INTO the store -- no copy.
+
+        The view keeps the store alive, so it cannot outlive its data. Write to
+        it and you have written to the table; :meth:`column_values` is the
+        copying form for a caller that wants to modify what it gets.
+        """
+        if not (0 <= int(index) < self.n_parameters):
+            return None
+        return self.store[int(index)].numpy()
+
+    def selection_mask(self, selections, idxs=(), mask_nan: bool = True,
+                       mask_inf: bool = True) -> np.ndarray:
+        """Which rows survive every gate. ``True`` means KEPT.
+
+        The one place a gate is evaluated. It happens in the store: the columns
+        are already there in their own dtype, the answer is a bit per row, and
+        the histogram fill reads that bit directly -- so no ``(n_parameters,
+        n_points)`` boolean array is built, no index array is made from it, and
+        no rows are copied.
+
+        :param selections: the gates, in any order; disabled ones are ignored
+        :param idxs: columns that must have a finite value for the row to count
+        :param mask_nan, mask_inf: which kinds of non-finite ``idxs`` rejects
+        """
+        from . import tttrlib_selection
+        store = self.store
+        n_rows = int(store.n_rows())
+        if n_rows == 0:
+            return np.zeros(0, dtype=bool)
+        if not selections and not idxs:
+            return np.ones(n_rows, dtype=bool)
+        if getattr(self, "_gate_scratch", None) is None:
+            self._gate_scratch = {}
+        return tttrlib_selection.apply(
+            store, selections, idxs=idxs, mask_nan=mask_nan,
+            mask_inf=mask_inf, n_columns=self.n_parameters,
+            scratch=self._gate_scratch,
+        )
+
+    def _refresh_store_columns(self, names) -> bool:
+        """Write recomputed columns back into the store, in place.
+
+        **The store is what the picture is made of.** Gates are evaluated in it
+        and histograms fill out of it, so a column that changed in ``_data``
+        and not in the store is a plot that disagrees with its own numbers —
+        which is exactly what a parameter edit produced: the derived FRET
+        columns moved and the histograms did not, with nothing anywhere saying
+        so.
+
+        Returns
+        -------
+        bool
+            ``True`` when every named column was written. ``False`` means the
+            store no longer matches the table (a column was added, or the
+            positions moved) and the caller must drop it so it rebuilds —
+            columns are addressed by **position**, so a mismatch cannot be
+            patched, only rebuilt.
+        """
+        store = getattr(self, "_store", None)
+        if store is None or self._data is None:
+            return True
+        columns = list(self._data.columns)
+        for name in names:
+            try:
+                index = columns.index(name)
+            except ValueError:
+                return False
+            if index >= store.n_columns() or store.column(index).name() != str(name):
+                return False
+            try:
+                store.column(index).set_numpy(
+                    _numeric_column(self._data.iloc[:, index]))
+            except Exception:
+                return False
+        return True
+
+    def _invalidate_caches(self) -> None:
+        """Drop everything derived from the numeric data.
+
+        The store itself is kept unless the caller cleared it: rewriting one
+        column in place is a targeted refresh, and rebuilding the whole table
+        for it is what this exists to avoid.
+        """
+        self._cached_values_array = None
+        self._cache_valid = False
+        if hasattr(self, "_column_cache"):
+            self._column_cache.clear()
+        self._relevant_columns_cache = None
+        self._data_version = getattr(self, "_data_version", 0) + 1
+
+    def query_mask(self, query: str) -> np.ndarray:
+        """Rows kept by a boolean query over the parameter columns.
+
+        Evaluated by the store itself: ``DataStore.select_expression`` compiles
+        the query once and runs it over the columns in their own types --
+        float32 bound directly, integers widened through typed pointers --
+        writing a bit-packed selection. Nothing is copied per query, and the
+        DataFrame is never built for one.
+
+        The store's own selection is left as it was: this answers a question
+        rather than applying a gate. To *set* the selection, call
+        ``select_expression`` on the store directly, where it composes with
+        the other gates through ``Combine_And``/``Or``/``AndNot``.
+
+        Parameters
+        ----------
+        query : str
+            Boolean expression over the parameter names. ``&``, ``|`` and
+            ``~`` mean what they do in a pandas query.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean array, one entry per row.
+
+        Raises
+        ------
+        ValueError
+            If the query does not compile, or names an unknown parameter.
+        """
+        store = self.store
+        had_mask = store.has_row_mask()
+        saved = store.selection().copy() if had_mask else None
+        try:
+            store.select_expression(query)
+            return store.selection().copy()
+        finally:
+            if had_mask:
+                store.select(saved)
+            else:
+                store.clear_row_mask()
+
+    def query_count(self, query: str) -> int:
+        """How many rows a query keeps, without materialising a mask.
+
+        The cheapest form of the question: the store counts the bits and
+        nothing crosses into Python.
+        """
+        return int(self.store.count_expression(query))
+
     def column_values(self, name: str) -> Optional[np.ndarray]:
         """One numeric column as a float array, or ``None`` if there is no such column.
 
@@ -742,6 +848,9 @@ class DataSource:
         as everywhere else.
         """
         frame = self._data_numeric if self._data_numeric is not None else self._data
+        if frame is None and name is not None and getattr(self, "_store", None) is not None:
+            index = self.column_index(name)
+            return None if index < 0 else np.array(self._store[index].numpy(), copy=True)
         if frame is None or name is None:
             return None
         column = None
@@ -793,6 +902,12 @@ class DataSource:
                     for col in existing:
                         if col in sub.columns:
                             self._data_numeric[col] = sub[col]
+                # The store holds its own copy of every column and is what the
+                # histograms and gates read. Updating only `_data_numeric` left
+                # it on the previous values, so an edited constant changed the
+                # table and not the picture.
+                if not self._refresh_store_columns(existing):
+                    self._store = None
                 self._cached_values_array = None
                 self._cache_valid = False
                 if hasattr(self, "_column_cache"):
@@ -808,6 +923,9 @@ class DataSource:
 
     @property
     def empty(self) -> bool:
+        if self._data is None:
+            store = self.store
+            return store.n_rows() == 0 or store.n_columns() == 0
         return self._data.empty
 
     def get_mask(
@@ -838,61 +956,26 @@ class DataSource:
         if not selections and not idxs:
             return mask
 
-        # Fast path: evaluate the gates in tttrlib's DataStore, which holds the
-        # columns in their own dtypes and answers with one bit per row. The
-        # path below converts the whole table to float64, allocates an
-        # (n_parameters, n_points) bool array, copies the coordinates again for
-        # the finite points, and then broadcasts one row of results across every
-        # parameter row -- four costs that are not the geometry. Measured on
-        # five million rows with a 64-vertex lasso: 96 ms against 618 ms.
-        #
-        # All or nothing: if any selection is a kind tttrlib does not implement,
-        # the whole thing falls through, so there is never a partial evaluation
-        # or a second mask representation to combine.
-        from . import tttrlib_selection
-        if tttrlib_selection.can_evaluate(selections):
-            try:
-                mask, self._tttrlib_selection_cache = tttrlib_selection.evaluate(
-                    d, selections, idxs=idxs, mask_nan=mask_nan, mask_inf=mask_inf,
-                    cache=getattr(self, "_tttrlib_selection_cache", None),
-                    names=list(getattr(self, "parameter_names", []) or []),
-                )
-                return mask
-            except Exception as e:
-                # A translation that turns out to be wrong must not take the
-                # answer down with it; the numpy path below is still correct.
-                logging.warning("tttrlib selection unavailable (%s); using numpy", e)
-        
-        # Process selections with vectorized operations
-        for sel in selections:
-            try:
-                m = sel.get_mask(d)
-                if isinstance(m, np.ndarray) and m.shape == mask.shape:
-                    count_before = np.count_nonzero(np.any(mask, axis=0))
-                    # Use in-place OR operation for better performance
-                    mask |= m
-                    count_after = np.count_nonzero(np.any(mask, axis=0))
-                    logging.info(f"Applied selection '{getattr(sel, 'name', 'unnamed')}': points masked {count_before} -> {count_after}/{n_pts}")
-            except Exception as e:
-                logging.error(f"[DataSource.get_mask] Selection error ({getattr(sel, 'name', 'unnamed')}): {e}")
-
-        # Vectorized NaN/Inf filtering for selected indices
-        if idxs:
-            valid_idxs = np.array([idx for idx in idxs if 0 <= idx < n_param], dtype=int)
-            if valid_idxs.size:
-                cols = d[valid_idxs, :]
-                bad_mask = np.zeros(n_pts, dtype=bool)
-                if mask_nan:
-                    bad_mask |= np.any(np.isnan(cols), axis=0)
-                if mask_inf:
-                    bad_mask |= np.any(np.isinf(cols), axis=0)
-                if np.any(bad_mask):
-                    mask[:, bad_mask] = True
-
-        return mask
+        # The gates are evaluated in tttrlib's DataStore, which answers per row
+        # ("True means KEPT"); this method's contract is per parameter row and
+        # inverted ("True means masked out"), so the one answer is broadcast:
+        # a read-only view, every parameter row the same row.
+        keep = self.selection_mask(selections, idxs=idxs,
+                                   mask_nan=mask_nan, mask_inf=mask_inf)
+        return np.broadcast_to(~keep, (n_param, n_pts))
 
     @property
     def data(self) -> pd.DataFrame:
+        """The table as a DataFrame, built from the store the first time a
+        store-backed source is asked for one (the equation engine, the table
+        editor); loading, gating and histogramming never ask."""
+        if self._data is None and getattr(self, "_store", None) is not None:
+            store = self._store
+            frame = pd.DataFrame({i: np.array(store[i].numpy(), copy=True)
+                                  for i in range(store.n_columns())})
+            frame.columns = list(self._parameter_names)
+            self._data = frame
+            self._data_numeric = frame
         return self._data
 
     @data.setter
@@ -908,6 +991,10 @@ class DataSource:
         self._parameter_names = list(self._data.columns)
         # Optimized numeric conversion using PyArrow when available
         self._data_numeric = _fast_to_numeric(self._data)
+        # The store is derived from this table and addresses its columns by
+        # position, so a new table invalidates it wholesale. Keeping it meant an
+        # in-place data replacement went on plotting the previous table.
+        self._store = None
         # Invalidate all caches
         self._cached_values_array = None
         self._cache_valid = False
@@ -921,6 +1008,8 @@ class DataSource:
 
     @property
     def size(self) -> int:
+        if self._data is None:
+            return int(self.store.n_rows()) if not self.empty else 0
         return self.values.shape[1] if not self.empty else 0
 
     @property
@@ -1016,144 +1105,19 @@ class DataSource:
         mask_inf: bool = True,
         use_bitfield: bool = True,
     ) -> np.ndarray:
-        """
-        Compute mask using only the relevant columns for better performance.
+        """Per-point exclusion mask: the gates, and non-finite values on the axes.
 
-        This is an optimized version of get_mask that first filters to only
-        the columns referenced by selections and axes, reducing memory and
-        computation for large datasets with many columns.
-
-        Uses Numba JIT compilation when available for ~10x speedup, operating on
-        the native float32 columns to avoid per-rebuild dtype copies.
-
-        Parameters
-        ----------
-        selections : List[DataSelection]
-            Current selections.
-        axis_indices : List[int]
-            Indices of axis columns (x, y, z).
-        mask_nan : bool
-            Whether to mask NaN values.
-        mask_inf : bool
-            Whether to mask Inf values.
-        use_bitfield : bool
-            Deprecated, ignored. Retained for signature compatibility; the
-            bitfield mask path was removed (it converted back to a boolean array
-            anyway, giving no memory saving while adding Python-level overhead).
+        Evaluated in tttrlib's DataStore through :meth:`selection_mask`, the one
+        gate implementation. ``use_bitfield`` is ignored.
 
         Returns
         -------
         mask : np.ndarray (bool), shape (n_points,)
-            1D mask where True means the point should be excluded.
+            True where the point is excluded.
         """
-        relevant_indices = self.get_relevant_column_indices(axis_indices, selections)
-        if not relevant_indices:
-            return np.zeros(self.size, dtype=bool)
-
-        subset, index_map = self.get_values_subset(relevant_indices)
-        n_pts = subset.shape[1]
-
-        mask = np.zeros(n_pts, dtype=bool)
-
-        # Operate on the native subset dtype (float32). The Numba kernels compile a
-        # specialisation per dtype, so passing float32 directly avoids a full
-        # float64 copy of every column on each mask rebuild (~3x faster and
-        # bit-identical for the comparisons/NaN-Inf tests done here).
-        def _col(new_idx: int) -> np.ndarray:
-            return np.ascontiguousarray(subset[new_idx, :])
-
-        for sel in selections:
-            if not getattr(sel, 'enabled', True):
-                continue
-            try:
-                if isinstance(sel, RectangularDataSelection):
-                    new_idx = index_map.get(sel.parameter_idx)
-                    if new_idx is None:
-                        continue
-                    vals = _col(new_idx)
-
-                    if _HAVE_NUMBA and _rectangular_mask_numba is not None:
-                        _rectangular_mask_numba(vals, sel.lower, sel.upper, sel.invert, mask)
-                    else:
-                        if sel.invert:
-                            mask |= (vals > sel.lower) & (vals < sel.upper)
-                        else:
-                            mask |= (vals < sel.lower) | (vals > sel.upper)
-
-                elif isinstance(sel, Gaussian2DSelection):
-                    new_idx1 = index_map.get(sel.parameter_idx1)
-                    new_idx2 = index_map.get(sel.parameter_idx2)
-                    if new_idx1 is None or new_idx2 is None:
-                        continue
-                    x = _col(new_idx1)
-                    y = _col(new_idx2)
-
-                    try:
-                        inv_cov = np.linalg.inv(sel.cov)
-                    except Exception:
-                        inv_cov = np.linalg.pinv(sel.cov)
-
-                    # Use Numba if available
-                    if _HAVE_NUMBA and _gaussian2d_mask_numba is not None:
-                        _gaussian2d_mask_numba(
-                            x, y,
-                            float(sel.mu[0]), float(sel.mu[1]),
-                            float(inv_cov[0, 0]), float(inv_cov[0, 1]), float(inv_cov[1, 1]),
-                            float(sel.sigma * sel.sigma),
-                            sel.invert, sel.log_x, sel.log_y,
-                            mask
-                        )
-                    else:
-                        with np.errstate(divide='ignore', invalid='ignore'):
-                            zx = np.where(x > 0.0, np.log(x), np.nan) if sel.log_x else x
-                            zy = np.where(y > 0.0, np.log(y), np.nan) if sel.log_y else y
-                        dx = zx - sel.mu[0]
-                        dy = zy - sel.mu[1]
-                        invalid = ~np.isfinite(dx) | ~np.isfinite(dy)
-                        dx = np.nan_to_num(dx, nan=np.inf)
-                        dy = np.nan_to_num(dy, nan=np.inf)
-                        a, b, c = inv_cov[0, 0], inv_cov[0, 1], inv_cov[1, 1]
-                        d2 = a * dx * dx + 2.0 * b * dx * dy + c * dy * dy
-                        d2[invalid] = np.inf
-                        if sel.invert:
-                            mask |= d2 <= (sel.sigma * sel.sigma)
-                        else:
-                            mask |= d2 > (sel.sigma * sel.sigma)
-
-                elif isinstance(sel, MaskDataSelection):
-                    # For MaskDataSelection, we need to call get_mask on the full dataset
-                    # because it uses 2D histogram binning that requires all data
-                    new_idx1 = index_map.get(sel.idx1)
-                    new_idx2 = index_map.get(sel.idx2)
-                    if new_idx1 is None or new_idx2 is None:
-                        continue
-
-                    # Get the full mask from the selection (it operates on full data)
-                    full_mask_2d = sel.get_mask(self.values)
-                    # Extract the 1D mask for all points (OR across all parameters)
-                    full_mask_1d = np.any(full_mask_2d, axis=0)
-                    mask |= full_mask_1d
-
-            except Exception as e:
-                logging.warning("Selection mask error (%s): %s", getattr(sel, 'name', 'unnamed'), e)
-
-        # Mask NaN/Inf on axis columns - use Numba if available
-        if mask_nan or mask_inf:
-            for orig_idx in axis_indices:
-                new_idx = index_map.get(orig_idx)
-                if new_idx is None:
-                    continue
-                col = _col(new_idx)
-
-                if _HAVE_NUMBA and _mask_nan_inf_numba is not None:
-                    _mask_nan_inf_numba(col, mask, mask_nan, mask_inf)
-                else:
-                    if mask_nan:
-                        mask |= np.isnan(col)
-                    if mask_inf:
-                        mask |= np.isinf(col)
-
-        return mask
+        keep = self.selection_mask(selections, idxs=list(axis_indices or []),
+                                   mask_nan=mask_nan, mask_inf=mask_inf)
+        return ~keep
 
     # ---- merge helpers ----
 
