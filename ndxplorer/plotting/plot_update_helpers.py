@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
-from qtpy import QtWidgets
 
 from ..logging_config import logging
+
+from ..utils.histogram_helpers import z_axis_available
 
 from ..utils.lazy_imports import get_hdbscan
 from ..utils.performance import compute_percentile_range_optimized
@@ -15,10 +14,10 @@ from ..utils.performance import compute_percentile_range_optimized
 def _as_edges_counts(hist):
     """Return ``(edges, counts)`` for either 1D histogram representation.
 
-    The immediate path stores a :class:`~..core.histograms.Histogram1D`; the
-    background worker hands back a plain ``(edges, counts)`` tuple. Consumers
-    that understood only one of the two silently blanked the marginals whenever
-    the other path had produced them.
+    ``_histogram[dim]`` normally holds a :class:`~..core.histograms.Histogram1D`,
+    but a plain ``(edges, counts)`` tuple is still accepted: two paths used to
+    write these and consumers that understood only one silently blanked the
+    marginals whenever the other had produced them.
 
     Parameters
     ----------
@@ -43,261 +42,68 @@ def _as_edges_counts(hist):
     return None
 
 
-def _compute_selection_hash(selections):
-    """Compute a hash of current selections for cache validation."""
-    if not selections:
-        return hash(None)
-    
-    # Create a tuple of selection properties that affect histogram computation
-    selection_data = []
-    for sel in selections:
-        sel_type = type(sel).__name__
-        if hasattr(sel, 'parameter_idx'):
-            param_idx = sel.parameter_idx
-        else:
-            param_idx = None
-        enabled = getattr(sel, 'enabled', True)
-        
-        # For different selection types, gather relevant properties
-        if sel_type == 'RectangularDataSelection':
-            data = (sel_type, param_idx, getattr(sel, 'lower', None), getattr(sel, 'upper', None), 
-                   getattr(sel, 'invert', False), enabled)
-        elif sel_type == 'Gauss2DSelection':
-            data = (sel_type, getattr(sel, 'idx1', None), getattr(sel, 'idx2', None),
-                   getattr(sel, 'sigma', None), getattr(sel, 'invert', False), enabled)
-        elif sel_type == 'MaskDataSelection':
-            # Use selection_id for mask selections
-            data = (sel_type, getattr(sel, 'selection_id', None), enabled)
-        else:
-            # Generic fallback
-            data = (sel_type, str(sel), enabled)
-        
-        selection_data.append(data)
-    
-    return hash(tuple(selection_data))
-
-
 def update_histograms(ndxplorer) -> None:
-    logging.debug("update_histograms called")
-    
-    # Enhanced data loading check with multiple flags
-    loading_flags = [
-        getattr(ndxplorer.plot_control, '_loading_data', False),
-        getattr(ndxplorer, '_loading_data', False),
-        getattr(ndxplorer.plot_control, '_background_computation_pending', False)
-    ]
-    
-    if any(loading_flags):
-        logging.debug("Skipping update_histograms: data loading or computation in progress (flags=%s)", loading_flags)
+    """Compute the histograms and put them on screen.
+
+    One way in. There were three -- this function, a near-identical
+    ``_update_histograms_immediate``, and a QThread worker reached through
+    ``compute_histograms_background`` -- so which of them ran decided what a
+    redraw showed. The worker only took over above six million points, and a
+    full redraw is about twenty milliseconds, so it was machinery guarding a
+    case that no longer exists.
+    """
+    from ..core.histograms import Histogram1D, Histogram2D
+    from ..utils.histogram_computation import compute_histograms
+    from ..utils.histogram_helpers import histogram_axes, is_data_ready, keep_mask
+
+    if getattr(ndxplorer.plot_control, '_loading_data', False) or \
+            getattr(ndxplorer, '_loading_data', False):
+        logging.debug("Skipping update_histograms: data is still loading")
         return
-    
-    data_ready = ndxplorer.is_data_ready()
-    logging.debug(f"update_histograms: is_data_ready={data_ready}")
-    if not data_ready:
-        # Log why data isn't ready
-        try:
-            p1 = ndxplorer.plot_control.p1
-            p2 = ndxplorer.plot_control.p2
-            logging.info(f"  p1 (X axis): {p1}")
-            logging.info(f"  p2 (Y axis): {p2}")
-        except Exception as exc:
-            logging.info(f"  Could not get axis info: {exc}")
+
+    if not is_data_ready(ndxplorer):
         logging.debug("Skipping update_histograms: data/axes not ready")
         return
 
-    # Use the new background computation system if available
-    has_bg_method = hasattr(ndxplorer.plot_control, 'compute_histograms_background')
-    has_bg_enabled_flag = hasattr(ndxplorer.plot_control, '_background_computation_enabled')
-    bg_enabled = getattr(ndxplorer.plot_control, '_background_computation_enabled', False)
-    logging.debug(f"Background computation check: has_method={has_bg_method}, has_flag={has_bg_enabled_flag}, enabled={bg_enabled}")
-    
-    if (hasattr(ndxplorer.plot_control, 'compute_histograms_background') and 
-        hasattr(ndxplorer.plot_control, '_background_computation_enabled') and 
-        ndxplorer.plot_control._background_computation_enabled):
-        
-        try:
-            logging.debug("Attempting to use background histogram computation system")
-            # Import the helper functions
-            from ..utils.histogram_helpers import (
-                extract_histogram_params,
-                is_data_ready,
-                resolve_weights,
-                sanitize_bins,
-            )
-            
-            # Extract histogram parameters
-            params, histogram_params = extract_histogram_params(ndxplorer)
-            logging.debug(f"Extracted histogram params: x_bins={histogram_params.get('x_bins')}, y_bins={histogram_params.get('y_bins')}")
-
-            # Ensure background histograms respect current filtering (NaN/Inf masking, selections, clustering, frames)
-            try:
-                mask = ndxplorer.value_mask
-                if mask is not None:
-                    valid_indices = np.flatnonzero(~mask)
-                    histogram_params['valid_indices'] = valid_indices
-                    histogram_params['valid_idx_count'] = int(valid_indices.size)
-                    # Cheap change token instead of hashing the whole index array
-                    # (hash(tobytes()) over ~2M indices cost ~10 ms on *every*
-                    # interaction). Count + endpoints + a strided sample of 64
-                    # indices detects any realistic filter change in O(1).
-                    n = valid_indices.size
-                    if n:
-                        sample = valid_indices[:: max(1, n // 64)]
-                        histogram_params['valid_idx_hash'] = hash(
-                            (n, int(valid_indices[0]), int(valid_indices[-1]), sample.tobytes())
-                        )
-                    else:
-                        histogram_params['valid_idx_hash'] = 0
-            except Exception as exc:
-                logging.debug("Could not compute valid_indices for background histograms: %s", exc)
-
-            try:
-                selections = ndxplorer.plot_control.get_selections()
-                histogram_params['selection_hash'] = _compute_selection_hash(selections)
-            except Exception:
-                histogram_params['selection_hash'] = None
-            
-            # Always compute live histograms (no caching)
-            
-            # Resolve weights
-            weights = resolve_weights(ndxplorer, params.use_weights, ndxplorer.x_values)
-            
-            # Use background computation
-            ndxplorer.plot_control.compute_histograms_background(histogram_params, weights)
-            logging.debug("Successfully scheduled background histogram computation")
-            return
-            
-        except Exception as e:
-            import traceback
-            logging.warning(f"Background histogram system failed, falling back to immediate computation: {e}")
-            logging.debug(f"Background computation error traceback:\n{traceback.format_exc()}")
-            # Fall back to the original immediate computation
-    
-    # Original immediate computation as fallback
-    # Only run if background computation is not pending
-    if not getattr(ndxplorer.plot_control, '_background_computation_pending', False):
-        _update_histograms_immediate(ndxplorer)
-    else:
-        logging.debug("Skipping immediate computation - background computation pending")
-
-
-def _update_histograms_immediate(ndxplorer) -> None:
-    """Immediate histogram computation.
-
-    Shares the same fast (bincount) / NumPy engine as the background path's
-    ``compute_histograms_sync`` via :func:`fast_histogram_1d` /
-    :func:`fast_histogram_2d`, instead of a separate NumPy-only manager. The
-    fast helpers accept explicit bin-edge arrays and fall back to NumPy for
-    non-uniform (e.g. log-spaced) edges, so log scale, weights and density are
-    preserved while uniform bins get the bincount fast path.
-    """
-    from ..core.histograms import Histogram1D, Histogram2D
-    from ..utils.fast_histogram import fast_histogram_1d, fast_histogram_2d
-    from ..utils.histogram_helpers import (
-        apply_joint_axis_mask,
-        extract_histogram_params,
-        is_data_ready,
-        resolve_weights,
-        sanitize_bins,
-    )
-
-    # Extract parameters using clean helper
-    params, params_dict = extract_histogram_params(ndxplorer)
-
-    # Always compute live histograms (no caching)
-    
-    # Compute new histograms
-    if not is_data_ready(ndxplorer):
-        logging.info("Skipping _update_histograms_immediate: data/axes not ready")
-        return
-    
-    d1 = ndxplorer.x_values
-    d2 = ndxplorer.y_values
-    d3 = ndxplorer.z_values
-
-    # Weights are resolved against the gated set, then narrowed with it: the
-    # marginals must describe the same rows as the 2D map, i.e. those with a
-    # value on both plotted axes. The displayed count follows that population.
-    weights = resolve_weights(ndxplorer, params.use_weights, d1)
-    d1, d2, d3, weights = apply_joint_axis_mask(d1, d2, d3, weights)
-    ndxplorer.lineEditCountCurrent.setText(str(len(d1)))
-
-    # Get bins
-    x_bins_1d, x_bins_2d = ndxplorer.get_x_bins()
-    y_bins_1d, y_bins_2d = ndxplorer.get_y_bins()
-    z_bins_1d, _ = ndxplorer.get_z_bins()
-    
-    # Get scale settings
-    x_scale = getattr(ndxplorer.plot_control, "scale_x", "linear")
-    y_scale = getattr(ndxplorer.plot_control, "scale_y", "linear")
-    z_scale = getattr(ndxplorer.plot_control, "scale_z", "linear")
-    
-    # Sanitize bins
-    x_bins_1d = sanitize_bins(x_bins_1d, d1, default_count=getattr(ndxplorer.plot_control, "n_xhist_1d", 50), scale=x_scale)
-    y_bins_1d = sanitize_bins(y_bins_1d, d2, default_count=getattr(ndxplorer.plot_control, "n_yhist_1d", 50), scale=y_scale)
-    z_bins_1d = sanitize_bins(z_bins_1d, d3, default_count=getattr(ndxplorer.plot_control, "n_zhist_1d", 50), scale=z_scale)
-    x_bins_2d = sanitize_bins(x_bins_2d, d1, default_count=getattr(ndxplorer.plot_control, "n_xhist_2d", 50), scale=x_scale)
-    y_bins_2d = sanitize_bins(y_bins_2d, d2, default_count=getattr(ndxplorer.plot_control, "n_yhist_2d", 50), scale=y_scale)
-
     try:
-        # Debug: Check density settings
-        density_x = ndxplorer.plot_control.normed_hist_x
-        density_y = ndxplorer.plot_control.normed_hist_y
-        density_z = ndxplorer.plot_control.normed_hist_z
-        logging.debug(f"[HELPERS] Density settings - X: {density_x}, Y: {density_y}, Z: {density_z}")
-        
-        # Compute 1D histograms on the shared fast/NumPy engine.
-        x_edges, x_counts = fast_histogram_1d(d1, x_bins_1d, weights=weights, density=density_x)
-        y_edges, y_counts = fast_histogram_1d(d2, y_bins_1d, weights=weights, density=density_y)
+        # No bin edges are built here. The axis is a count, a range and a
+        # scale -- which is what the plot controls hold -- and handing those
+        # over lets the fill bin with a multiply instead of a search through an
+        # array of boundaries.
+        result = compute_histograms(ndxplorer.data_source,
+                                    histogram_axes(ndxplorer),
+                                    keep=keep_mask(ndxplorer))
+        count = int(result.get("_count", 0))
+        ndxplorer.lineEditCountCurrent.setText(str(count))
+        # The playback readout says which slice is on screen; how many points
+        # survived it is the other half of that sentence, and it is only known
+        # here, after the fill.
+        model = getattr(ndxplorer.plot_control, "playback_model", None)
+        if model is not None:
+            model.set_count_text(f"{count:,} points")
+            form = getattr(ndxplorer.plot_control, "playback_form", None)
+            if form is not None:
+                form.refresh_plots()
 
-        # Store clean histograms
-        ndxplorer._histogram["x"] = Histogram1D(edges=x_edges, counts=x_counts)
-        ndxplorer._histogram["y"] = Histogram1D(edges=y_edges, counts=y_counts)
-
-        # Z histogram if enabled
-        if params.z_enabled:
-            z_weights = None
-            if weights is not None:
-                weight_param = ndxplorer.comboBoxWeight.currentText()
-                z_param = ndxplorer.plot_control.z_label
-                if weight_param != z_param:
-                    z_weights = weights
-
-            logging.debug(f"[HELPERS] Computing Z histogram with density: {density_z}")
-            z_edges, z_counts = fast_histogram_1d(d3, z_bins_1d, weights=z_weights, density=density_z)
-            ndxplorer._histogram["z"] = Histogram1D(edges=z_edges, counts=z_counts)
+        ndxplorer._histogram["x"] = Histogram1D(*result["x"])
+        ndxplorer._histogram["y"] = Histogram1D(*result["y"])
+        if "z" in result:
+            ndxplorer._histogram["z"] = Histogram1D(*result["z"])
         else:
             ndxplorer._histogram.pop("z", None)
+        H, x_edges, y_edges = result["2d"]
+        ndxplorer._histogram["2d"] = Histogram2D(H=H, x_edges=x_edges, y_edges=y_edges)
 
-        # Compute 2D histogram on the same engine. fast_histogram_2d returns H as
-        # (n_x, n_y) like numpy.histogram2d; Histogram2D stores (n_y, n_x), so
-        # transpose to match the boost/fast branch in compute_histograms_sync.
-        H2d, xe_2d, ye_2d = fast_histogram_2d(
-            d1, d2, [x_bins_2d, y_bins_2d], weights=weights
-        )
-        hist_2d = Histogram2D(H=H2d.T, x_edges=xe_2d, y_edges=ye_2d)
-
-        logging.debug(f"[HELPERS] Freshly computed 2D histogram: H shape={hist_2d.H.shape}, validation={hist_2d.validate()}")
-
-        # Store clean histogram
-        ndxplorer._histogram["2d"] = hist_2d
-        
-        logging.debug(f"[HELPERS] Stored histogram in _histogram['2d']: shape {hist_2d.shape}")
-        
-        # Update marginal plots after histogram computation
         _update_marginal_plots_from_cache(ndxplorer)
-        
-        # Update 2D plot
         if hasattr(ndxplorer, 'update_2d_plot'):
             ndxplorer.update_2d_plot()
         if hasattr(ndxplorer, 'g_2dplot'):
             ndxplorer.g_2dplot.replot()
-        
+
     except Exception as e:
-        logging.error(f"Clean histogram computation failed: {e}")
-        # Set empty histograms
-        ndxplorer._histogram["x"] = Histogram1D(edges=np.array([0.0, 1.0]), counts=np.array([0]))
-        ndxplorer._histogram["y"] = Histogram1D(edges=np.array([0.0, 1.0]), counts=np.array([0]))
+        logging.error(f"Histogram computation failed: {e}")
+        ndxplorer._histogram["x"] = Histogram1D(edges=np.array([0.0, 1.0]), counts=np.array([0.0]))
+        ndxplorer._histogram["y"] = Histogram1D(edges=np.array([0.0, 1.0]), counts=np.array([0.0]))
         ndxplorer._histogram["2d"] = Histogram2D(H=np.zeros((1, 1)), x_edges=np.array([0.0, 1.0]), y_edges=np.array([0.0, 1.0]))
         ndxplorer._histogram.pop("z", None)
 
@@ -394,11 +200,10 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
             _autoscale_vertical_hist(ndxplorer.g_yplot, y_bin_edges, y_counts)
 
         # Update Z marginal if enabled
-        if (
-            hasattr(ndxplorer, "groupBox_3")
-            and ndxplorer.groupBox_3.isChecked()
-            and "z" in ndxplorer._histogram
-        ):
+        # Drawn and autoscaled whenever the marginal exists. Gating this on the
+        # checkbox left the widget on screen with its view stuck at 0..1 -- the
+        # "axis not computed" that a full-range selection box then filled.
+        if "z" in ndxplorer._histogram:
             z_data = _as_edges_counts(ndxplorer._histogram.get("z"))
             if z_data is not None:
                 z_bin_edges, z_counts = z_data
@@ -426,7 +231,13 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
             if hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot:
                 ndxplorer.g_yplot.setVisible(True)
             if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
-                ndxplorer.g_zplot.setVisible(ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True)
+                # Shown like the x and y marginals whenever a third parameter
+                # is chosen. The "dynamic z-selection" box arms the *gate*;
+                # hiding the distribution until the gate is armed asks for a
+                # range to be chosen before it can be seen. With no parameter
+                # there is nothing to draw, and an empty plot under a stale
+                # label is worse than no plot.
+                ndxplorer.g_zplot.setVisible(z_axis_available(ndxplorer))
             logging.debug("Ensured marginal plots are visible")
         except Exception as e:
             logging.warning(f"Failed to ensure marginal plots visibility: {e}")
@@ -522,7 +333,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     data_source = ndxplorer.data_source
     is_empty = data_source.empty
     has_shape = data_source.values.shape[0] > 0 if hasattr(data_source.values, 'shape') else False
-    logging.debug(f"update_plots: data_source.empty={is_empty}, has_data={has_shape}")
+    logging.debug("update_plots: data_source.empty=%s, has_data=%s", is_empty, has_shape)
     
     if data_source.empty or data_source.values.shape[0] == 0:
         logging.info("update_plots: Data source is empty, showing empty plots")
@@ -534,7 +345,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     ndxplorer.update_parameter_names()
     ndxplorer.update_cmap()
 
-    logging.debug(f"update_plots: Checking clustering: _use_clustering={ndxplorer._use_clustering}, skip_clustering={skip_clustering}")
+    logging.debug("update_plots: Checking clustering: _use_clustering=%s, skip_clustering=%s", ndxplorer._use_clustering, skip_clustering)
     if ndxplorer._use_clustering and ndxplorer._cluster_labels is None and not skip_clustering:
         # The clusterer is loaded through the shared getter, which caches and
         # logs; a second private import here is how the two paths drifted into
@@ -544,7 +355,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
             return
 
     data_ready = ndxplorer.is_data_ready()
-    logging.debug(f"update_plots: data_ready={data_ready}")
+    logging.debug("update_plots: data_ready=%s", data_ready)
     if data_ready:
         logging.debug("Calling update_histograms from update_plots")
         update_histograms(ndxplorer)
@@ -600,11 +411,12 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
             ndxplorer.g_yplot.raise_()
             logging.debug("Forced Y marginal plot to be visible")
         if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
-            z_visible = ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True
-            ndxplorer.g_zplot.setVisible(z_visible)
-            if z_visible:
+            # Shown whenever a third parameter is chosen: see the note above.
+            visible = z_axis_available(ndxplorer)
+            ndxplorer.g_zplot.setVisible(visible)
+            if visible:
                 ndxplorer.g_zplot.raise_()
-            logging.debug(f"Forced Z marginal plot visibility: {z_visible}")
+            logging.debug("Z marginal plot visibility: %s", visible)
     except Exception as e:
         logging.warning(f"Failed to force marginal plots visibility: {e}")
 
@@ -652,11 +464,9 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     # Handle Z histogram if enabled
     z_hist = ndxplorer._histogram.get("z")
     z_data = _as_edges_counts(z_hist)
-    if (
-        hasattr(ndxplorer, "groupBox_3")
-        and ndxplorer.groupBox_3.isChecked()
-        and z_data is not None
-    ):
+    # As above: the gate decides whether the z range *filters*, not whether the
+    # marginal is drawn or its axis computed.
+    if z_data is not None:
         z_bin_edges, z_counts = z_data
         ndxplorer.g_zhist_m.set_data(z_bin_edges, z_counts)
         _autoscale_horizontal_hist(ndxplorer.g_zplot, z_bin_edges, z_counts)
@@ -679,9 +489,11 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
             ndxplorer.g_yplot.raise_()
             ndxplorer.g_yplot.replot()
         if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
-            z_visible = ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True
-            ndxplorer.g_zplot.setVisible(z_visible)
-            if z_visible:
+            # The third of three places that decided this. Shown whenever a
+            # third parameter is chosen: see the note in the first of them.
+            visible = z_axis_available(ndxplorer)
+            ndxplorer.g_zplot.setVisible(visible)
+            if visible:
                 ndxplorer.g_zplot.raise_()
                 ndxplorer.g_zplot.replot()
         logging.debug("Final marginal plot visibility and replot completed")

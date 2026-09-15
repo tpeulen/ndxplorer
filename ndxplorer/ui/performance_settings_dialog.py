@@ -61,7 +61,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(desc)
         
         # Create settings groups
-        self._create_background_group(scroll_layout)
         self._create_computation_group(scroll_layout)
         self._create_memory_group(scroll_layout)
         self._create_optimization_group(scroll_layout)
@@ -97,43 +96,28 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         
         layout.addLayout(button_layout)
         
-    def _create_background_group(self, layout):
-        """Create background computation settings group."""
-        group = QtWidgets.QGroupBox("Background Computation")
-        group.setToolTip("Configure background thread processing for responsive UI")
-        group_layout = QtWidgets.QVBoxLayout(group)
-        
-        # Background worker checkbox
-        self.bg_worker_cb = QtWidgets.QCheckBox("Enable Background Worker")
-        self.bg_worker_cb.setToolTip(
-            "When enabled, histogram computations run in a background thread for responsive UI.\n"
-            "When disabled, computations run immediately but may block the UI during processing.\n"
-            "Disable on very low-memory systems or if experiencing threading issues."
-        )
-        group_layout.addWidget(self.bg_worker_cb)
-        
-        layout.addWidget(group)
-        
+    # The "Background Computation" group stood here, offering an "Enable
+    # Background Worker" checkbox. There is no background worker: histograms
+    # are filled synchronously in about twenty milliseconds. A switch that
+    # switches nothing is worse than no switch, because it is read as an
+    # explanation when something is slow.
+
     def _create_computation_group(self, layout):
         """Create histogram computation settings group."""
         group = QtWidgets.QGroupBox("Histogram Computation")
         group.setToolTip("Configure histogram computation engine and threading")
         group_layout = QtWidgets.QVBoxLayout(group)
         
-        # Boost histogram checkbox
-        self.boost_hist_cb = QtWidgets.QCheckBox("Use Boost-Histogram")
-        self.boost_hist_cb.setToolTip(
-            "boost-histogram provides significantly faster histogram computation with better\n"
-            "memory efficiency than numpy. Falls back to numpy if unavailable.\n"
-            "Disable if boost-histogram causes compatibility issues."
-        )
-        group_layout.addWidget(self.boost_hist_cb)
-        
+        # No engine switch: histograms are filled in tttrlib, always. The
+        # boost-histogram checkbox chose between three implementations that were
+        # supposed to agree and did not have to, and a picture whose engine
+        # depended on a settings flag is a picture that cannot be reproduced
+        # from the file alone.
         # Fast histogram checkbox
         self.fast_hist_cb = QtWidgets.QCheckBox("Use Fast Histogram Optimizations")
         self.fast_hist_cb.setToolTip(
-            "Enables various histogram optimization techniques beyond boost-histogram.\n"
-            "Includes caching strategies and optimized algorithms.\n"
+            "Enables the caching and pre-binning around the fill.\n"
+            "The fill itself is always tttrlib and is not affected.\n"
             "Keep enabled for best performance."
         )
         group_layout.addWidget(self.fast_hist_cb)
@@ -195,24 +179,14 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         group.setToolTip("Configure memory usage and caching strategies")
         group_layout = QtWidgets.QVBoxLayout(group)
         
-        # Histogram cache checkbox
-        self.hist_cache_cb = QtWidgets.QCheckBox("Enable Histogram Cache")
-        self.hist_cache_cb.setToolTip(
-            "Cache computed histograms to avoid recomputation during UI interactions.\n"
-            "Improves responsiveness for repeated operations but uses more memory.\n"
-            "Disable if memory is extremely limited."
-        )
-        group_layout.addWidget(self.hist_cache_cb)
-        
-        # Bitfield masks checkbox
-        self.bitfield_cb = QtWidgets.QCheckBox("Use Bitfield Masks")
-        self.bitfield_cb.setToolTip(
-            "Use compact bitfield masks for data selection, reducing memory usage by ~8x\n"
-            "for large datasets. Provides significant memory savings for selections.\n"
-            "Disable if experiencing mask-related issues."
-        )
-        group_layout.addWidget(self.bitfield_cb)
-        
+        # There is no histogram-cache switch any more. Histograms are recomputed
+        # from the store on every redraw, in a few milliseconds -- less than
+        # deciding whether a cached one is still valid -- so the setting offered
+        # a memory-for-speed trade that no longer exists in either direction.
+        #
+        # There is no bitfield-mask switch any more. The selection IS bit-packed
+        # now, in the store, always -- so the setting had nothing left to turn
+        # off and its checkbox promised a saving the user was already getting.
         # Aggressive caching checkbox
         self.aggressive_cb = QtWidgets.QCheckBox("Aggressive Caching")
         self.aggressive_cb.setToolTip(
@@ -226,19 +200,7 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         memory_layout = QtWidgets.QGridLayout()
         
         # Histogram cache memory
-        hist_cache_label = QtWidgets.QLabel("Histogram Cache (MB):")
-        hist_cache_label.setToolTip(
-            "Maximum memory usage for histogram cache in megabytes.\n"
-            "Larger values improve performance but use more RAM.\n"
-            "Recommended range: 50-2000 MB"
-        )
-        self.hist_cache_spin = QtWidgets.QSpinBox()
-        self.hist_cache_spin.setRange(10, 4000)
-        self.hist_cache_spin.setValue(200)
-        self.hist_cache_spin.setToolTip("Histogram cache memory limit in MB")
-        memory_layout.addWidget(hist_cache_label, 0, 0)
-        memory_layout.addWidget(self.hist_cache_spin, 0, 1)
-        
+        # No "Histogram Cache (MB)" here either -- there is nothing to size.
         # General cache memory
         gen_cache_label = QtWidgets.QLabel("General Cache (MB):")
         gen_cache_label.setToolTip(
@@ -252,20 +214,6 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         self.gen_cache_spin.setToolTip("General cache memory limit in MB")
         memory_layout.addWidget(gen_cache_label, 1, 0)
         memory_layout.addWidget(self.gen_cache_spin, 1, 1)
-        
-        # Bitfield threshold
-        threshold_label = QtWidgets.QLabel("Bitfield Threshold:")
-        threshold_label.setToolTip(
-            "Minimum number of data points required to use bitfield masks.\n"
-            "Below this threshold, regular boolean masks are used.\n"
-            "Recommended range: 10,000-1,000,000 points"
-        )
-        self.threshold_spin = QtWidgets.QSpinBox()
-        self.threshold_spin.setRange(1000, 10000000)
-        self.threshold_spin.setValue(100000)
-        self.threshold_spin.setToolTip("Minimum points for bitfield masks")
-        memory_layout.addWidget(threshold_label, 2, 0)
-        memory_layout.addWidget(self.threshold_spin, 2, 1)
         
         group_layout.addLayout(memory_layout)
         layout.addWidget(group)
@@ -299,19 +247,8 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
     def _load_current_settings(self):
         """Load current settings into the UI."""
         config = get_performance_config()
-        
-        # Get background worker setting
-        try:
-            from ..plotting.plot_control import is_background_computation_enabled
-            bg_enabled = is_background_computation_enabled()
-        except Exception:
-            bg_enabled = True  # Default fallback
-        
-        # Background settings
-        self.bg_worker_cb.setChecked(bg_enabled)
-        
+
         # Computation settings
-        self.boost_hist_cb.setChecked(config.use_boost_histogram)
         self.fast_hist_cb.setChecked(config.use_fast_histogram)
         self.parallel_cb.setChecked(config.parallel_histogram)
         self.threads_spin.setValue(config.histogram_threads)
@@ -324,25 +261,16 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
             logging.warning(f"Unknown plot backend '{config.plot_backend}', using default")
         
         # Memory settings
-        self.hist_cache_cb.setChecked(config.use_histogram_cache)
-        self.bitfield_cb.setChecked(config.use_bitfield_masks)
         self.aggressive_cb.setChecked(config.aggressive_caching)
-        self.hist_cache_spin.setValue(int(config.histogram_cache_memory_mb))
         self.gen_cache_spin.setValue(int(config.general_cache_memory_mb))
-        self.threshold_spin.setValue(config.bitfield_threshold)
         
     def _apply_settings(self):
         """Apply settings and save to settings file."""
         try:
             # Create new config
             new_config = PerformanceConfig(
-                use_bitfield_masks=self.bitfield_cb.isChecked(),
-                use_histogram_cache=self.hist_cache_cb.isChecked(),
-                use_boost_histogram=self.boost_hist_cb.isChecked(),
                 use_fast_histogram=self.fast_hist_cb.isChecked(),
-                histogram_cache_memory_mb=float(self.hist_cache_spin.value()),
                 general_cache_memory_mb=float(self.gen_cache_spin.value()),
-                bitfield_threshold=self.threshold_spin.value(),
                 parallel_histogram=self.parallel_cb.isChecked(),
                 aggressive_caching=self.aggressive_cb.isChecked(),
                 histogram_threads=self.threads_spin.value(),
@@ -388,16 +316,10 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
             
             # Update environment section
             settings_data['environment'] = {
-                'NDXPLORER_ENABLE_BACKGROUND_WORKER': self.bg_worker_cb.isChecked(),
-                'NDXPLORER_USE_BOOST_HISTOGRAM': config.use_boost_histogram,
                 'NDXPLORER_USE_FAST_HISTOGRAM': config.use_fast_histogram,
-                'NDXPLORER_USE_HISTOGRAM_CACHE': config.use_histogram_cache,
                 'NDXPLORER_PARALLEL_HISTOGRAM': config.parallel_histogram,
                 'NDXPLORER_HISTOGRAM_THREADS': config.histogram_threads,
-                'NDXPLORER_USE_BITFIELD': config.use_bitfield_masks,
-                'NDXPLORER_BITFIELD_THRESHOLD': config.bitfield_threshold,
                 'NDXPLORER_AGGRESSIVE_CACHING': config.aggressive_caching,
-                'NDXPLORER_HISTOGRAM_CACHE_MB': config.histogram_cache_memory_mb,
                 'NDXPLORER_GENERAL_CACHE_MB': config.general_cache_memory_mb,
             }
             

@@ -37,21 +37,6 @@ from ..logging_config import logging
 
 # Import performance modules
 try:
-    import boost_histogram as bh
-    _HAVE_BOOST_HISTOGRAM = True
-except ImportError:
-    bh = None
-    _HAVE_BOOST_HISTOGRAM = False
-
-try:
-    from .bitfield_mask import BitfieldMask, create_mask_from_condition
-    _HAVE_BITFIELD = True
-except ImportError:
-    _HAVE_BITFIELD = False
-    BitfieldMask = None
-    create_mask_from_condition = None
-
-try:
     from .cache_manager import get_cache_manager, clear_all_caches
     _HAVE_CACHE = True
 except ImportError:
@@ -71,7 +56,6 @@ try:
     from .vectorized_ops import (
         fast_percentile_range,
         fast_minmax,
-        fast_rectangular_selection,
         combine_masks_fast
     )
     _HAVE_VECTORIZED = True
@@ -79,7 +63,6 @@ except ImportError:
     _HAVE_VECTORIZED = False
     fast_percentile_range = None
     fast_minmax = None
-    fast_rectangular_selection = None
     combine_masks_fast = None
 
 try:
@@ -135,8 +118,6 @@ def optimize_ndxplorer(ndxplorer: "NDXplorer", mode: str = "balanced") -> None:
 def log_available_features() -> None:
     """Log which performance features are available."""
     features = {
-        "Boost-histogram (fastest)": _HAVE_BOOST_HISTOGRAM,
-        "Bitfield masks": _HAVE_BITFIELD,
         "Histogram caching": _HAVE_CACHE,
         "Fast histogram": _HAVE_FAST_HISTOGRAM,
         "Vectorized ops": _HAVE_VECTORIZED,
@@ -280,8 +261,6 @@ def estimate_memory_usage(ndxplorer: "NDXplorer") -> dict:
     cached = manager.cache.get_cache_value('filtered_values') if manager is not None else None
     if cached is not None:
         if isinstance(cached, np.ndarray):
-            usage['cached_values_mb'] = cached.nbytes / (1024 * 1024)
-        elif _HAVE_BITFIELD and isinstance(cached, BitfieldMask):
             usage['cached_values_mb'] = cached.nbytes / (1024 * 1024)
     
     # Cache manager

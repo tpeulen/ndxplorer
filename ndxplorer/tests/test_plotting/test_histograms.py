@@ -189,15 +189,12 @@ class TestHistograms:
         
         assert stats == {}
 
-    # update_histograms and extract_histogram_params are imported *locally*
-    # inside update_histogram_display (to dodge circular imports), so the
-    # patches must target their source modules, not the histograms namespace.
+    # update_histograms is imported *locally* inside update_histogram_display
+    # (to dodge circular imports), so the patch must target its source module,
+    # not the histograms namespace.
     @patch('ndxplorer.plotting.plot_update_helpers.update_histograms')
-    @patch('ndxplorer.plotting.histograms.should_recompute', return_value=True)
-    @patch('ndxplorer.utils.histogram_helpers.extract_histogram_params',
-           return_value=(Mock(), {}))
     @patch('ndxplorer.plotting.histograms.is_data_ready', return_value=True)
-    def test_update_histogram_display_ready(self, _ready, _extract, _recompute, mock_update):
+    def test_update_histogram_display_ready(self, _ready, mock_update):
         """update_histogram_display triggers a recompute when data is ready."""
         ndxplorer = Mock()
         histograms.update_histogram_display(ndxplorer)

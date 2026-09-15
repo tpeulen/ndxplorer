@@ -134,27 +134,34 @@ def test_the_surviving_cache_is_stable_and_versioned(window):
     assert window.value_mask is not first
 
 
-def test_a_selection_change_invalidates_the_histogram_key(window):
-    """A gate change must show up in the histogram cache key.
+def test_a_gating_change_changes_the_rows_a_redraw_may_use(window):
+    """The row filter a redraw is handed must react to gating.
 
-    ``extract_histogram_params`` builds the key that decides whether the
-    histograms are recomputed. Its ``data_hash`` tracks the *data*, which a
-    selection does not change -- so the mask identity is the only component
-    that reacts to gating. If it goes constant, drawing a selection leaves every
-    histogram stale, with no error anywhere.
+    This used to be asserted against a histogram cache key built by
+    ``extract_histogram_params`` -- specifically ``id(window.value_mask)``,
+    which changes whenever the mask object is rebuilt whether or not the rows
+    it keeps changed. There is no cache and no key now, and ``keep_mask`` is
+    what a redraw actually passes to the fill, so this asserts the stronger
+    thing directly: turning a gate on must remove rows.
+
+    The NaN is load-bearing. With nothing to gate out, both settings keep every
+    row and the test would pass on a ``keep_mask`` that ignored gating entirely.
     """
-    from ndxplorer.utils.histogram_helpers import extract_histogram_params
+    from ndxplorer.utils.histogram_helpers import keep_mask
 
-    before = extract_histogram_params(window)[0].mask_id
-    assert before is not None, "the mask identity dropped out of the cache key"
-    assert extract_histogram_params(window)[0].mask_id == before, (
-        "the key changes when nothing changed; every update would recompute"
-    )
+    window.data_source.data = pd.DataFrame({"x": [1.0, np.nan, 3.0],
+                                            "y": [4.0, 5.0, 6.0]})
+    _select_axes(window, "x", "y")
 
-    window._mask_nan = not window._mask_nan
-    after = extract_histogram_params(window)[0].mask_id
-    assert after != before, (
-        "the histogram key ignored a gating change; histograms would stay stale"
+    window._mask_nan = True
+    gated = keep_mask(window)
+    window._mask_nan = False
+    ungated = keep_mask(window)
+
+    assert gated is not None, "no row filter reached the histograms at all"
+    assert list(gated) == [True, False, True], "the NaN row was not gated out"
+    assert list(ungated) == [True, True, True], (
+        "the gate stayed on after it was turned off"
     )
 
 

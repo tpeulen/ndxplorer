@@ -1,24 +1,49 @@
-"""
-Histogram helpers for ndxplorer.
+"""Reading the plot controls, and the odds and ends around a histogram.
 
-Provides utilities for histogram computation, caching, and parameter management.
+The computation itself, and the description of an axis it takes, are in
+:mod:`ndxplorer.utils.histogram_computation`. What is here is the part that
+knows about the interface: turning the controls into that description, and the
+row filter to go with it.
 """
 
 from __future__ import annotations
 
-import logging
 import numpy as np
-from typing import Dict, Any, Optional, Tuple
+from typing import Optional
 
 from ..logging_config import logging
-from ..utils.performance_optimizations import (
-    compute_histogram2d_adaptive,
-    downsample_for_display,
-    get_performance_monitor,
-)
+from .histogram_computation import Axis, HistogramAxes
 
 if False:  # pragma: no cover - type checking hints without runtime import
     from ..core.plot_main import NDXplorer
+
+
+def bins_token(arr) -> str:
+    """A compact cache-key token for an array of bin edges.
+
+    ``str(numpy_array)`` is not usable here: it triggers a full ``array2string``
+    formatting pass (~5-7 ms across the five arrays a redraw needs) and it
+    *truncates* long arrays with ``"..."``, so distinct bin sets collide.
+
+    The token is O(1) -- four numbers read out of the array, never a pass over
+    it -- and it has to separate the bin sets that actually occur. Count, first
+    and last do not: :func:`get_bins` builds a log axis with
+    ``np.logspace(log10(lo), log10(hi), n + 1)`` and a linear one with
+    ``np.linspace(lo, hi, n + 1)``, which agree on all three. Switching an axis
+    to log therefore left the key unchanged, and the gate went on selecting the
+    population the old edges covered -- with nothing in the interface saying so.
+
+    Its caller is :meth:`BitmapSelection.gate_key`: a painted cell means "these
+    data values", and the edges are what decides which.
+
+    The middle edge is what separates them, and it separates any two monotone
+    spacings over the same endpoints, which is the general form of the problem.
+    """
+    a = np.asarray(arr)
+    if a.size == 0:
+        return "0"
+    mid = float(a[a.size // 2])
+    return f"{a.size}:{float(a[0]):.8g}:{mid:.8g}:{float(a[-1]):.8g}"
 
 
 def get_bins(plot_control, arange, scale, n_1d, n_2d):
@@ -37,72 +62,17 @@ def get_bins(plot_control, arange, scale, n_1d, n_2d):
         x_func = np.linspace
         x_start = xmin
         x_stop = xmax
-    x_bins_1d = x_func(x_start, x_stop, n_1d)
-    x_bins_2d = x_func(x_start, x_stop, n_2d)
+    # n + 1 EDGES for n BINS. These come from spin boxes labelled "Bin", and
+    # this returned n: asking for 256 bins gave 255, each one 256/255 of the
+    # width it should have been. On a pixel axis that is the difference between
+    # one bin per pixel and a bin that slides across the image, which shows up
+    # as a moire in the picture rather than as an obviously wrong number.
+    #
+    # These edges are for the PLOT -- ticks, and the gates that place a painted
+    # mask. Nothing bins with them; see histogram_computation.Axis.
+    x_bins_1d = x_func(x_start, x_stop, int(n_1d) + 1)
+    x_bins_2d = x_func(x_start, x_stop, int(n_2d) + 1)
     return x_bins_1d, x_bins_2d
-
-
-def are_bins_valid(bins) -> bool:
-    """Return True when bins is a strictly increasing 1D array."""
-    try:
-        if bins is None:
-            return False
-        arr = np.asarray(bins)
-        if arr.ndim != 1 or arr.size < 2:
-            return False
-        return np.all(np.diff(arr) > 0)
-    except Exception:
-        return False
-
-
-def sanitize_bins(
-    bins,
-    data: np.ndarray,
-    default_count: int = 50,
-    scale: str = "linear",
-) -> np.ndarray:
-    """Ensure bins are a strictly increasing 1D array.
-    
-    Parameters
-    ----------
-    bins : array-like
-        Bin edges to validate
-    data : np.ndarray
-        Data array to generate fallback bins from
-    default_count : int
-        Number of bins to generate in fallback
-    scale : str
-        'linear' or 'log' - determines spacing of fallback bins
-    """
-    try:
-        if are_bins_valid(bins):
-            return np.asarray(bins)
-        if data is not None and len(data) > 0 and np.isfinite(data).any():
-            fd = data[np.isfinite(data)]
-            if fd.size == 0:
-                return np.array([0.0, 1.0])
-            vmin = np.min(fd)
-            vmax = np.max(fd)
-            if not np.isfinite(vmin) or not np.isfinite(vmax):
-                return np.array([0.0, 1.0])
-            if vmax == vmin:
-                eps = 1e-9 if vmin == 0 else abs(vmin) * 1e-9
-                vmin -= eps
-                vmax += eps
-            n = int(default_count) if default_count and default_count > 0 else 50
-            
-            # Generate log-spaced or linear-spaced bins based on scale
-            if scale == "log":
-                if vmin <= 0:
-                    vmin = 1e-6
-                if vmax <= 0:
-                    vmax = 1e-6
-                return np.logspace(np.log10(vmin), np.log10(vmax), n + 1)
-            else:
-                return np.linspace(vmin, vmax, n + 1)
-        return np.array([0.0, 1.0])
-    except Exception:
-        return np.array([0.0, 1.0])
 
 
 def joint_axis_mask(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
@@ -172,245 +142,115 @@ def apply_joint_axis_mask(x, y, z=None, weights=None):
 
 
 def is_data_ready(ndxplorer: "NDXplorer") -> bool:
-    """Return True if data and axis selections are ready for histogram computation."""
+    """Whether there is data and the axes point at columns of it.
+
+    A readiness check, and nothing else. It used to answer by *computing* the
+    x, y and z values -- each of which re-derives the whole gating state -- so
+    asking whether a redraw was possible cost most of a redraw, on every redraw.
+    """
     try:
-        # Use data_source property instead of _data_source
         data_source = ndxplorer.data_source
         if data_source is None or data_source.empty:
             return False
-        values = data_source.values
-        if values is None or not hasattr(values, "shape"):
+        n_parameters = data_source.n_parameters
+        if n_parameters < 3:
             return False
-        if values.shape[0] < 3:
-            return False
-        p1 = getattr(ndxplorer.plot_control, "p1", (0, ""))[0]
-        p2 = getattr(ndxplorer.plot_control, "p2", (1, ""))[0]
-        p3 = getattr(ndxplorer.plot_control, "p3", (2, ""))[0]
-        nrows = values.shape[0]
-        if not (0 <= p1 < nrows and 0 <= p2 < nrows and 0 <= p3 < nrows):
-            return False
-        _ = ndxplorer.x_values
-        _ = ndxplorer.y_values
-        _ = ndxplorer.z_values
-        return True
+        control = ndxplorer.plot_control
+        return all(
+            0 <= getattr(control, name, (default, ""))[0] < n_parameters
+            for name, default in (("p1", 0), ("p2", 1), ("p3", 2))
+        )
     except Exception:
         return False
 
 
-def extract_histogram_params(ndxplorer: "NDXplorer") -> HistogramParams:
-    """Collect parameters that determine histogram cache validity."""
-    from .histogram_manager import HistogramParams
-    
-    # Get parameter names from data source
-    x_param = ndxplorer.plot_control.x_label
-    y_param = ndxplorer.plot_control.y_label
-    z_param = ndxplorer.plot_control.z_label if hasattr(ndxplorer.plot_control, 'z_label') else ""
-    
-    # Get parameter indices for compatibility with background histogram system
-    p1_idx = getattr(ndxplorer.plot_control, 'p1', (0, ""))[0]
-    p2_idx = getattr(ndxplorer.plot_control, 'p2', (1, ""))[0]
-    p3_idx = getattr(ndxplorer.plot_control, 'p3', (2, ""))[0]
-    
-    use_weights = hasattr(ndxplorer, "checkBoxWeight") and ndxplorer.checkBoxWeight.isChecked()
-    weight_param = (
-        ndxplorer.comboBoxWeight.currentText()
-        if use_weights and hasattr(ndxplorer, "comboBoxWeight")
-        else ""
-    )
-    z_enabled = hasattr(ndxplorer, "groupBox_3") and ndxplorer.groupBox_3.isChecked()
-    # Identity of the cached selection mask. This is the *only* selection-aware
-    # component of the key: ``data_hash`` below tracks the data, not which points
-    # are gated in, so without this a selection change would leave every
-    # histogram stale. The manager hands back the same object until the data
-    # version or the selection state changes, so identity is exactly the token
-    # wanted -- and because the manager keeps the object alive, the id cannot be
-    # recycled under us.
-    mask_id = id(ndxplorer.value_mask)
-    
-    # Get density settings
-    normed_x = getattr(ndxplorer.plot_control, 'normed_hist_x', False)
-    normed_y = getattr(ndxplorer.plot_control, 'normed_hist_y', False)
-    normed_z = getattr(ndxplorer.plot_control, 'normed_hist_z', False)
-    
-    # Get bins as arrays (preserve actual values for computation)
-    x_bins_1d_arr, x_bins_2d_arr = ndxplorer.get_x_bins()
-    y_bins_1d_arr, y_bins_2d_arr = ndxplorer.get_y_bins()
-    z_bins_1d_arr, _ = ndxplorer.get_z_bins()
-    
-    # Compact cache-key token for a bin-edge array. `str(numpy_array)` triggers a
-    # full array2string formatting pass (~5-7 ms across five arrays per update)
-    # and, worse, *truncates* long arrays with "..." so distinct bin sets could
-    # collide. (count, first, last) uniquely identifies uniform bins and is O(1).
-    def _bins_key(arr) -> str:
-        a = np.asarray(arr)
-        if a.size == 0:
-            return "0"
-        return f"{a.size}:{float(a[0]):.8g}:{float(a[-1]):.8g}"
+def histogram_axes(ndxplorer: "NDXplorer") -> HistogramAxes:
+    """What the plot controls are set to, as the axes a fill takes.
 
-    x_bins_1d = _bins_key(x_bins_1d_arr)
-    y_bins_1d = _bins_key(y_bins_1d_arr)
-    z_bins_1d = _bins_key(z_bins_1d_arr) if z_enabled else None
-    x_bins_2d = _bins_key(x_bins_2d_arr)
-    y_bins_2d = _bins_key(y_bins_2d_arr)
-    
-    # Data-change token for cache invalidation. Use the O(1) monotonic version
-    # counter on the data source instead of md5-hashing tens of MB of the array
-    # on every interactive update (the hash forced a full `.values` materialise
-    # plus a multi-MB md5 pass per pan/zoom/selection).
-    data_hash = None
-    try:
-        ds = ndxplorer.data_source
-        if ds is not None:
-            data_hash = f"v{ds.data_version}:{ds.size}"
-    except Exception:
-        pass
-    
-    params = HistogramParams(
-        x_param=x_param,
-        y_param=y_param,
-        z_param=z_param if z_enabled else None,
-        x_bins_1d=x_bins_1d,
-        y_bins_1d=y_bins_1d,
-        z_bins_1d=z_bins_1d,
-        x_bins_2d=x_bins_2d,
-        y_bins_2d=y_bins_2d,
-        use_weights=use_weights,
-        weight_param=weight_param,
-        z_enabled=z_enabled,
-        mask_id=mask_id,
-        data_hash=data_hash,
-        normed_x=normed_x,
-        normed_y=normed_y,
-        normed_z=normed_z
-    )
-    
-    # Add index parameters for background histogram compatibility
-    params_dict = params.to_dict()
-    params_dict['x_idx'] = p1_idx
-    params_dict['y_idx'] = p2_idx
-    params_dict['z_idx'] = p3_idx
-    
-    # Add actual bin arrays for computation
-    params_dict['x_bins_1d_arr'] = x_bins_1d_arr
-    params_dict['x_bins_2d_arr'] = x_bins_2d_arr
-    params_dict['y_bins_1d_arr'] = y_bins_1d_arr
-    params_dict['y_bins_2d_arr'] = y_bins_2d_arr
-    params_dict['z_bins_1d_arr'] = z_bins_1d_arr
-    
-    # Add old-style bin parameters for background histogram compatibility
-    try:
-        # Convert string bins back to integers for background system
-        x_bins_1d_int = int(x_bins_1d) if x_bins_1d.isdigit() else 50
-        y_bins_1d_int = int(y_bins_1d) if y_bins_1d.isdigit() else 50
-        x_bins_2d_int = int(x_bins_2d) if x_bins_2d.isdigit() else 50
-        y_bins_2d_int = int(y_bins_2d) if y_bins_2d.isdigit() else 50
-        
-        params_dict['x_bins'] = x_bins_1d_int
-        params_dict['y_bins'] = y_bins_1d_int
-        params_dict['z_bins'] = int(z_bins_1d) if z_bins_1d and z_bins_1d.isdigit() else 50
-        params_dict['x_bins_2d'] = x_bins_2d_int
-        params_dict['y_bins_2d'] = y_bins_2d_int
-        
-        # Add range parameters
-        if hasattr(ndxplorer.plot_control, 'xmin') and hasattr(ndxplorer.plot_control, 'xmax'):
-            params_dict['x_range'] = (ndxplorer.plot_control.xmin, ndxplorer.plot_control.xmax)
-        else:
-            params_dict['x_range'] = (0, 256)
-            
-        if hasattr(ndxplorer.plot_control, 'ymin') and hasattr(ndxplorer.plot_control, 'ymax'):
-            params_dict['y_range'] = (ndxplorer.plot_control.ymin, ndxplorer.plot_control.ymax)
-        else:
-            params_dict['y_range'] = (0, 256)
-            
-        params_dict['z_range'] = (0, 50)  # Default range for Z
-        
-    except Exception as e:
-        logging.warning(f"Error setting old-style parameters: {e}")
-        # Fallback values
-        params_dict['x_bins'] = 50
-        params_dict['y_bins'] = 50
-        params_dict['z_bins'] = 50
-        params_dict['x_bins_2d'] = 50
-        params_dict['y_bins_2d'] = 50
-        params_dict['x_range'] = (0, 256)
-        params_dict['y_range'] = (0, 256)
-        params_dict['z_range'] = (0, 50)
-    
-    return params, params_dict
+    One reading of the interface, producing one description. This used to
+    return a dataclass *and* a dict of two dozen keys built from it, with five
+    arrays of bin edges alongside; callers picked whichever of the three they
+    happened to want, and the dict carried a second, disagreeing copy of the
+    ranges (``z_range`` was hard-coded to ``(0, 50)`` here while the plot drew
+    ``plot_control.z_range``).
+    """
+    control = ndxplorer.plot_control
 
-
-def should_recompute(ndxplorer: "NDXplorer", params) -> bool:
-    """Return True when cached histograms no longer match current parameters."""
-    from .histogram_manager import HistogramParams
-    
-    cached = getattr(ndxplorer, "_cached_hist_params", None)
-    if cached is None:
-        return True
-    
-    # Convert to dict for comparison
-    current_dict = params.to_dict() if hasattr(params, 'to_dict') else params.__dict__
-    cached_dict = cached if isinstance(cached, dict) else cached.__dict__
-    
-    # Compare key parameters
-    keys_to_check = ['x_param', 'y_param', 'z_param', 'use_weights', 'weight_param', 
-                    'z_enabled', 'mask_id', 'x_bins_1d', 'y_bins_1d', 'z_bins_1d',
-                    'x_bins_2d', 'y_bins_2d', 'data_hash', 'normed_x', 'normed_y', 'normed_z']
-    
-    for key in keys_to_check:
-        if current_dict.get(key) != cached_dict.get(key):
-            return True
-    
-    return False
-
-
-def save_cache(ndxplorer: "NDXplorer", params) -> None:
-    """Store histogram parameters for cache comparisons."""
-    # Store as dict for easy comparison
-    if hasattr(params, 'to_dict'):
-        ndxplorer._cached_hist_params = params.to_dict()
-    else:
-        ndxplorer._cached_hist_params = params.__dict__.copy()
-
-
-def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[np.ndarray]:
-    """Return weight array matching d1 length or None (float32 for memory efficiency)."""
-    if not use_weights:
-        return None
-    weight_param = ndxplorer.comboBoxWeight.currentText()
-    weight_idx = -1
-    # Use the same data source as x_values and y_values to ensure consistency
-    data_source = ndxplorer.data_source
-    if data_source is not None and hasattr(data_source, "parameter_names"):
-        param_names = data_source.parameter_names
-        if weight_param in param_names:
-            weight_idx = param_names.index(weight_param)
-
-    if weight_idx < 0:
-        logging.warning("Weight parameter '%s' not found in data source. Disabling weights.", weight_param)
-        return None
-    
-    # Use the same data source as x_values and y_values to ensure consistency
-    if hasattr(ndxplorer, 'data_manager'):
-        # Use data_manager to get filtered weight values (same as x_values/y_values)
-        try:
-            weight_values = ndxplorer.data_manager.get_axis_values('x', weight_idx, use_filtered=True)
-            weight_values = weight_values.astype(np.float32)
-        except Exception as e:
-            logging.warning("Failed to get filtered weights from data manager: %s", e)
-            return None
-    else:
-        # Fallback: use ndxplorer.values (should be same filtered data)
-        weight_values = ndxplorer.values[weight_idx].astype(np.float32)
-    
-    if len(weight_values) != len(d1):
-        logging.warning(
-            "Weights array shape (%d) doesn't match data array shape (%d). Disabling weights.",
-            len(weight_values),
-            len(d1),
+    def axis(name: str, index: int, n_bins: int) -> Axis:
+        lo, hi = getattr(control, name + "_range")
+        return Axis(
+            index=index,
+            bins=n_bins,
+            lo=lo,
+            hi=hi,
+            scale=getattr(control, "scale_" + name, "linear"),
+            density=getattr(control, "normed_hist_" + name, False),
         )
-        return None
-    return weight_values
+
+    x_idx = getattr(control, "p1", (0, ""))[0]
+    y_idx = getattr(control, "p2", (1, ""))[0]
+    z_idx = getattr(control, "p3", (2, ""))[0]
+
+    # The z marginal is computed whenever a third parameter is chosen, NOT only
+    # when the dynamic gate is armed. Those are two different things and one
+    # checkbox used to mean both: the box says "dynamic z-selection" -- whether
+    # the z *range* gates the other plots -- and it also decided whether the z
+    # histogram existed at all. Someone selecting bursts by a third parameter
+    # therefore had to arm the gate before they could see the distribution they
+    # were about to gate on, which is backwards: you look first, then choose the
+    # range. One extra 1-D fill costs a few milliseconds.
+
+    # The weight COLUMN, not a weight array. The fill reads it out of the store
+    # like any other column, so it cannot end up describing a different set of
+    # rows than the coordinates do -- which is what happened when it travelled
+    # separately as an array.
+    weight = None
+    if hasattr(ndxplorer, "checkBoxWeight") and ndxplorer.checkBoxWeight.isChecked():
+        name = ndxplorer.comboBoxWeight.currentText() if hasattr(ndxplorer, "comboBoxWeight") else ""
+        try:
+            weight = list(ndxplorer.data_source.parameter_names).index(name)
+        except (ValueError, AttributeError):
+            logging.warning("Weight parameter '%s' is not a column; not weighting.", name)
+
+    return HistogramAxes(
+        x=axis("x", x_idx, control.n_xhist_1d),
+        y=axis("y", y_idx, control.n_yhist_1d),
+        x2=axis("x", x_idx, control.n_xhist_2d),
+        y2=axis("y", y_idx, control.n_yhist_2d),
+        z=axis("z", z_idx, control.n_zhist_1d) if z_idx >= 0 else None,
+        weight=weight,
+    )
 
 
+def keep_mask(ndxplorer: "NDXplorer") -> Optional[np.ndarray]:
+    """The rows a redraw may use, or None for all of them.
 
+    The mask itself, not the row numbers it contains. An index array only means
+    anything alongside the array it indexes, and that is how a filtered weight
+    array came to be indexed by a global row number.
+    """
+    mask = ndxplorer.value_mask
+    return None if mask is None else ~mask
 
+def z_axis_available(ndxplorer) -> bool:
+    """Whether a usable third parameter is selected.
+
+    The combo always answers with *something* — an editable combo box has a
+    current index whatever the user has done — so "is a z parameter chosen" is
+    really "does the chosen index address a column of this table". Without the
+    second half a window whose data has fewer columns than the last one draws an
+    empty marginal under a stale label.
+    """
+    control = getattr(ndxplorer, "plot_control", None)
+    if control is None:
+        return False
+    try:
+        index = control.p3[0]
+    except Exception:
+        return False
+    if index is None or int(index) < 0:
+        return False
+    try:
+        return int(index) < len(ndxplorer.data_source.parameter_names)
+    except Exception:
+        return True

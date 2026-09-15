@@ -132,133 +132,12 @@ class LRUCache:
         }
 
 
-class HistogramCache:
-    """
-    Specialized cache for histogram computations.
-    
-    Uses content-aware hashing to detect when recomputation is needed.
-    Tracks data shape, bins, weights, and mask state.
-    """
-    
-    def __init__(self, max_memory_mb: float = 200.0):
-        self._cache = LRUCache(max_memory_mb=max_memory_mb, max_entries=50)
-    
-    def _make_key(
-        self,
-        data: np.ndarray,
-        bins: np.ndarray | int,
-        weights: Optional[np.ndarray] = None,
-        mask: Optional[np.ndarray] = None,
-        normed: bool = False,
-        histogram_type: str = '1d'
-    ) -> str:
-        """
-        Create cache key from histogram parameters.
-        
-        Uses fast hashing to avoid expensive comparisons.
-        """
-        h = hashlib.blake2b(digest_size=16)
-        
-        # Data shape and dtype
-        h.update(str(data.shape).encode())
-        h.update(str(data.dtype).encode())
-        
-        # Sample data hash (first/last/middle values for speed)
-        if data.size > 0:
-            indices = [0, data.size // 2, data.size - 1] if data.size > 2 else list(range(data.size))
-            sample = data.flat[indices]
-            h.update(sample.tobytes())
-        
-        # Bins
-        if isinstance(bins, (int, np.integer)):
-            h.update(str(bins).encode())
-        else:
-            h.update(bins.tobytes())
-        
-        # Weights
-        if weights is not None:
-            h.update(b'weighted')
-            if weights.size > 0:
-                indices = [0, weights.size // 2, weights.size - 1] if weights.size > 2 else list(range(weights.size))
-                sample = weights.flat[indices]
-                h.update(sample.tobytes())
-        
-        # Mask
-        if mask is not None:
-            h.update(b'masked')
-            h.update(str(np.sum(mask)).encode())
-        
-        # Other params
-        h.update(str(normed).encode())
-        h.update(histogram_type.encode())
-        
-        return h.hexdigest()
-    
-    def get_histogram_1d(
-        self,
-        data: np.ndarray,
-        bins: np.ndarray | int,
-        weights: Optional[np.ndarray] = None,
-        normed: bool = False,
-        mask: Optional[np.ndarray] = None,
-    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """Get cached 1D histogram if available."""
-        key = self._make_key(data, bins, weights, mask, normed, '1d')
-        return self._cache.get(key)
-    
-    def put_histogram_1d(
-        self,
-        data: np.ndarray,
-        bins: np.ndarray | int,
-        result: Tuple[np.ndarray, np.ndarray],
-        weights: Optional[np.ndarray] = None,
-        normed: bool = False,
-        mask: Optional[np.ndarray] = None,
-    ) -> None:
-        """Cache 1D histogram result."""
-        key = self._make_key(data, bins, weights, mask, normed, '1d')
-        self._cache.put(key, result)
-    
-    def get_histogram_2d(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        bins: list | Tuple,
-        weights: Optional[np.ndarray] = None,
-        normed: bool = False,
-        mask: Optional[np.ndarray] = None,
-    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        """Get cached 2D histogram if available."""
-        # Combine x and y for hashing
-        combined = np.column_stack([x, y])
-        bins_array = np.array(bins, dtype=object)
-        key = self._make_key(combined, bins_array, weights, mask, normed, '2d')
-        return self._cache.get(key)
-    
-    def put_histogram_2d(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        bins: list | Tuple,
-        result: Tuple[np.ndarray, np.ndarray, np.ndarray],
-        weights: Optional[np.ndarray] = None,
-        normed: bool = False,
-        mask: Optional[np.ndarray] = None,
-    ) -> None:
-        """Cache 2D histogram result."""
-        combined = np.column_stack([x, y])
-        bins_array = np.array(bins, dtype=object)
-        key = self._make_key(combined, bins_array, weights, mask, normed, '2d')
-        self._cache.put(key, result)
-    
-    def clear(self) -> None:
-        """Clear histogram cache."""
-        self._cache.clear()
-    
-    def stats(self) -> dict:
-        """Return cache statistics."""
-        return self._cache.stats()
-
+# HistogramCache stood here, keyed on three sampled values of the data (first,
+# middle, last) and on the number of points a gate kept -- so two datasets that
+# happened to agree at three positions shared a key, as did two gates keeping
+# the same count. Nothing ever put a histogram in it, and there is no histogram
+# to cache any more: a fill costs a few milliseconds, less than deciding
+# whether a cached one is still valid.
 
 class ComputationCache:
     """
@@ -271,31 +150,35 @@ class ComputationCache:
         self._cache = LRUCache(max_memory_mb=max_memory_mb, max_entries=100)
     
     def _make_key(self, func_name: str, args: tuple, kwargs: dict) -> str:
-        """Create cache key from function name and arguments."""
+        """Create a cache key from the function name and its arguments.
+
+        Arrays are hashed by their **contents**, positionally for args and by
+        name for kwargs. Neither used to be: an array argument contributed three
+        sampled values, and an array *keyword* argument contributed only its
+        shape and dtype -- so ``f(data, weights=w1)`` and ``f(data, weights=w2)``
+        were the same call as far as this cache was concerned, and the second
+        got the first one's answer.
+        """
         h = hashlib.blake2b(digest_size=16)
         h.update(func_name.encode())
-        
-        # Hash args
-        for arg in args:
-            if isinstance(arg, np.ndarray):
-                h.update(str(arg.shape).encode())
-                h.update(str(arg.dtype).encode())
-                if arg.size > 0:
-                    # Sample for speed
-                    indices = [0, arg.size // 2, arg.size - 1] if arg.size > 2 else list(range(arg.size))
-                    h.update(arg.flat[indices].tobytes())
+
+        def _digest(value) -> None:
+            if isinstance(value, np.ndarray):
+                h.update(b'ndarray')
+                h.update(str(value.shape).encode())
+                h.update(str(value.dtype).encode())
+                h.update(np.ascontiguousarray(value).tobytes())
             else:
-                h.update(str(arg).encode())
-        
-        # Hash kwargs
+                h.update(b'repr')
+                h.update(repr(value).encode())
+
+        for arg in args:
+            _digest(arg)
+
         for k, v in sorted(kwargs.items()):
             h.update(k.encode())
-            if isinstance(v, np.ndarray):
-                h.update(str(v.shape).encode())
-                h.update(str(v.dtype).encode())
-            else:
-                h.update(str(v).encode())
-        
+            _digest(v)
+
         return h.hexdigest()
     
     def memoize(self, func: Callable) -> Callable:
@@ -341,17 +224,14 @@ class CacheManager:
     
     def __init__(
         self,
-        histogram_memory_mb: float = 200.0,
         computation_memory_mb: float = 50.0,
         general_memory_mb: float = 50.0,
     ):
-        self.histogram_cache = HistogramCache(max_memory_mb=histogram_memory_mb)
         self.computation_cache = ComputationCache(max_memory_mb=computation_memory_mb)
         self.general_cache = LRUCache(max_memory_mb=general_memory_mb, max_entries=100)
     
     def clear_all(self) -> None:
         """Clear all caches."""
-        self.histogram_cache.clear()
         self.computation_cache.clear()
         self.general_cache.clear()
         logging.info("[CacheManager] All caches cleared")
@@ -359,7 +239,6 @@ class CacheManager:
     def stats(self) -> dict:
         """Return statistics for all caches."""
         return {
-            'histogram': self.histogram_cache.stats(),
             'computation': self.computation_cache.stats(),
             'general': self.general_cache.stats(),
         }

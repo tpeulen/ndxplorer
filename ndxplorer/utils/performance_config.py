@@ -25,37 +25,22 @@ class PerformanceConfig:
     
     Attributes
     ----------
-    use_bitfield_masks : bool
-        Use bitfield masks for 8x memory savings (default: auto-detect based on data size)
-    use_histogram_cache : bool
-        Cache histogram computations (default: True)
-    use_boost_histogram : bool
-        Use boost-histogram library when available (fastest, default: True)
     use_fast_histogram : bool
         Use optimized histogram implementation (default: True)
-    histogram_cache_memory_mb : float
-        Memory limit for histogram cache in MB (default: 200)
     general_cache_memory_mb : float
         Memory limit for general cache in MB (default: 50)
-    bitfield_threshold : int
-        Minimum number of points to use bitfield masks (default: 100000)
     parallel_histogram : bool
         Use parallel histogram computation (default: True)
     aggressive_caching : bool
         Enable aggressive caching for all operations (default: True)
     histogram_threads : int
-        Number of threads for boost-histogram (-1 for auto-detect, 0 or 1 for single-threaded, default: -1)
+        Threads for the histogram fill (-1 auto, 0 or 1 single-threaded, default: -1)
     plot_backend : str
         Plotting backend to use ('pyqtgraph', 'matplotlib', default: 'pyqtgraph')
     """
     
-    use_bitfield_masks: bool = True
-    use_histogram_cache: bool = True
-    use_boost_histogram: bool = True
     use_fast_histogram: bool = True
-    histogram_cache_memory_mb: float = 200.0
     general_cache_memory_mb: float = 50.0
-    bitfield_threshold: int = 100000
     parallel_histogram: bool = True
     aggressive_caching: bool = True
     histogram_threads: int = -1
@@ -65,13 +50,8 @@ class PerformanceConfig:
     def from_environment(cls) -> "PerformanceConfig":
         """Create configuration from environment variables with settings file overrides."""
         return cls(
-            use_bitfield_masks=_get_env_with_settings_override("NDXPLORER_USE_BITFIELD", True),
-            use_histogram_cache=_get_env_with_settings_override("NDXPLORER_USE_HISTOGRAM_CACHE", True),
-            use_boost_histogram=_get_env_with_settings_override("NDXPLORER_USE_BOOST_HISTOGRAM", True),
             use_fast_histogram=_get_env_with_settings_override("NDXPLORER_USE_FAST_HISTOGRAM", True),
-            histogram_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_HISTOGRAM_CACHE_MB", 200.0),
             general_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_GENERAL_CACHE_MB", 50.0),
-            bitfield_threshold=_get_int_env_with_settings_override("NDXPLORER_BITFIELD_THRESHOLD", 100000),
             parallel_histogram=_get_env_with_settings_override("NDXPLORER_PARALLEL_HISTOGRAM", True),
             aggressive_caching=_get_env_with_settings_override("NDXPLORER_AGGRESSIVE_CACHING", True),
             histogram_threads=_get_int_env_with_settings_override("NDXPLORER_HISTOGRAM_THREADS", -1),
@@ -82,13 +62,8 @@ class PerformanceConfig:
     def high_performance(cls) -> "PerformanceConfig":
         """Configuration optimized for maximum speed."""
         return cls(
-            use_bitfield_masks=True,
-            use_histogram_cache=True,
-            use_boost_histogram=True,
             use_fast_histogram=True,
-            histogram_cache_memory_mb=500.0,
             general_cache_memory_mb=100.0,
-            bitfield_threshold=50000,
             parallel_histogram=True,
             aggressive_caching=True,
             histogram_threads=-1,
@@ -99,13 +74,8 @@ class PerformanceConfig:
     def low_memory(cls) -> "PerformanceConfig":
         """Configuration optimized for low memory usage."""
         return cls(
-            use_bitfield_masks=True,
-            use_histogram_cache=True,
-            use_boost_histogram=True,
             use_fast_histogram=True,
-            histogram_cache_memory_mb=50.0,
             general_cache_memory_mb=20.0,
-            bitfield_threshold=200000,
             parallel_histogram=False,
             aggressive_caching=False,
             histogram_threads=1,
@@ -119,9 +89,7 @@ class PerformanceConfig:
     def log_config(self) -> None:
         """Log current configuration."""
         logging.info("[PerformanceConfig] Active settings:")
-        logging.info(f"  Bitfield masks: {self.use_bitfield_masks} (threshold: {self.bitfield_threshold})")
-        logging.info(f"  Histogram cache: {self.use_histogram_cache} ({self.histogram_cache_memory_mb} MB)")
-        logging.info(f"  Boost-histogram: {self.use_boost_histogram} (threads: {self.histogram_threads})")
+        logging.info(f"  Histogram threads: {self.histogram_threads}")
         logging.info(f"  Fast histogram: {self.use_fast_histogram}")
         logging.info(f"  Parallel histogram: {self.parallel_histogram}")
         logging.info(f"  Aggressive caching: {self.aggressive_caching}")

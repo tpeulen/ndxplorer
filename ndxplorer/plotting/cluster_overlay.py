@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 import numpy as np
+import tttrlib
 
 __all__ = [
     "CLUSTER_COLORS",
@@ -124,16 +125,21 @@ def cluster_rgb_image(
     if n_y < 1 or n_x < 1:
         return None
 
-    present = np.unique(labels)
-    # One histogram per cluster, stacked so the dominant cluster of each bin is
-    # an argmax rather than a per-bin mode over the raw points.
-    stack = np.zeros((present.size, n_y, n_x), dtype=np.float64)
-    for i, label in enumerate(present):
-        mask = labels == label
-        counts, _, _ = np.histogram2d(
-            y[mask], x[mask], bins=(y_edges, x_edges)
-        )
-        stack[i] = counts
+    present, codes = np.unique(labels, return_inverse=True)
+    # One rank-3 histogram -- cluster, y, x -- rather than one 2-D histogram per
+    # cluster. The stack is the same array either way; the difference is that
+    # this reads the coordinates once instead of once per cluster, which for the
+    # forty-odd clusters a burst dataset produces is forty passes over a few
+    # million points to build a picture that is 256 x 256.
+    axes = tttrlib.AxisVector([
+        tttrlib.Axis.integer(0, present.size, tttrlib.AxisOptions(), "cluster"),
+        tttrlib.Axis.variable(y_edges, tttrlib.AxisOptions(), "y"),
+        tttrlib.Axis.variable(x_edges, tttrlib.AxisOptions(), "x"),
+    ])
+    histogram = tttrlib.HistogramNd(axes)
+    histogram.fill(np.ascontiguousarray(codes, dtype=np.float64),
+                   np.ascontiguousarray(y), np.ascontiguousarray(x))
+    stack = np.asarray(histogram.view(), dtype=np.float64)
 
     total = stack.sum(axis=0)
     occupied = total > 0
