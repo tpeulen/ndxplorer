@@ -34,9 +34,7 @@ dependencies = [
     "qtpy",
     "PyQt5",
     "pyqtgraph",
-    "tables",
     "PyYAML",
-    "pandas>=1.5.0",
     "click>=8.0.0",
     # Mask images (ndxplorer.utils.mask_helpers) are TIFF, read and written
     # with tttrlib's bundled libtiff -- ndxplorer is a TTTR explorer, so that is
@@ -47,7 +45,7 @@ dependencies = [
     # ChiSurf. Not an optional integration: region/lasso gates are
     # `chisurf.core.roi` shapes (ndxplorer.core.region_selection), the parameter
     # and constants tables are `chisurf.core.fitting.parameter` groups, and the
-    # data-frame editor, curve-fit dialog and glyphs come from `chisurf.gui`.
+    # table editor, curve-fit dialog and glyphs come from `chisurf.gui`.
     # It was used in all of those places and declared in none, so a clean
     # install imported fine and then raised ModuleNotFoundError the first time
     # somebody drew a lasso.

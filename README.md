@@ -33,7 +33,8 @@ ndxplorer can be used as a standalone application or integrated into other softw
 ndXplorer requires the following dependencies:
 * Python
 * PyQt and QtPy (for GUI)
-* NumPy, pandas, scipy (for data handling and computation)
+* tttrlib (the table: reading, writing, gating and histogramming)
+* NumPy, scipy (for computation)
 * matplotlib and PyQtGraph (for plotting)
 * UMAP-learn (for dimensionality reduction)
 * HDBSCAN and scikit-learn (for clustering)

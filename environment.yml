@@ -8,7 +8,6 @@ dependencies:
   - pyqt
   - numpy
   - pyyaml
-  - pandas
   - pyqtgraph
   - pathlib2
   - typing-extensions

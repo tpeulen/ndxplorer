@@ -11,7 +11,7 @@ This file is the one place that says so out loud. It is a single named failure
 that points at the cause, rather than a silence spread across a dozen files.
 ChiSurf is a declared dependency in ``pyproject.toml`` -- region and lasso gates
 are ``chisurf.core.roi`` shapes, the parameter and constants tables are
-``chisurf.core.fitting.parameter`` groups, the data-frame editor and glyphs come
+``chisurf.core.fitting.parameter`` groups, the table editor and glyphs come
 from ``chisurf.gui`` -- so a run without it is a broken environment, not a
 supported configuration.
 
@@ -40,7 +40,7 @@ REQUIRED = {
 def test_chisurf_is_declared_in_pyproject():
     """The dependency has to be written down, not just used.
 
-    It was used by the ROI gates, the parameter tables, the data-frame editor,
+    It was used by the ROI gates, the parameter tables, the table editor,
     the curve-fit dialog and the glyphs, and named in no dependency list -- so a
     clean install imported fine and raised the first time somebody drew a lasso.
     """
@@ -96,3 +96,54 @@ def test_the_region_gate_path_really_is_live():
     assert excluded.shape == (2, 2)
     assert not excluded[0, 0], "a point inside the rectangle was excluded"
     assert excluded[0, 1], "a point outside the rectangle was kept"
+
+
+#: Libraries ndXplorer does not use: the table is a ``tttrlib.DataStore`` and
+#: every read, write, gate and histogram goes through tttrlib.
+FORBIDDEN = ("pandas", "pyarrow", "numba")
+
+
+def _python_files():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    for folder in ("ndxplorer", "test", "tests", "tools"):
+        yield from sorted((root / folder).rglob("*.py"))
+
+
+@pytest.mark.parametrize("library", FORBIDDEN)
+def test_a_forbidden_library_is_imported_nowhere(library):
+    """No module, test or tool imports it, not even lazily inside a function."""
+    import ast
+    import warnings
+
+    offenders = []
+    for path in _python_files():
+        with warnings.catch_warnings():
+            # A module's own invalid escape sequences are not this test's subject.
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            else:
+                continue
+            if any(name == library or name.startswith(library + ".") for name in names):
+                offenders.append(f"{path}:{node.lineno}")
+    assert not offenders, f"{library} is imported in: " + ", ".join(offenders)
+
+
+@pytest.mark.parametrize("library", FORBIDDEN)
+def test_a_forbidden_library_is_not_declared(library):
+    root = pathlib.Path(__file__).resolve().parents[2]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text())
+    names = {entry.split()[0].split(">")[0].split("=")[0].split("[")[0].lower()
+             for entry in metadata["project"]["dependencies"]}
+    assert library not in names
+    recipe = (root / "conda-recipe" / "meta.yaml").read_text()
+    environment = (root / "environment.yml").read_text()
+    for text in (recipe, environment):
+        entries = {line.strip().lstrip("-").split()[0].lower()
+                   for line in text.splitlines()
+                   if line.strip().startswith("- ") and len(line.strip()) > 2}
+        assert library not in entries
