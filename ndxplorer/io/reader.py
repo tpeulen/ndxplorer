@@ -24,17 +24,7 @@ except Exception:  # pragma: no cover
 from ..core.data_source import DataSource
 from ..settings import get_settings_path, ensure_default_settings
 
-# PyArrow support for faster CSV reading
-try:
-    import pyarrow as pa
-    import pyarrow.csv as pa_csv
-    import pyarrow.compute as pc
-    HAVE_PYARROW = True
-except ImportError:
-    pa = None
-    pa_csv = None
-    pc = None
-    HAVE_PYARROW = False
+import tttrlib
 
 try:
     from qtpy.QtWidgets import QApplication, QMessageBox
@@ -148,124 +138,45 @@ def _zip_contains_any(zip_path: str, exts: tuple[str, ...]) -> bool:
         return False
 
 
-# ----------------------------- PyArrow fast readers ---------------------------
+# ------------------------------- fast table read ------------------------------
 
-def read_csv_pyarrow(
+
+def read_table_tttrlib(
     path: Union[str, pathlib.Path],
-    delimiter: str = ',',
+    delimiter: str = ",",
     has_header: bool = True,
-    skip_rows: int = 0,
-) -> pd.DataFrame:
+) -> Optional[pd.DataFrame]:
+    """Read a delimited text table with tttrlib's threaded CSV reader.
+
+    Returns ``None`` when the file is not one this reader handles, which is the
+    caller's signal to use pandas. That is not a fallback engine kept around in
+    parallel -- it is the general reader for the files this one deliberately
+    does not do: decimal commas, whitespace alignment, skipped preamble lines,
+    embedded newlines. The point of the fast path is to be fast on the burst
+    tables that actually get opened, and the point of naming its limits is that
+    a caller can tell which one it got.
+
+    The columns come back as views into the store rather than as copies, so the
+    frame this returns costs the parse and nothing else.
     """
-    Read CSV file using PyArrow for maximum speed.
-    
-    This is 2-5x faster than pandas for large files due to:
-    - Multi-threaded parsing
-    - Efficient memory allocation
-    - Zero-copy string handling
-    
-    Falls back to pandas if PyArrow fails or is unavailable.
-    """
-    import time
-    t0 = time.perf_counter()
-    
-    if not HAVE_PYARROW:
-        logging.info("[read_csv_pyarrow] PyArrow not available, falling back to pandas")
-        return pd.read_csv(path, sep=delimiter, header=0 if has_header else None, skiprows=skip_rows)
-    
     try:
-        # Configure for maximum read speed
-        read_options = pa_csv.ReadOptions(
-            use_threads=True,
-            block_size=1024 * 1024 * 32,  # 32MB blocks
-            skip_rows=skip_rows,
-        )
-        
-        parse_options = pa_csv.ParseOptions(
-            delimiter=delimiter,
-        )
-        
-        # Auto-detect column types, treating nulls appropriately
-        convert_options = pa_csv.ConvertOptions(
-            strings_can_be_null=True,
-            null_values=['', 'NA', 'N/A', 'NaN', 'nan', 'null', 'NULL', '#N/A'],
-            true_values=['true', 'True', 'TRUE', '1'],
-            false_values=['false', 'False', 'FALSE', '0'],
-        )
-        
-        if not has_header:
-            read_options.autogenerate_column_names = True
-        
-        table = pa_csv.read_csv(
-            path,
-            read_options=read_options,
-            parse_options=parse_options,
-            convert_options=convert_options,
-        )
-        
-        t1 = time.perf_counter()
-        
-        # Convert to pandas DataFrame
-        df = table.to_pandas(
-            self_destruct=True,  # Free Arrow memory immediately
-            split_blocks=True,   # Better memory layout
-            zero_copy_only=False,
-        )
-        
-        t2 = time.perf_counter()
-        logging.info("[read_csv_pyarrow] %d rows: arrow_read=%.2fs, to_pandas=%.2fs",
-                     len(df), t1 - t0, t2 - t1)
-        
-        return df
-        
-    except Exception as e:
-        logging.warning("[read_csv_pyarrow] PyArrow failed: %s. Falling back to pandas.", e)
-        return pd.read_csv(path, sep=delimiter, header=0 if has_header else None, skiprows=skip_rows)
+        store = tttrlib.read_csv(str(path), delimiter=delimiter,
+                                 has_header=has_header, use_float32=True)
+    except Exception as exc:
+        logging.info("[read] tttrlib.read_csv declined %s (%s)",
+                     pathlib.Path(path).name, exc)
+        return None
 
-
-def read_csv_fast(
-    path: Union[str, pathlib.Path],
-    **kwargs,
-) -> pd.DataFrame:
-    """
-    Read CSV with automatic engine selection for best performance.
-    
-    Uses PyArrow when:
-    - File is large (> 10MB)
-    - No complex parsing options needed
-    
-    Falls back to pandas C engine otherwise.
-    """
-    path = pathlib.Path(path)
-    file_size = path.stat().st_size if path.exists() else 0
-    
-    # Use PyArrow for files > 10MB when available
-    use_pyarrow = (
-        HAVE_PYARROW
-        and file_size > 10 * 1024 * 1024
-        and not kwargs.get('decimal')  # PyArrow doesn't support decimal param
-        and not kwargs.get('converters')
-        and not kwargs.get('dtype')
-    )
-    
-    if use_pyarrow:
-        delimiter = kwargs.get('sep', kwargs.get('delimiter', ','))
-        has_header = kwargs.get('header', 0) == 0
-        skip_rows = kwargs.get('skiprows', 0)
-        if isinstance(skip_rows, list):
-            skip_rows = 0  # PyArrow doesn't support list skiprows
-            use_pyarrow = False
-        
-        if use_pyarrow:
-            try:
-                return read_csv_pyarrow(path, delimiter=delimiter, has_header=has_header, skip_rows=skip_rows)
-            except Exception as e:
-                logging.warning("[read_csv_fast] PyArrow fallback triggered: %s", e)
-    
-    # Fall back to pandas
-    return pd.read_csv(path, **kwargs)
-
-
+    columns = {}
+    for i in range(store.n_columns()):
+        column = store[i]
+        name = column.name()
+        # A duplicate header name would silently drop a column here, so make it
+        # unique the way pandas does rather than losing one.
+        if name in columns:
+            name = "%s.%d" % (name, i)
+        columns[name] = column.numpy()
+    return pd.DataFrame(columns, copy=False)
 
 
 def _get_burst_additional_endings() -> List[str]:
@@ -976,15 +887,57 @@ def read_ensemble_sampling_hdf5(filenames: Union[str, List[str]]) -> DataSource:
     return DataSource(data=combined)
 
 
-def read_mfd_hdf5(filenames: List[str]) -> DataSource:
+def read_hdf5_store(filename: Union[str, pathlib.Path], group: str = "/"):
+    """A columnar HDF5 table as a :class:`tttrlib.DataStore`, or ``None``.
+
+    The short path, and the one chisurf writes for: an HDF5 group holding one
+    1-D dataset per column is the layout a DataStore already has, so the file
+    becomes the store the gates are evaluated in and the histograms fill out of
+    -- with no DataFrame in between, no conversion, and no second copy of the
+    table at the moment it is largest. Types survive too: a float32 column stays
+    float32 and an integer column stays an integer.
+
+    ``None`` means the file is not that shape -- a pandas HDFStore table, a
+    Photon-HDF5 measurement -- and the caller reads it the long way. Returning
+    None rather than raising is what keeps the two readable side by side.
+    """
+    try:
+        columns = tttrlib.read_hdf5_table_columns(str(filename), group)
+    except Exception as exc:
+        logging.debug("[read] not a columnar HDF5 table (%s)", exc)
+        return None
+    if len(columns) < 1:
+        return None
+    try:
+        store = tttrlib.read_hdf5(str(filename), group)
+    except Exception as exc:
+        logging.info("[read] tttrlib declined %s (%s)",
+                     pathlib.Path(filename).name, exc)
+        return None
+    return store if store.n_rows() > 0 else None
+
+
+def read_mfd_hdf5(filenames: List[str], merge_mode: str = "columns") -> DataSource:
     """
     Read MFD HDF5 files (supports zipped HDF5).
     If a .zip has no .h5/.hdf5, fallback to read_burst_analysis(zip).
+
+    :param merge_mode: how several files combine -- "columns" puts them
+        side by side (they describe the same bursts), "rows" stacks them (they
+        are separate measurements). Same meaning as everywhere else.
     """
     if not filenames:
         return DataSource()
 
     first = str(filenames[0])
+
+    # One file, written column per column: it IS a store, so take it as one.
+    if len(filenames) == 1 and not first.lower().endswith(".zip"):
+        store = read_hdf5_store(first)
+        if store is not None:
+            logging.info("[read] %s: %d rows x %d columns straight into a store",
+                         pathlib.Path(first).name, store.n_rows(), store.n_columns())
+            return DataSource.from_store(store)
 
     if first.lower().endswith(".zip") and not _zip_contains_any(first, _HDF5_EXTS):
         logging.info("No HDF5 in zip; treating as burst analysis: %s", first)
@@ -1005,9 +958,17 @@ def read_mfd_hdf5(filenames: List[str]) -> DataSource:
     combined = base_df.copy()
     for fn in filenames[1:]:
         df = read_hdf5_file(fn)
+        if merge_mode == "rows":
+            common = sorted(set(combined.columns).intersection(df.columns))
+            if not common:
+                _safe_warning("No Common Columns",
+                              f"{fn} shares no columns with the first file. Skipping.")
+                continue
+            combined = pd.concat([combined[common], df[common]], axis=0,
+                                 ignore_index=True)
+            continue
         if len(df) != row_count:
-            QMessageBox.warning(
-                None,
+            _safe_warning(
                 "Row Count Mismatch",
                 f"File {fn} has {len(df)} rows, expected {row_count}. Skipping."
             )
@@ -1288,20 +1249,19 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
             kwargs = _detect_and_build_kwargs(head)
     
     def _load_with_kwargs(read_kwargs: Dict) -> pd.DataFrame:
-        engine_local = read_kwargs.get("engine", "c")
-        if engine_local == "pyarrow":
-            # Use chunksize for large files to reduce memory pressure
-            try:
-                file_size = path.stat().st_size
-                if file_size > 100 * 1024 * 1024:
-                    chunks = pd.read_csv(path, chunksize=100000, **read_kwargs)
-                    return pd.concat(chunks, ignore_index=True)
-                return pd.read_csv(path, **read_kwargs)
-            except Exception:
-                # Fallback to regular read if chunked fails
-                return pd.read_csv(path, **read_kwargs)
+        # Read, not pop: the same kwargs dict is cached and reused for every
+        # further file of this format, so consuming the flag here would send
+        # all but the first through pandas.
+        if read_kwargs.get("_tttrlib", False):
+            frame = read_table_tttrlib(
+                path,
+                delimiter=read_kwargs.get("sep", ","),
+                has_header=read_kwargs.get("header", 0) == 0,
+            )
+            if frame is not None:
+                return frame
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return pd.read_csv(f, **read_kwargs)
+            return pd.read_csv(f, **_pandas_kwargs(read_kwargs))
 
     def _drop_trailing_empty_columns(frame: pd.DataFrame) -> pd.DataFrame:
         if frame.empty or frame.shape[1] == 0:
@@ -1336,14 +1296,6 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
             df = _load_with_kwargs(kwargs)
             break
         except Exception as exc:
-            if kwargs.get("engine") == "pyarrow":
-                logging.warning("[read] PyArrow failed for %s (%s). Falling back to pandas engine.",
-                                path.name, exc)
-                kwargs = kwargs.copy()
-                kwargs["engine"] = "c"
-                kwargs.setdefault("skipinitialspace", True)
-                _update_cache(kwargs)
-                continue
             if cached_kwargs is not None:
                 logging.warning("[read] Cached format failed for %s (%s). Re-detecting format.",
                                 path.name, exc)
@@ -1360,41 +1312,6 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
         logging.debug("[read] Width reduced from %d to %d after dropping empty column(s)",
                      before_drop_cols, df.shape[1])
 
-    engine = kwargs.get("engine", "c")
-    
-    # For pyarrow, convert object columns to numeric if possible - OPTIMIZED
-    if engine == "pyarrow":
-        object_cols_before = df.select_dtypes(include=['object']).columns
-        if len(object_cols_before) > 0:
-            logging.debug("[read] PyArrow left %d object columns, attempting conversion", len(object_cols_before))
-            
-            # Pre-filter filename columns faster with vectorized operations
-            filename_cols = []
-            if len(object_cols_before) > 0:
-                # Vectorized check for filename keywords
-                col_names_lower = np.array([str(col).lower() for col in object_cols_before])
-                filename_mask = np.array([any(keyword in name for keyword in ['file', 'path', 'name', 'directory']) for name in col_names_lower])
-                filename_cols = list(object_cols_before[filename_mask])
-                if filename_cols:
-                    logging.debug("[read] Skipping filename columns: %s", filename_cols)
-            
-            # Convert only non-filename columns in batch for better performance
-            cols_to_convert = [col for col in object_cols_before if col not in filename_cols]
-            if cols_to_convert:
-                # Use pandas' built-in convert_dtypes for faster batch conversion
-                try:
-                    # First try pandas' optimized conversion
-                    df[cols_to_convert] = df[cols_to_convert].convert_dtypes(convert_integer=False, convert_floating=True, convert_string=False)
-                    # Then force numeric conversion for remaining object columns
-                    for col in cols_to_convert:
-                        if df[col].dtype == 'object':
-                            df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
-                except Exception:
-                    # Fallback to individual conversion
-                    for col in cols_to_convert:
-                        df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
-    t1_post_convert = _time.perf_counter()
-    
     object_cols = df.select_dtypes(include=['object']).columns
     has_object_cols = len(object_cols) > 0
     
@@ -1418,8 +1335,9 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
         logging.debug("[read] Skipping post-processing - no object columns")
     t2 = _time.perf_counter()
     
-    logging.debug("[read] %d rows, pd.read_csv=%.2fs, convert=%.2fs, post_process=%.2fs, object_cols=%d",
-                 len(df), t1 - t0, t1_post_convert - t1, t2 - t2_start, len(df.select_dtypes(include=['object']).columns))
+    logging.debug("[read] %d rows, parse=%.2fs, post_process=%.2fs, object_cols=%d",
+                 len(df), t1 - t0, t2 - t2_start,
+                 len(df.select_dtypes(include=['object']).columns))
     
     return df
 
@@ -1639,22 +1557,16 @@ def _detect_and_build_kwargs(lines: List[str]) -> Dict:
         sep_show = "<whitespace>"
     else:
         kwargs["sep"] = delim
-        # Use pyarrow engine for speed if available and compatible
-        # pyarrow doesn't support: decimal comma, skiprows, skipinitialspace
-        can_use_pyarrow = (
+        kwargs["engine"] = "c"
+        # tttrlib's threaded reader handles a plain delimited file with its
+        # header on the first line. Not a decimal comma, not a skipped preamble,
+        # not whitespace alignment -- those go to pandas, which is the general
+        # reader, and the flag is what says which one a file got.
+        kwargs["_tttrlib"] = (
             not dec_comma
             and first_idx == 0
             and use_header_idx in (None, 0)
         )
-        if can_use_pyarrow:
-            try:
-                import pyarrow  # noqa: F401
-                kwargs["engine"] = "pyarrow"
-                kwargs.pop("skipinitialspace", None)  # not supported by pyarrow
-            except ImportError:
-                kwargs["engine"] = "c"
-        else:
-            kwargs["engine"] = "c"
         sep_show = repr(delim)
 
     if dec_comma:
