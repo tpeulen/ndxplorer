@@ -20,7 +20,6 @@ Three levels, deliberately:
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from ndxplorer.analysis.clustering import ClusteringManager
@@ -48,13 +47,12 @@ def blob_source():
     """A DataSource holding three blobs plus a pure-noise column."""
     data, truth = three_blobs()
     rng = np.random.default_rng(7)
-    frame = pd.DataFrame({
+    return DataSource.from_columns({
         "x": data[:, 0],
         "y": data[:, 1],
         "noise": rng.normal(0.0, 1.0, data.shape[0]),
         "truth": truth,
     })
-    return DataSource(list(frame.columns), frame)
 
 
 def purity(labels, truth):
@@ -259,20 +257,12 @@ def test_pca_reports_rather_than_only_projects():
 def test_pca_needs_at_least_two_columns():
     """One column has no components to find; say so rather than return garbage."""
 
-    class _Stub:
-        def __init__(self, frame):
-            self.data = frame
-            self.empty = False
-
     class _Explorer:
-        # ``data_source`` is the public property the helpers read; the private
-        # field is a leftover of the half-finished DataManager refactor and
-        # stays empty on a real window.
-        def __init__(self, frame):
-            self.data_source = _Stub(frame)
+        def __init__(self, source):
+            self.data_source = source
 
-    frame = pd.DataFrame({"only": np.arange(10.0)})
-    assert add_pca_columns(_Explorer(frame), ["only", "missing"]) is None
+    source = DataSource.from_columns({"only": np.arange(10.0)})
+    assert add_pca_columns(_Explorer(source), ["only", "missing"]) is None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -293,19 +283,18 @@ def test_pca_columns_land_in_the_data_source(blob_source):
     result = add_pca_columns(explorer, ["x", "y", "noise"], n_components=2)
 
     assert result is not None
-    frame = explorer.data_source.data
-    assert "PC_1" in frame.columns and "PC_2" in frame.columns
-    assert len(frame["PC_1"]) == len(frame["x"])
-    assert np.isfinite(frame["PC_1"].values).all()
+    source = explorer.data_source
+    assert "PC_1" in source.parameter_names and "PC_2" in source.parameter_names
+    assert len(source.column_values("PC_1")) == len(source.column_values("x"))
+    assert np.isfinite(source.column_values("PC_1")).all()
     assert explorer.refreshed, "the axis combo boxes were never refreshed"
 
 
 def test_pca_separates_the_blobs_it_was_given(blob_source):
     """The projection has to preserve the structure, not merely run."""
-    frame = blob_source.data
-    data = np.column_stack([frame["x"].values, frame["y"].values])
+    data = np.column_stack([blob_source.column_values("x"), blob_source.column_values("y")])
     result = compute_pca(data, ["x", "y"], n_components=2)
-    truth = frame["truth"].values.astype(int)
+    truth = blob_source.column_values("truth").astype(int)
 
     # Cluster the projection: the three blobs must survive the transform.
     labels, _ = ClusteringManager().perform_clustering(

@@ -51,16 +51,13 @@ def axes_look_like_phasor(ndx: Any) -> bool:
 
 def find_column(ndx: Any, token: str) -> Optional[np.ndarray]:
     """Return the first data column whose leading token equals ``token`` (or ``None``)."""
-    try:
-        df = ndx.data_source.data
-    except Exception:
-        return None
-    if df is None or len(df.columns) == 0:
+    source = getattr(ndx, "data_source", None)
+    if source is None:
         return None
     token = token.lower()
-    for col in df.columns:
+    for col in source.parameter_names:
         if _axis_token(col) == token:
-            return np.asarray(df[col].values, dtype=float)
+            return source.column_values(col)
     return None
 
 
@@ -310,12 +307,10 @@ def compute_apparent_lifetime_columns(ndx: Any, frequency_mhz: float = 80.0) -> 
 
 def inject_columns(ndx: Any, columns: dict[str, Any]) -> list[str]:
     """Merge new named columns into the ndX ``DataSource`` and refresh the axis lists."""
-    import pandas as pd
-
     from .core.data_source import DataSource
 
-    df = pd.DataFrame({k: np.asarray(v, dtype=float) for k, v in columns.items()})
-    new_ds = DataSource(data=df)
+    new_ds = DataSource.from_columns(
+        {k: np.asarray(v, dtype=float) for k, v in columns.items()})
     if not ndx.data_source.merge(new_ds, mode="columns"):
         return []
     try:
@@ -326,4 +321,4 @@ def inject_columns(ndx: Any, columns: dict[str, Any]) -> list[str]:
         ndx.update_parameter_names()
     except Exception:
         pass
-    return list(df.columns)
+    return list(new_ds.parameter_names)

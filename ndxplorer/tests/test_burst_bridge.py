@@ -2,7 +2,6 @@
 from collections import OrderedDict
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from ndxplorer.analysis.burst_bridge import (
@@ -10,33 +9,30 @@ from ndxplorer.analysis.burst_bridge import (
     BurstBridgeError,
     selection_to_burst_slices,
 )
+from ndxplorer.core.data_source import DataSource
 
 
-def _burst_frame():
+def _burst_columns(drop=()):
     """Six bursts over two files; the last straddles two files (must be dropped)."""
-    return pd.DataFrame(
-        {
-            "First File": ["a.ptu", "a.ptu", "a.ptu", "b.ptu", "b.ptu", "a.ptu"],
-            "Last File": ["a.ptu", "a.ptu", "a.ptu", "b.ptu", "b.ptu", "b.ptu"],
-            "First Photon": [0, 100, 200, 0, 50, 300],
-            "Last Photon": [40, 140, 260, 30, 90, 360],
-            "E": [0.1, 0.5, 0.5, 0.9, 0.5, 0.5],
-        }
-    )
+    columns = {
+        "First File": ["a.ptu", "a.ptu", "a.ptu", "b.ptu", "b.ptu", "a.ptu"],
+        "Last File": ["a.ptu", "a.ptu", "a.ptu", "b.ptu", "b.ptu", "b.ptu"],
+        "First Photon": np.array([0, 100, 200, 0, 50, 300], dtype=np.int64),
+        "Last Photon": np.array([40, 140, 260, 30, 90, 360], dtype=np.int64),
+        "E": np.array([0.1, 0.5, 0.5, 0.9, 0.5, 0.5]),
+    }
+    return {k: v for k, v in columns.items() if k not in drop}
 
 
-class _FakeDataSource:
-    """Minimal data source: a frame plus a prescribed exclusion mask."""
+class _FakeDataSource(DataSource):
+    """A burst table whose gates exclude a prescribed set of rows."""
 
-    def __init__(self, df, excluded_rows=()):
-        self.data = df
-        # get_mask returns (n_param, n_pts) with True = excluded.
+    def __init__(self, columns, excluded_rows=()):
+        super().__init__(DataSource.from_columns(columns).store)
         self._excluded = set(excluded_rows)
 
-    def get_mask(self, selections):
-        n = len(self.data)
-        row = np.array([i in self._excluded for i in range(n)], dtype=bool)
-        return np.vstack([row, row])  # 2 "parameters" — collapsed by the bridge
+    def selection_mask(self, selections, idxs=(), mask_nan=True, mask_inf=True):
+        return np.array([i not in self._excluded for i in range(self.size)], dtype=bool)
 
 
 class _FakeRpc:
@@ -74,7 +70,7 @@ class _FakeRpc:
 # -- selection_to_burst_slices ------------------------------------------------
 
 def test_no_selection_keeps_all_single_file_bursts():
-    ds = _FakeDataSource(_burst_frame())
+    ds = _FakeDataSource(_burst_columns())
     slices = selection_to_burst_slices(ds, ())
     assert list(slices) == ["a.ptu", "b.ptu"]          # file order preserved
     assert slices["a.ptu"] == [(0, 40), (100, 140), (200, 260)]  # row 5 straddles -> dropped
@@ -82,28 +78,27 @@ def test_no_selection_keeps_all_single_file_bursts():
 
 
 def test_gate_excludes_masked_rows():
-    ds = _FakeDataSource(_burst_frame(), excluded_rows={1, 4})
+    ds = _FakeDataSource(_burst_columns(), excluded_rows={1, 4})
     slices = selection_to_burst_slices(ds, [object()])  # non-empty -> mask applied
     assert slices["a.ptu"] == [(0, 40), (200, 260)]    # row 1 gone
     assert slices["b.ptu"] == [(0, 30)]                # row 4 gone
 
 
 def test_missing_provenance_column_raises():
-    df = _burst_frame().drop(columns=["Last Photon"])
-    ds = _FakeDataSource(df)
+    ds = _FakeDataSource(_burst_columns(drop=["Last Photon"]))
     with pytest.raises(BurstBridgeError):
         selection_to_burst_slices(ds, ())
 
 
 def test_empty_frame_returns_empty():
-    ds = _FakeDataSource(pd.DataFrame())
+    ds = _FakeDataSource({})
     assert selection_to_burst_slices(ds, ()) == OrderedDict()
 
 
 # -- BurstAnalysisBridge dispatch --------------------------------------------
 
 def test_bridge_unavailable_without_rpc():
-    bridge = BurstAnalysisBridge(None, _FakeDataSource(_burst_frame()))
+    bridge = BurstAnalysisBridge(None, _FakeDataSource(_burst_columns()))
     assert not bridge.available()
     with pytest.raises(BurstBridgeError):
         bridge.send_to_correlator([], pairs=[])
@@ -111,7 +106,7 @@ def test_bridge_unavailable_without_rpc():
 
 def test_correlator_one_call_per_file():
     rpc = _FakeRpc()
-    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_frame()))
+    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_columns()))
     out = bridge.send_to_correlator((), pairs=[{"ch1": [0], "ch2": [1]}], settings={"n_casc": 20})
     assert [m for m, _ in rpc.calls] == ["burst_fcs.correlate_file", "burst_fcs.correlate_file"]
     first = rpc.calls[0][1]
@@ -124,7 +119,7 @@ def test_correlator_one_call_per_file():
 
 def test_pda_single_call_with_burst_slices():
     rpc = _FakeRpc()
-    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_frame()))
+    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_columns()))
     bridge.send_to_pda((), n_bins=81, green_channels=[0])
     assert len(rpc.calls) == 1
     method, params = rpc.calls[0]
@@ -135,7 +130,7 @@ def test_pda_single_call_with_burst_slices():
 
 def test_generic_send_per_file_and_single():
     rpc = _FakeRpc()
-    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_frame()))
+    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_columns()))
     bridge.send_to("burst_mle.decays", (), per_file=True, model="fit23")
     assert all(m == "burst_mle.decays" for m, _ in rpc.calls)
     assert rpc.calls[0][1]["tttr_path"] == "a.ptu" and rpc.calls[0][1]["model"] == "fit23"
@@ -146,13 +141,13 @@ def test_generic_send_per_file_and_single():
 
 def test_rpc_error_is_raised():
     rpc = _FakeRpc(ok=False)
-    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_frame()))
+    bridge = BurstAnalysisBridge(rpc, _FakeDataSource(_burst_columns()))
     with pytest.raises(BurstBridgeError, match="boom"):
         bridge.send_to_pda(())
 
 
 def test_empty_selection_result_raises():
-    ds = _FakeDataSource(_burst_frame(), excluded_rows=set(range(6)))
+    ds = _FakeDataSource(_burst_columns(), excluded_rows=set(range(6)))
     bridge = BurstAnalysisBridge(_FakeRpc(), ds)
     with pytest.raises(BurstBridgeError, match="empty"):
         bridge.send_to_pda([object()])
@@ -162,11 +157,9 @@ def test_empty_selection_result_raises():
 
 def test_matches_save_burst_ids_writer(tmp_path):
     """selection_to_burst_slices must reproduce what the .bst writer emits."""
-    from ndxplorer.core.data_source import DataSource
     from ndxplorer.io.writer import save_burst_ids_headless
 
-    df = _burst_frame()
-    ds = DataSource(parameter_names=list(df.columns), data=df)
+    ds = DataSource.from_columns(_burst_columns())
     save_burst_ids_headless(str(tmp_path), selections=[], data_source=ds)
 
     slices = selection_to_burst_slices(ds, ())

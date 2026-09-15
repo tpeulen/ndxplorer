@@ -31,7 +31,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
-import pandas as pd
 
 from ..logging_config import logging
 from ..utils.lazy_imports import get_pca
@@ -264,12 +263,13 @@ def add_pca_columns(
         logging.error("No data available for PCA.")
         return None
 
-    df = ndxplorer.data_source.data
+    source = ndxplorer.data_source
     used: List[str] = []
     selected: List[np.ndarray] = []
     for column in columns:
-        if column in df.columns:
-            selected.append(pd.to_numeric(df[column], errors="coerce").values)
+        values = source.column_values(column)
+        if values is not None:
+            selected.append(values)
             used.append(column)
         else:
             logging.warning("PCA: column '%s' is not in the table; skipping.", column)
@@ -285,10 +285,7 @@ def add_pca_columns(
         return None
 
     for i in range(result.n_components):
-        df[f"PC_{i + 1}"] = result.projections[:, i]
-    # One assignment: the setter reconverts the frame, so doing it per column
-    # would pay that cost n times over.
-    ndxplorer.data_source.data = df
+        source.set_column(f"PC_{i + 1}", result.projections[:, i])
     try:
         ndxplorer.refresh_axis_comboboxes_preserving_selection()
     except Exception:  # pragma: no cover - headless use has no combo boxes

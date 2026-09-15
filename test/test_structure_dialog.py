@@ -14,7 +14,6 @@ chosen one.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
@@ -45,14 +44,13 @@ def explorer(qt_app):
 
     rng = np.random.default_rng(3)
     n = 1500
-    frame = pd.DataFrame({
+    window = NDXplorer(data_source=DataSource.from_columns({
         "Tau (green)": np.concatenate([
             rng.normal(4.1, 0.15, n), rng.normal(2.0, 0.15, n)]),
         "Proximity ratio": np.concatenate([
             rng.normal(0.15, 0.04, n), rng.normal(0.62, 0.04, n)]),
         "r Experimental (green)": rng.normal(0.10, 0.02, 2 * n),
-    })
-    window = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    }))
     yield window
     window.close()
 
@@ -70,7 +68,7 @@ def dialog(explorer, qt_app):
 
     clustering_helpers.ensure_dialog(explorer)
     dlg = explorer.clustering_dialog
-    dlg._cluster_columns = set(explorer.data_source.data.columns)
+    dlg._cluster_columns = set(explorer.data_source.parameter_names)
     dlg.show()
     qt_app.processEvents()
     return dlg
@@ -162,7 +160,7 @@ def test_pca_adds_columns_and_reports_its_loadings(explorer, dialog, qt_app):
     dialog.on_apply_clustering()
     qt_app.processEvents()
 
-    columns = list(explorer.data_source.data.columns)
+    columns = list(explorer.data_source.parameter_names)
     assert "PC_1" in columns and "PC_2" in columns
 
     # The populations differ in tau and E only, so the leading component must be
@@ -220,7 +218,7 @@ def test_hdbscan_finds_the_two_populations(explorer, dialog, qt_app):
     for _ in range(50):
         qt_app.processEvents()
 
-    labels = explorer.data_source.data.get("Cluster Label")
+    labels = explorer.data_source.column_values("Cluster Label")
     assert labels is not None, "clustering produced no label column"
     found = {int(v) for v in set(labels) if int(v) >= 0}
     assert len(found) == 2, f"expected two populations, got {sorted(set(labels))}"

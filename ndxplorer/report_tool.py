@@ -1409,7 +1409,7 @@ class ReportWizard(QtWidgets.QDialog):
         ds = reader.read_burst_analysis(base_path=str(folder))
         # Guard: skip if no data
         try:
-            if ds is None or ds.empty or getattr(ds, 'data', None) is None or ds.data.empty:
+            if ds is None or ds.empty:
                 QtWidgets.QMessageBox.warning(self, "Empty dataset", f"No data found in folder: {folder}\nSkipping.")
                 return
         except Exception:

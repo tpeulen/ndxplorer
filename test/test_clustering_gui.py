@@ -14,7 +14,6 @@ learned to fall back to scikit-learn.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
@@ -40,9 +39,8 @@ def explorer(qt_app):
         blocks.append(np.column_stack([rng.normal(cx, 0.3, 100), rng.normal(cy, 0.3, 100)]))
         truth.append(np.full(100, i))
     data = np.vstack(blocks)
-    frame = pd.DataFrame({"x": data[:, 0], "y": data[:, 1],
-                          "truth": np.concatenate(truth)})
-    window = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    window = NDXplorer(data_source=DataSource.from_columns(
+        {"x": data[:, 0], "y": data[:, 1], "truth": np.concatenate(truth)}))
     yield window
     window.close()
 
@@ -150,7 +148,7 @@ def test_clustering_through_the_gui_reaches_the_window(explorer, qt_app, method,
     labels = run_clustering(explorer, qt_app, method, **params)
 
     assert labels is not None, f"{method}: no labels reached the window"
-    truth = explorer.data_source.data["truth"].values.astype(int)
+    truth = explorer.data_source.column_values("truth").astype(int)
     assert len(labels) == len(truth)
     found = {int(c) for c in np.unique(labels) if c >= 0}
     assert len(found) == 3, f"{method} found {len(found)} clusters, planted 3"
@@ -201,14 +199,13 @@ def test_pca_columns_appear_on_a_real_window(explorer):
     """``add_pca_columns`` must extend the live table and refresh the axes."""
     from ndxplorer.analysis.pca_helpers import add_pca_columns
 
-    before = set(explorer.data_source.data.columns)
+    before = set(explorer.data_source.parameter_names)
     result = add_pca_columns(explorer, ["x", "y"], n_components=2)
 
     assert result is not None
-    after = set(explorer.data_source.data.columns)
+    after = set(explorer.data_source.parameter_names)
     assert {"PC_1", "PC_2"} <= after - before
-    frame = explorer.data_source.data
-    assert np.isfinite(frame["PC_1"].values).all()
+    assert np.isfinite(explorer.data_source.column_values("PC_1")).all()
     assert result.explained_variance_ratio.sum() <= 1.0 + 1e-9
 
 
@@ -226,7 +223,7 @@ def test_pca_then_clustering_composes(explorer, qt_app):
                             columns=("PC_1", "PC_2"), n_clusters=3)
 
     assert labels is not None, "clustering could not use the PCA columns"
-    truth = explorer.data_source.data["truth"].values.astype(int)
+    truth = explorer.data_source.column_values("truth").astype(int)
     assert purity(labels, truth) > 0.95
 
 
@@ -251,12 +248,12 @@ def test_choosing_an_axis_by_name_plots_that_parameter(explorer, qt_app):
     control.comboBoxSelY.setCurrentText("truth")
     qt_app.processEvents()
 
-    frame = explorer.data_source.data
+    source = explorer.data_source
     assert control.p2[1] == "truth"
     # p2's index must point at the column its name names.
-    assert control.p2[0] == list(frame.columns).index("truth")
+    assert control.p2[0] == source.parameter_names.index("truth")
     assert float(np.asarray(explorer.y_values).mean()) == pytest.approx(
-        float(frame["truth"].mean()), abs=1e-3
+        float(source.column_values("truth").mean()), abs=1e-3
     ), "the y axis is labelled 'truth' but is plotting something else"
 
 
@@ -266,13 +263,13 @@ def test_axis_selection_by_index_still_works(explorer, qt_app):
     control.update(update_comboboxes=True, update_plots=False)
     qt_app.processEvents()
 
-    columns = list(explorer.data_source.data.columns)
+    columns = list(explorer.data_source.parameter_names)
     control.comboBoxSelY.setCurrentIndex(columns.index("y"))
     qt_app.processEvents()
 
     assert control.p2 == (columns.index("y"), "y")
     assert float(np.asarray(explorer.y_values).mean()) == pytest.approx(
-        float(explorer.data_source.data["y"].mean()), abs=1e-3
+        float(explorer.data_source.column_values("y").mean()), abs=1e-3
     )
 
 
@@ -297,9 +294,8 @@ def unit_explorer(qt_app):
                                        rng.normal(cy, 0.03, 120)]))
         truth.append(np.full(120, i))
     data = np.vstack(blocks)
-    frame = pd.DataFrame({"x": data[:, 0], "y": data[:, 1],
-                          "truth": np.concatenate(truth)})
-    window = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    window = NDXplorer(data_source=DataSource.from_columns(
+        {"x": data[:, 0], "y": data[:, 1], "truth": np.concatenate(truth)}))
     yield window
     window.close()
 

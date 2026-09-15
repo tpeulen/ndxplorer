@@ -7,7 +7,6 @@ in separate windows using PyQtGraph.
 
 from typing import Dict, List, Optional, Tuple, Set, Any
 import numpy as np
-import pandas as pd
 import logging
 import sys
 import io
@@ -118,13 +117,11 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
         return
 
     # Use selected columns
-    df = data_source.data
     selected_data = []
 
     for column in columns:
-        if column in df.columns:
-            # Convert to numeric and handle errors
-            values = pd.to_numeric(df[column], errors='coerce').values
+        values = data_source.column_values(column)
+        if values is not None:
             selected_data.append(values)
 
     if not selected_data:  # If no valid columns were found

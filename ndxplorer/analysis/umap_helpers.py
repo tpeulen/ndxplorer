@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict, Set
 
 import numpy as np
-import pandas as pd
 from qtpy import QtWidgets
 
 from ..logging_config import logging
@@ -100,11 +99,11 @@ def add_umap_columns(
         logging.error("No data available for UMAP transformation.")
         return False
 
-    df = ndxplorer.data_source.data
+    source = ndxplorer.data_source
     selected_data = []
     for column in columns:
-        if column in df.columns:
-            values = pd.to_numeric(df[column], errors="coerce").values
+        values = source.column_values(column)
+        if values is not None:
             selected_data.append(values)
     if not selected_data:
         logging.error("No valid columns found for UMAP transformation.")
@@ -140,10 +139,9 @@ def add_umap_columns(
 
     for i, projection in enumerate(projections):
         column_name = f"UMAP_{i+1}"
-        df[column_name] = projection
+        source.set_column(column_name, projection)
         logging.info("Added column '%s'", column_name)
 
-    ndxplorer.data_source.data = df
     ndxplorer.refresh_axis_comboboxes_preserving_selection()
     return True
 

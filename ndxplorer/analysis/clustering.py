@@ -1,7 +1,6 @@
 from ..logging_config import logging
 from typing import Dict, List, Optional, Tuple
 import numpy as np
-import pandas as pd
 
 # Delay imports via centralized getters
 from ..utils.lazy_imports import get_kmeans, get_hdbscan
@@ -100,13 +99,11 @@ class ClusteringManager:
             columns = kwargs.get("columns", [])
             if columns:
                 # Use selected columns
-                df = self._data_source.data
                 selected_data = []
 
                 for column in columns:
-                    if column in df.columns:
-                        # Convert to numeric and handle errors
-                        values = pd.to_numeric(df[column], errors='coerce').values
+                    values = self._data_source.column_values(column)
+                    if values is not None:
                         selected_data.append(values)
 
                 if selected_data:

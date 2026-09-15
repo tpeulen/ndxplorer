@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 
 import numpy as np
-import pandas as pd
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -45,7 +44,7 @@ class FakeAxes:
 
 class FakeNdx:
     def __init__(self, df, x_axis="g", y_axis="s", client=None, plot=None, hist=None):
-        self._ds = DataSource(data=df)
+        self._ds = DataSource.from_columns(df)
         self.plot_control = FakeAxes(x_axis, y_axis)
         self.overlay_plot = plot
         self._histogram = {"2d": hist} if hist is not None else {}
@@ -73,7 +72,8 @@ class FakeNdx:
 
 
 def _df():
-    return pd.DataFrame({"g (P1)": [0.4, 0.6], "s (P1)": [0.3, 0.45], "n_photons": [10, 20]})
+    return {"g (P1)": np.array([0.4, 0.6]), "s (P1)": np.array([0.3, 0.45]),
+            "n_photons": np.array([10, 20])}
 
 
 # -- axis / column inspection ----------------------------------------------------------
@@ -102,7 +102,7 @@ def test_inject_columns_adds_and_refreshes():
     ndx = FakeNdx(_df())
     added = pi.inject_columns(ndx, {"tau_phi": [1.0, 2.0], "tau_m": [1.1, 2.1]})
     assert set(added) == {"tau_phi", "tau_m"}
-    assert "tau_phi" in ndx.data_source.data.columns
+    assert "tau_phi" in ndx.data_source.parameter_names
     assert ndx._param_refreshed
 
 

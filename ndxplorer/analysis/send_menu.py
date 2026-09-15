@@ -63,7 +63,7 @@ def why_unavailable(ndxplorer: Any, bridge: Optional[BurstAnalysisBridge] = None
     source = getattr(ndxplorer, "data_source", None)
     if source is None or source.empty:
         return "No data loaded."
-    columns = set(source.data.columns)
+    columns = set(source.parameter_names)
     missing = {"First File", "First Photon", "Last Photon"} - columns
     if missing:
         return (

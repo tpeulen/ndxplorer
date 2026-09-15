@@ -154,7 +154,7 @@ def selection_to_burst_slices(
     ----------
     data_source
         The ndXplorer :class:`~ndxplorer.core.data_source.DataSource` holding the
-        burst table (``.data`` and ``.get_mask``).
+        burst table.
     selections
         The active gates; an empty sequence means "keep every burst".
     file_col, last_file_col, first_col, last_col
@@ -172,10 +172,10 @@ def selection_to_burst_slices(
     BurstBridgeError
         If the required provenance columns are absent from the table.
     """
-    df = data_source.data
-    if df is None or df.empty:
+    if data_source is None or data_source.empty:
         return OrderedDict()
-    missing = [c for c in (file_col, last_file_col, first_col, last_col) if c not in df.columns]
+    names = data_source.parameter_names
+    missing = [c for c in (file_col, last_file_col, first_col, last_col) if c not in names]
     if missing:
         raise BurstBridgeError(
             f"burst table lacks provenance column(s) {missing}; "
@@ -183,21 +183,21 @@ def selection_to_burst_slices(
         )
 
     if selections:
-        mask = data_source.get_mask(selections=list(selections))
-        excluded = np.asarray(mask).sum(axis=0).astype(bool)  # True → dropped
-        keep = ~excluded
-        dm = df.loc[keep]
+        keep = data_source.selection_mask(list(selections))
     else:
-        dm = df
+        keep = np.ones(data_source.size, dtype=bool)
 
+    first_files = data_source.column_items(names.index(file_col))
+    last_files = data_source.column_items(names.index(last_file_col))
     # A burst that straddles two files has no single TTTR source — drop it.
-    dm = dm.loc[dm[file_col] == dm[last_file_col]]
+    keep &= first_files == last_files
 
+    rows = np.flatnonzero(keep)
+    firsts = np.asarray(data_source.column_items(names.index(first_col))[rows], dtype=np.int64)
+    lasts = np.asarray(data_source.column_items(names.index(last_col))[rows], dtype=np.int64)
     slices: "OrderedDict[str, List[Tuple[int, int]]]" = OrderedDict()
-    for filename, group in dm.groupby(file_col, sort=False):
-        firsts = group[first_col].to_numpy(dtype=np.int64, copy=False)
-        lasts = group[last_col].to_numpy(dtype=np.int64, copy=False)
-        slices[str(filename)] = [(int(a), int(b)) for a, b in zip(firsts, lasts)]
+    for filename, a, b in zip(first_files[rows], firsts, lasts):
+        slices.setdefault(str(filename), []).append((int(a), int(b)))
     return slices
 
 

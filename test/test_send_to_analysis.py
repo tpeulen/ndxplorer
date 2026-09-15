@@ -15,7 +15,6 @@ becomes useless.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from ndxplorer.analysis.burst_bridge import (
@@ -86,14 +85,13 @@ class FakeRpc:
 
 def _burst_table(n: int = 6) -> DataSource:
     """A burst table with the provenance columns the bridge needs."""
-    frame = pd.DataFrame({
+    return DataSource.from_columns({
         "First File": ["m.ptu"] * n,
         "Last File": ["m.ptu"] * n,
         "First Photon": np.arange(n) * 1000,
         "Last Photon": np.arange(n) * 1000 + 499,
         "Proximity ratio": np.linspace(0.05, 0.95, n),
     })
-    return DataSource(list(frame.columns), frame)
 
 
 class Owner:
@@ -433,7 +431,7 @@ def test_the_menu_says_why_it_is_disabled_rather_than_hiding(explorer, qt_app):
     assert not submenu.isEnabled()
 
     # Gated: everything opens up.
-    columns = list(explorer.data_source.data.columns)
+    columns = list(explorer.data_source.parameter_names)
     explorer.plot_control.addSelection(
         columns.index("Proximity ratio"), 0.5, 1.0, False, True, "Proximity ratio"
     )
@@ -449,8 +447,8 @@ def test_a_table_without_burst_provenance_cannot_be_sent(qt_app):
     from ndxplorer.analysis.send_menu import why_unavailable
     from ndxplorer.core.plot_main import NDXplorer
 
-    frame = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
-    window = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    window = NDXplorer(data_source=DataSource.from_columns(
+        {"a": np.array([1.0, 2.0]), "b": np.array([3.0, 4.0])}))
     try:
         window.chisurf_rpc = FakeRpc()
         reason = why_unavailable(window)
@@ -465,7 +463,7 @@ def test_choosing_an_entry_sends_and_reports(explorer, qt_app):
     from ndxplorer.analysis.send_menu import send_selection
 
     explorer.chisurf_rpc = FakeRpc()
-    columns = list(explorer.data_source.data.columns)
+    columns = list(explorer.data_source.parameter_names)
     explorer.plot_control.addSelection(
         columns.index("Proximity ratio"), 0.5, 1.0, False, True, "Proximity ratio"
     )

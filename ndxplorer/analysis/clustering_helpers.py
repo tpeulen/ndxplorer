@@ -202,14 +202,12 @@ def apply_clustering(ndxplorer: "NDXplorer") -> None:
 def store_clustering_result(ndxplorer: "NDXplorer", labels, probabilities) -> None:
     """Write cluster columns into the table and refresh the axis combo boxes.
 
-    **GUI thread only.** It assigns to ``data_source`` -- whose setter reaches
-    into the widgets that report how much data is loaded -- and then updates the
-    plot control, neither of which is safe from a worker thread.
+    **GUI thread only.** It changes the table the plots are drawn from and then
+    updates the plot control, neither of which is safe from a worker thread.
     """
-    df = ndxplorer.data_source.data
-    df["Cluster Label"] = labels
-    df["Cluster Probability"] = probabilities
-    ndxplorer.data_source.data = df
+    source = ndxplorer.data_source
+    source.set_column("Cluster Label", np.asarray(labels))
+    source.set_column("Cluster Probability", np.asarray(probabilities, dtype=np.float64))
     try:
         ndxplorer.plot_control.update(update_comboboxes=True, update_plots=False)
     except Exception:  # pragma: no cover - headless use may have no plot control
