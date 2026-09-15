@@ -146,47 +146,6 @@ class MaskDrawingIntegration(QtCore.QObject):
             from ..logging_config import logging
             logging.warning(f"Could not update mask overlay: {e}")
     
-    def _mask_to_rgba(self, mask: np.ndarray) -> np.ndarray:
-        """
-        Convert a mask to an RGBA overlay image.
-        
-        Parameters
-        ----------
-        mask : np.ndarray
-            Integer mask with class labels
-            
-        Returns
-        -------
-        rgba : np.ndarray
-            RGBA image with shape (H, W, 4)
-        """
-        # Create RGBA image - ensure dimensions are integers
-        h, w = int(mask.shape[0]), int(mask.shape[1])
-        rgba = np.zeros((h, w, 4), dtype=np.uint8)
-        
-        # Define colors for different classes
-        colors = [
-            (255, 0, 0, 100),      # Class 1: Red
-            (0, 255, 0, 100),      # Class 2: Green
-            (0, 0, 255, 100),      # Class 3: Blue
-            (255, 255, 0, 100),    # Class 4: Yellow
-            (255, 0, 255, 100),    # Class 5: Magenta
-            (0, 255, 255, 100),    # Class 6: Cyan
-            (255, 128, 0, 100),    # Class 7: Orange
-            (128, 0, 255, 100),    # Class 8: Purple
-        ]
-        
-        # Apply colors based on class
-        for class_id in range(1, 256):
-            if not np.any(mask == class_id):
-                continue
-            
-            color = colors[(class_id - 1) % len(colors)]
-            mask_pixels = mask == class_id
-            rgba[mask_pixels] = color
-        
-        return rgba
-    
     def handle_mouse_press(self, event):
         """
         Handle mouse press event for mask drawing.

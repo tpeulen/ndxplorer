@@ -99,9 +99,10 @@ class MutuallyExclusiveOption(click.Option):
 @click.option('--chisurf-rpc', type=str, default=None,
               help='Connect to a ChiSurf RPC server at host:port for phasor / FRET-line '
                    'features (e.g. 127.0.0.1:8765).')
+@click.option('--verbose', '-v', is_flag=True, help='Enable info logging (default is warnings only)')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
 @click.pass_context
-def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc, debug):
+def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc, verbose, debug):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -121,10 +122,13 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
         # A subcommand (filter, image) was invoked, let click handle it
         return
 
-    # Set up logging level
+    # Set up logging level. WARNING by default -- ndX logs INFO on every plot
+    # update and file operation, which is noise during normal use.
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Debug logging enabled")
+    elif verbose:
+        logging.getLogger().setLevel(logging.INFO)
     
     logging.info("Starting ndxplorer as standalone module")
     

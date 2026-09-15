@@ -252,7 +252,7 @@ def update_colormap(ndxplorer: "NDXplorer", colormap_name: Optional[str] = None)
         vmax = getattr(ndxplorer, "vmax", 1.0)
         ndxplorer.cax.set_colormap(colormap_name, vmin, vmax)
         ndxplorer.g_2dplot.replot()
-        logging.debug(f"Updated pyqtgraph colormap to {colormap_name}")
+        logging.debug("Updated pyqtgraph colormap to %s", colormap_name)
         return True
 
     except Exception as e:

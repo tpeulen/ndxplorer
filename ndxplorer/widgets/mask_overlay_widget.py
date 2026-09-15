@@ -26,8 +26,10 @@ class MaskOverlayWidget(QtWidgets.QWidget):
         # Enable mouse tracking for cursor preview
         self.setMouseTracking(True)
         
-        # Store mask data
+        # Store mask data, and the RGBA image drawn from it
         self._mask = None
+        self._rgba = None
+        self._image = None
         self._xedges = None
         self._yedges = None
         
@@ -48,6 +50,35 @@ class MaskOverlayWidget(QtWidgets.QWidget):
             QtGui.QColor(128, 0, 255, 100),    # Class 8: Purple
         ]
     
+    def _mask_image(self):
+        """The mask as an RGBA QImage.
+
+        Rebuilt on every paint rather than cached: the brush writes into the
+        mask array in place, so a cache keyed on the array would keep showing
+        the stroke before last. Colouring a 256 x 256 mask is a single numpy
+        indexing pass over a quarter of a megabyte, which is not what makes a
+        redraw slow.
+
+        The QImage borrows the numpy buffer, so the array is kept on the widget
+        rather than left to be collected the moment this returns.
+        """
+        if self._mask is None:
+            return None
+
+        classes = self._mask.astype(np.intp, copy=False)
+        rgba = np.zeros(classes.shape + (4,), dtype=np.uint8)
+        painted = classes > 0
+        if painted.any():
+            table = np.array([[c.red(), c.green(), c.blue(), c.alpha()]
+                              for c in self._colors], dtype=np.uint8)
+            rgba[painted] = table[(classes[painted] - 1) % len(self._colors)]
+
+        self._rgba = np.ascontiguousarray(rgba)
+        ny, nx = classes.shape
+        self._image = QtGui.QImage(self._rgba.data, nx, ny, 4 * nx,
+                                   QtGui.QImage.Format_RGBA8888)
+        return self._image
+
     def set_mask(self, mask: Optional[np.ndarray], xedges: Optional[np.ndarray] = None, yedges: Optional[np.ndarray] = None):
         """
         Set the mask to display.
@@ -128,40 +159,28 @@ class MaskOverlayWidget(QtWidgets.QWidget):
                 # Can't get coordinate mapping, skip drawing
                 return
             
-            # Draw mask overlay
+            # Draw mask overlay: one image, not one fillRect per painted bin.
+            #
+            # The loop this replaces ran a Python iteration and a QPainter call
+            # for EVERY non-zero bin, so a brush stroke over a 256 x 256
+            # histogram could ask Qt to fill tens of thousands of one-pixel
+            # rectangles -- while the mouse was still moving, on every
+            # paintEvent. Colouring the mask into an RGBA array and drawing it
+            # once is the same picture, and the cost stops depending on how much
+            # the user has painted.
             if self._mask is not None:
                 painter.setRenderHint(QtGui.QPainter.Antialiasing, False)
-                
+                painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, False)
+
                 ny, nx = self._mask.shape
-                
-                # Iterate over non-zero pixels in the mask
-                # This is more efficient than a full loop for sparse masks
-                y_indices, x_indices = np.where(self._mask > 0)
-                
-                for iy, ix in zip(y_indices, x_indices):
-                    class_id = self._mask[iy, ix]
-                    
-                    # Get pixel bounds in plot coordinates (bin indices)
-                    # Data at (iy, ix) covers [ix, ix+1] on x-axis and [iy, iy+1] on y-axis
-                    # Since the image is transposed H.T, H[ix, iy] is at (ix, iy)
-                    
-                    # Convert data coordinates (bin indices) to pixel coordinates
-                    x1 = xMap.transform(ix)
-                    x2 = xMap.transform(ix + 1)
-                    y1 = yMap.transform(iy)
-                    y2 = yMap.transform(iy + 1)
-                    
-                    # Rect for this bin
-                    rect = QtCore.QRectF(
-                        min(x1, x2),
-                        min(y1, y2),
-                        abs(x2 - x1),
-                        abs(y1 - y2)
-                    )
-                    
-                    # Get color for this class
-                    color = self._colors[(class_id - 1) % len(self._colors)]
-                    painter.fillRect(rect, color)
+                image = self._mask_image()
+                if image is not None:
+                    x1, x2 = xMap.transform(0), xMap.transform(nx)
+                    y1, y2 = yMap.transform(0), yMap.transform(ny)
+                    painter.drawImage(
+                        QtCore.QRectF(min(x1, x2), min(y1, y2),
+                                      abs(x2 - x1), abs(y2 - y1)),
+                        image)
             
             # Draw cursor circle
             if self._show_cursor and self._cursor_pos is not None:

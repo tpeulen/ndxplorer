@@ -90,10 +90,16 @@ def copy_2d_hist_csv(ndxplorer: "NDXplorer") -> None:
     header_cells = ["y/x"] + [_fmt_num(x) for x in x_centers]
     output.write("\t".join(header_cells) + "\n")
 
+    # ``H`` is stored as (n_y, n_x) -- the orientation the image item draws, and
+    # what Histogram2D.validate enforces -- so the row index is y and the column
+    # index is x. This was written ``H[i, j]``, x first: on the square default
+    # binning that silently exported the TRANSPOSE of the plot, and on anything
+    # else (an image histogram, one bin per pixel) it raised an IndexError that
+    # nothing here catches, so the copy just did not happen.
     for j, y in enumerate(y_centers):
         row_cells = [_fmt_num(y)]
         for i in range(len(x_centers)):
-            row_cells.append(_fmt_num(H[i, j]))
+            row_cells.append(_fmt_num(H[j, i]))
         output.write("\t".join(row_cells) + "\n")
 
     QtWidgets.QApplication.clipboard().setText(output.getvalue())

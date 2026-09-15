@@ -65,17 +65,36 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
     """
     import tttrlib
 
-    output = mask.copy()
+    output = np.asarray(mask)
+    if output.size == 0:
+        # libtiff refuses a zero-pixel image, from three frames down inside the
+        # writer. Say what is wrong here instead.
+        raise ValueError(
+            f"cannot write an empty mask (shape {output.shape}) to {filename}: "
+            "a TIFF needs at least one pixel"
+        )
 
     if binary:
         # Convert to binary: any non-zero value becomes 255
         output = np.where(output > 0, 255, 0).astype(np.uint8)
     else:
-        # Keep integer values but ensure proper dtype
-        if output.max() <= 255:
-            output = output.astype(np.uint8)
-        else:
-            output = output.astype(np.uint16)
+        # Narrowest integer type the labels fit in. A label outside that type's
+        # range used to be written anyway: `astype` wraps, so class 70000 came
+        # back as class 4464 and class -1 as class 65535 -- a silently
+        # relabelled mask, which is worse than a refusal because nothing
+        # downstream can tell it happened.
+        largest, smallest = int(output.max()), int(output.min())
+        if smallest < 0:
+            raise ValueError(
+                f"mask holds a negative class label ({smallest}); class labels "
+                "are unsigned and 0 is background"
+            )
+        if largest > 65535:
+            raise ValueError(
+                f"mask holds class label {largest}, above the 65535 a 16-bit "
+                "TIFF can carry; relabel the classes consecutively"
+            )
+        output = output.astype(np.uint8 if largest <= 255 else np.uint16)
 
     tttrlib.imwrite(str(filename), output)
 

@@ -141,10 +141,23 @@ def validate_equation(
     outs = {str(o).lower() for o in known_outputs}
     consts = {str(k).lower() for k in known_constants}
 
+    # Augment known names with the central mmfdb.dic so equations can reference
+    # columns/constants defined there even if the live data store doesn't carry
+    # them yet (e.g. editing before loading data).
+    try:
+        from ..settings.mmfdb_dic import all_column_names, all_constant_names
+        dic_cols = {c.lower() for c in all_column_names()}
+        dic_consts = {c.lower() for c in all_constant_names()}
+    except Exception:
+        dic_cols = set()
+        dic_consts = set()
+
     unresolved = []
     for ref in refs:
         rl = ref.lower()
-        if rl in cols or _normalize_left(ref).lower() in cols_left or rl in outs or rl in consts:
+        if (rl in cols or _normalize_left(ref).lower() in cols_left
+                or rl in outs or rl in consts
+                or rl in dic_cols or rl in dic_consts):
             continue
         unresolved.append(ref)
     if unresolved:
