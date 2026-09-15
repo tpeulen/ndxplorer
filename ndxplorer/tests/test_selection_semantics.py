@@ -23,7 +23,6 @@ honest, and it is deliberately built the awkward way round:
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from ndxplorer.core.data_source import (DataSource, Gaussian2DSelection,
@@ -56,7 +55,7 @@ def source():
     a[30:35] = -np.inf
     c[35:40] = 0.0                           # no logarithm
     c[40:45] = np.nan
-    return DataSource(data=pd.DataFrame({"a": a, "b": b, "c": c}))
+    return DataSource.from_columns({"a": a, "b": b, "c": c})
 
 
 def reference(source, selections, idxs=None, mask_nan=True, mask_inf=True):
@@ -214,12 +213,12 @@ def test_a_gate_on_a_column_the_table_does_not_have(source):
 
 
 def test_an_empty_table():
-    empty = DataSource(data=pd.DataFrame({"a": [], "b": []}))
+    empty = DataSource.from_columns({"a": np.zeros(0), "b": np.zeros(0)})
     assert empty.selection_mask([gates("interval", False)]).shape == (0,)
 
 
 def test_a_single_row():
-    one = DataSource(data=pd.DataFrame({"a": [0.5], "b": [0.5]}))
+    one = DataSource.from_columns({"a": [0.5], "b": [0.5]})
     keep = one.selection_mask([RectangularDataSelection(0, 0.0, 1.0)])
     assert keep.tolist() == [True]
 

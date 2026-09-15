@@ -2,15 +2,13 @@
 
 Merging BVA/2CDE ``…4`` companions can surface columns that were never fit
 (e.g. ``Tau (green)`` when MLE was skipped for lack of an IRF) — constant/NaN
-columns whose histogram bin edges collapse — and pandas nullable dtypes from the
-a nullable-dtype reader. Neither must crash ndXplorer.
+columns whose histogram bin edges collapse. That must not crash ndXplorer.
 """
 from __future__ import annotations
 
 import os
 
 import numpy as np
-import pandas as pd
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -39,11 +37,3 @@ def test_a_degenerate_range_still_has_a_bin(lo, hi):
     edges = axis.edges
     assert edges.size == 9
     assert np.all(np.diff(edges) > 0)     # strictly ascending
-
-
-def test_dataframe_editor_handles_pandas_nullable_dtype():
-    # A nullable-dtype reader yields Float64/Int64; np.issubdtype raises
-    # TypeError on those, crashing the editor. is_numeric_dtype handles them.
-    assert bool(pd.api.types.is_numeric_dtype(pd.array([1.0, None], dtype="Float64").dtype))
-    assert bool(pd.api.types.is_numeric_dtype(pd.array([1, None], dtype="Int64").dtype))
-    assert not bool(pd.api.types.is_numeric_dtype(pd.Series(["m000.spc"]).dtype))

@@ -134,6 +134,15 @@ def compute_histograms(source, axes: HistogramAxes, keep=None, is_cancelled=None
     """
     store = source.store
 
+    # A text column holds no numbers: a text axis bins nothing, and a text
+    # weight leaves no row with a weight.
+    def is_text(axis):
+        return axis is not None and source.is_text_column(axis.index)
+
+    text_weight = axes.weight is not None and source.is_text_column(axes.weight)
+    if text_weight or is_text(axes.x) or is_text(axes.y):
+        keep = np.zeros(store.n_rows(), dtype=bool)
+
     def cancelled():
         return is_cancelled is not None and is_cancelled()
 
@@ -148,12 +157,17 @@ def compute_histograms(source, axes: HistogramAxes, keep=None, is_cancelled=None
                             keep.shape[0], store.n_rows())
             keep = None
     store.select(keep)
-    store.where_finite([axes.x.index, axes.y.index], how="and")
+    numeric_axes = [a.index for a in (axes.x, axes.y) if not is_text(a)]
+    if numeric_axes:
+        store.where_finite(numeric_axes, how="and")
 
     result = {}
     try:
         def fill(name, axis, weight):
             if axis is None or cancelled():
+                return
+            if is_text(axis) or weight is not None and source.is_text_column(weight):
+                result[name] = (axis.edges, np.zeros(axis.bins, dtype=np.float64))
                 return
             histogram = store.histogram(axis.index, weight=weight, **_spec(axis))
             counts = np.asarray(histogram.view(), dtype=np.float64)
@@ -165,7 +179,10 @@ def compute_histograms(source, axes: HistogramAxes, keep=None, is_cancelled=None
         # agree -- they are separate settings -- so that is checked rather than
         # assumed, and the flow bins are included in the sum, because a row
         # whose y fell off the map still belongs in the x marginal.
-        if not cancelled():
+        if not cancelled() and (is_text(axes.x2) or is_text(axes.y2) or text_weight):
+            H = np.zeros((axes.y2.bins, axes.x2.bins), dtype=np.float64)
+            result["2d"] = (H, axes.x2.edges, axes.y2.edges)
+        elif not cancelled():
             histogram = store.histogram(axes.x2.index, axes.y2.index,
                                         weight=axes.weight,
                                         **_spec(axes.x2, axes.y2))

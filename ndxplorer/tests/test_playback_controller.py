@@ -23,29 +23,23 @@ NX = NY = 4
 @pytest.fixture
 def frame_source():
     """An image stack: a 'Frame' index column and a value column."""
-    import pandas as pd
-
     frame, y, x = np.indices((N_FRAMES, NY, NX))
-    data = pd.DataFrame({
+    return DataSource.from_columns({
         "Frame": frame.ravel().astype(np.float64),
         "X pixel": x.ravel().astype(np.float64),
         "Y pixel": y.ravel().astype(np.float64),
         "Number of Photons": np.arange(frame.size, dtype=np.float64),
     })
-    return DataSource(list(data.columns), data)
 
 
 @pytest.fixture
 def burst_source():
     """A burst table whose macro time runs 0…10 s over 101 bursts."""
-    import pandas as pd
-
     times = np.linspace(0.0, 10.0, 101)
-    data = pd.DataFrame({
+    return DataSource.from_columns({
         "Mean Macro Time (s)": times,
         "Proximity ratio": np.linspace(0.1, 0.9, times.size),
     })
-    return DataSource(list(data.columns), data)
 
 
 # --------------------------------------------------------------- detection

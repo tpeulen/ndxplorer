@@ -11,7 +11,6 @@ import pathlib
 import importlib.util
 
 import numpy as np
-import pandas as pd
 
 # Delay imports of heavy libraries
 hdbscan = None  # For clustering
@@ -564,10 +563,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         def _equation_names():
             """(column names, constant names) the equation editor can reference."""
             ds = getattr(self, "data_source", None)
-            if ds is not None and not ds.empty:
-                cols = list(ds.data.columns)
-            else:
-                cols = list(getattr(ds, "parameter_names", []) or [])
+            cols = list(getattr(ds, "parameter_names", []) or [])
             consts = list(self.constants.keys()) if getattr(self, "constants", None) else []
             return cols, consts
 
@@ -914,8 +910,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionUMAP.triggered.connect(self.onShowUMAP)
         self.actionAxisControl.triggered.connect(self.onShowAxisControl)
 
-        # Connect toolButton_3 to show data in DataFrameEditor
-        self.toolButton_3.clicked.connect(self.show_dataframe_editor)
+        # toolButton_3 opens the table editor
+        self.toolButton_3.clicked.connect(self.show_store_editor)
 
         # Connect toolButton_AutoContrast to auto contrast function
         self.toolButton_AutoContrast.clicked.connect(self.on_auto_contrast)
@@ -1005,7 +1001,8 @@ class NDXplorer(QtWidgets.QMainWindow):
                     else:
                         values = np.array(raw_values, dtype=np.float32)
                     
-                    ds = DataSource(parameter_names=param_names, data=values.T)
+                    ds = DataSource.from_columns(
+                        {str(name): values[i] for i, name in enumerate(param_names)})
                     _finalize_loaded_data(self, ds, append=False, merge_mode="columns")
                     logging.info(f"Successfully loaded database product {self.processed_data_id} via ZMQ.")
                     self.statusBar().showMessage(f"Loaded database product {self.processed_data_id} via ZMQ")
@@ -1181,9 +1178,9 @@ class NDXplorer(QtWidgets.QMainWindow):
                 f"Failed to apply mask: {str(e)}"
             )
 
-    def show_dataframe_editor(self):
-        """Open the DataFrameEditor for the current data source."""
-        logging.debug("show_dataframe_editor")
+    def show_store_editor(self):
+        """Open the table editor on the current data source."""
+        logging.debug("show_store_editor")
         data_source = self.data_source
         if data_source.empty:
             QtWidgets.QMessageBox.warning(
@@ -1191,18 +1188,10 @@ class NDXplorer(QtWidgets.QMainWindow):
             )
             return
 
-        from ..ui.dataframe_editor import DataFrameEditor
+        from ..ui.store_editor import edit_source
 
-        dlg = DataFrameEditor(data_source.data.copy(), self)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            edited = dlg.dataframe
-            # Update in-place so the data_source retains its object identity.
-            data_source.data.update(edited)
-            # Apply any new columns or structural changes.
-            for col in edited.columns:
-                if col not in data_source.data.columns:
-                    data_source.data[col] = edited[col]
-            # Drop columns removed by the user (not supported yet, but safe).
+        if edit_source(data_source, self):
+            self.update_parameter_names()
             self.update_plots()
 
     def clear_plots(self):
@@ -1728,7 +1717,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         for w_name in [
             "toolButton_screenshot",
             "toolButton_AutoContrast",
-            "toolButton_3",  # DataFrame editor
+            "toolButton_3",  # table editor
             "toolButton_parameter_save",
             "comboBoxWeight",
             "checkBoxWeight",
@@ -2426,11 +2415,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._dynamic_selection = bool(state)
         self.request_plot_update(skip_clustering=True)
 
-    def add_umap_columns_to_dataframe(self, columns, params):
+    def add_umap_columns(self, columns, params):
         """
-        Add UMAP projection columns to the dataframe via helper utilities.
+        Add UMAP projection columns to the table via helper utilities.
         """
-        logging.info("Adding UMAP columns to dataframe using helper")
+        logging.info("Adding UMAP columns to the table")
         return umap_helpers.add_umap_columns(
             ndxplorer=self,
             columns=columns,
@@ -2438,14 +2427,14 @@ class NDXplorer(QtWidgets.QMainWindow):
             progress_dialog_factory=self._create_umap_progress_dialog,
         )
 
-    def add_pca_columns_to_dataframe(self, columns, params):
+    def add_pca_columns(self, columns, params):
         """Add ``PC_n`` columns to the table and return the decomposition.
 
         The result is handed back rather than discarded because the loadings are
         what PCA was asked for -- which measured parameters carry the separation
         -- and the dialog reports them. The columns are only how you plot it.
         """
-        logging.info("Adding PCA columns to dataframe using helper")
+        logging.info("Adding PCA columns to the table")
         return pca_helpers.add_pca_columns(
             ndxplorer=self,
             columns=list(columns),
@@ -2497,8 +2486,8 @@ class NDXplorer(QtWidgets.QMainWindow):
     def create_umap_plot(self, columns, params):
         """
         Create a UMAP plot in a separate window using existing data.
-        Note: This function does not add UMAP columns to the dataframe.
-        Use add_umap_columns_to_dataframe() first if needed.
+        Note: This function does not add UMAP columns to the table.
+        Use add_umap_columns() first if needed.
 
         Args:
             columns: Set of column names to use for UMAP

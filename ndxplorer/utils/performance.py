@@ -248,10 +248,9 @@ def estimate_memory_usage(ndxplorer: "NDXplorer") -> dict:
     # Data source
     source = getattr(ndxplorer, 'data_source', None)
     if source is not None:
-        if hasattr(source, 'values'):
+        if hasattr(source, 'store'):
             try:
-                values = source.values
-                usage['data_values_mb'] = values.nbytes / (1024 * 1024)
+                usage['data_values_mb'] = source.store.nbytes() / (1024 * 1024)
             except Exception:
                 pass
     

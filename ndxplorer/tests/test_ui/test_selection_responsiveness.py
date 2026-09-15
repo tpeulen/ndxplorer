@@ -13,7 +13,6 @@ the whole set twice.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
@@ -31,13 +30,13 @@ def window(qapp):
 
     rng = np.random.default_rng(5)
     n = 2000
-    data = pd.DataFrame({
+    data = DataSource.from_columns({
         "Tau (green)": rng.normal(2.0, 0.4, n),
         "Proximity ratio": rng.normal(0.6, 0.1, n),
         "Number of Photons": rng.integers(30, 400, n).astype(float),
     })
     win = NDXplorer()
-    win.data_source = DataSource(list(data.columns), data)
+    win.data_source = data
     win.resize(1000, 700)
     win.show()
     qapp.processEvents()

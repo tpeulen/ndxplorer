@@ -14,7 +14,6 @@ region been positioned for THIS axis" is.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
@@ -36,14 +35,15 @@ def window(qapp):
     from ndxplorer.core.plot_main import NDXplorer
 
     rng = np.random.default_rng(5)
-    frame = pd.DataFrame({
-        "x": rng.uniform(0.0, 10.0, N),
-        "y": rng.uniform(0.0, 10.0, N),
+    # float32, as a table read from a file is.
+    frame = DataSource.from_columns({
+        "x": rng.uniform(0.0, 10.0, N).astype(np.float32),
+        "y": rng.uniform(0.0, 10.0, N).astype(np.float32),
         # Nowhere near 0.25 to 0.5 -- a lifetime in nanoseconds.
-        "Tau": rng.uniform(2.0, 6.0, N),
+        "Tau": rng.uniform(2.0, 6.0, N).astype(np.float32),
     })
     window = NDXplorer()
-    window.data_source = DataSource(data=frame)
+    window.data_source = frame
     # What the open path does after loading: fill the axis choosers.
     window.plot_control.update()
     window.update()

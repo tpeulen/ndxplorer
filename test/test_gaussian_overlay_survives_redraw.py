@@ -11,7 +11,6 @@ turn before it is read, which is what these tests do.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtCore, QtWidgets
 
@@ -45,10 +44,10 @@ def window(qt_app):
         for cx, cy in [(0.25, 0.35), (0.70, 0.70)]
     ]
     data = np.vstack(blocks)
-    frame = pd.DataFrame({"x": data[:, 0], "y": data[:, 1], "z": rng.normal(0, 1, len(data))})
-    columns = list(frame.columns)
+    source = DataSource.from_columns({"x": data[:, 0], "y": data[:, 1], "z": rng.normal(0, 1, len(data))})
+    columns = source.parameter_names
 
-    win = NDXplorer(data_source=DataSource(columns, frame))
+    win = NDXplorer(data_source=source)
     win.resize(900, 700)
     win.show()
     qt_app.processEvents()

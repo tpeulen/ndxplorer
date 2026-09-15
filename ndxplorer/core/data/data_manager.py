@@ -41,22 +41,22 @@ class DataManager:
         
     def _create_default_data_source(self) -> DataSource:
         """Create default demo data source."""
-        return DataSource(
-            ["Tau (green)", "Proximity ratio", "r Experimental (green)"],
-            np.vstack([
-                np.random.multivariate_normal(
-                    [4.1, 0.0, 0.05], 
-                    [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], 
-                    size=500
-                ),
-                np.random.multivariate_normal(
-                    [2.0, 0.5, 0.15], 
-                    [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], 
-                    size=500
-                )
-            ])
-        )
-        
+        points = np.vstack([
+            np.random.multivariate_normal(
+                [4.1, 0.0, 0.05],
+                [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
+                size=500
+            ),
+            np.random.multivariate_normal(
+                [2.0, 0.5, 0.15],
+                [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
+                size=500
+            )
+        ])
+        names = ["Tau (green)", "Proximity ratio", "r Experimental (green)"]
+        return DataSource.from_columns(
+            {name: points[:, i] for i, name in enumerate(names)})
+
     @property
     def data_source(self) -> DataSource:
         """Get current data source (or default if empty)."""
@@ -238,13 +238,16 @@ class DataManager:
         )
 
         if state.z_range is not None:
-            z_values = source.column_view(state.axis_indices[2])
+            # float32, as in ``values``: the z range is taken from those, and
+            # a float64 column's extremes lie just outside their float32 image.
+            z_values = np.asarray(source.column_view(state.axis_indices[2]),
+                                  dtype=np.float32)
             z_min, z_max = min(state.z_range), max(state.z_range)
             mask = mask | ~((z_values >= z_min) & (z_values <= z_max))
 
         if state.cluster_label is not None:
-            if "Cluster Label" in source.data.columns:
-                labels = source.data["Cluster Label"].values
+            if source.has_column("Cluster Label"):
+                labels = source.column_values("Cluster Label")
                 mask = mask | (labels != state.cluster_label)
             else:
                 # Reachable whenever the spinner is left on a cluster and the

@@ -27,18 +27,17 @@ N_FRAMES, N_ROWS_PER_FRAME = 4, 250
 
 @pytest.fixture
 def source():
-    pd = pytest.importorskip("pandas")
     from ndxplorer.core.data_source import DataSource
 
     rng = np.random.default_rng(3)
     n = N_FRAMES * N_ROWS_PER_FRAME
     frame = np.repeat(np.arange(N_FRAMES), N_ROWS_PER_FRAME)
-    return DataSource(data=pd.DataFrame({
+    return DataSource.from_columns({
         "x": rng.uniform(0.0, 10.0, n),
         "y": rng.uniform(0.0, 10.0, n),
         "Frame": frame.astype(float),
         "weight": rng.uniform(0.5, 2.0, n),
-    }))
+    })
 
 
 def axes_for(weight=False):

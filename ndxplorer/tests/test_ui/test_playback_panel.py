@@ -13,7 +13,6 @@ nothing -- which no test that calls the method itself can see.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
@@ -38,8 +37,7 @@ def control(qapp):
 
 
 def _source(**columns) -> DataSource:
-    data = pd.DataFrame(columns)
-    return DataSource(list(data.columns), data)
+    return DataSource.from_columns(columns)
 
 
 def _burst_source(n=201) -> DataSource:

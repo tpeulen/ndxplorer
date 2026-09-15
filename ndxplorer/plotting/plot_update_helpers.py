@@ -332,10 +332,10 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     # Use the data_source property which handles both _data_source and data_manager
     data_source = ndxplorer.data_source
     is_empty = data_source.empty
-    has_shape = data_source.values.shape[0] > 0 if hasattr(data_source.values, 'shape') else False
-    logging.debug("update_plots: data_source.empty=%s, has_data=%s", is_empty, has_shape)
-    
-    if data_source.empty or data_source.values.shape[0] == 0:
+    logging.debug("update_plots: data_source.empty=%s, n_parameters=%d",
+                  is_empty, data_source.n_parameters)
+
+    if is_empty:
         logging.info("update_plots: Data source is empty, showing empty plots")
         if hasattr(ndxplorer, "_set_data_loaded"):
             ndxplorer._set_data_loaded(False)

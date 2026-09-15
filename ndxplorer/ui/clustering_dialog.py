@@ -608,7 +608,7 @@ class ClusteringDialog(QtWidgets.QDialog):
             return
 
         if self._cluster_method == "pca":
-            result = parent.add_pca_columns_to_dataframe(
+            result = parent.add_pca_columns(
                 self._cluster_columns,
                 {
                     "n_components": self._pca_n_components,
@@ -625,7 +625,7 @@ class ClusteringDialog(QtWidgets.QDialog):
             return
 
         params = self._umap_params()
-        if parent.add_umap_columns_to_dataframe(self._cluster_columns, params):
+        if parent.add_umap_columns(self._cluster_columns, params):
             self._show_result(
                 f"Added UMAP_1…UMAP_{self._umap_n_components}. "
                 "Pick them in the axis controls to plot."

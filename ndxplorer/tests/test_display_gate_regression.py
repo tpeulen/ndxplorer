@@ -17,7 +17,6 @@ collapsed onto one implementation.
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from ndxplorer.core.data.data_manager import DataManager
@@ -33,7 +32,7 @@ RectangleROI = roi.RectangleROI
 def manager():
     rng = np.random.default_rng(5)
     n = 500
-    frame = pd.DataFrame({
+    frame = DataSource.from_columns({
         "a": rng.uniform(0.0, 10.0, n),
         "b": rng.uniform(0.0, 10.0, n),
         "c": rng.uniform(0.0, 10.0, n),
@@ -41,7 +40,7 @@ def manager():
         "e": rng.uniform(0.0, 10.0, n),
     })
     manager = DataManager()
-    manager.data_source = DataSource(data=frame)
+    manager.data_source = frame
     return manager
 
 

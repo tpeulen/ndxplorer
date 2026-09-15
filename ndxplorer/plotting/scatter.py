@@ -276,7 +276,11 @@ def export_scatter_data(
     Returns:
         String data if filename is None, otherwise None
     """
-    import pandas as pd
+    import json
+
+    import tttrlib
+
+    from ..core.data_source import store_from_columns
 
     # Validate the format first: refusing an unsupported one must not depend on
     # the payload being complete. Building the frame first meant a bad format
@@ -284,7 +288,7 @@ def export_scatter_data(
     if format not in ("csv", "json", "numpy"):
         raise ValueError(f"Unsupported format: {format}")
 
-    # Create DataFrame. ``colors`` and ``sizes`` are rendering quantities this
+    # ``colors`` and ``sizes`` are rendering quantities this
     # module computes as floats; casting them keeps the exported schema stable
     # when a caller happens to pass integers.
     df_data = {
@@ -297,12 +301,14 @@ def export_scatter_data(
     if "alpha_array" in plot_data:
         df_data["alpha"] = plot_data["alpha_array"]
     
-    df = pd.DataFrame(df_data)
-    
     if format == "csv":
-        output = df.to_csv(index=False)
+        output = tttrlib.write_csv(None, store_from_columns(df_data),
+                                   keep_decimal_point=True)
     elif format == "json":
-        output = df.to_json(orient="records")
+        columns = {key: np.asarray(val).tolist() for key, val in df_data.items()}
+        n_rows = len(next(iter(columns.values())))
+        output = json.dumps([{key: values[i] for key, values in columns.items()}
+                             for i in range(n_rows)])
     elif format == "numpy":
         output = {key: np.array(val) for key, val in df_data.items()}
         if filename:

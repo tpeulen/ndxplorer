@@ -862,17 +862,10 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             self.comboBoxSelZ.blockSignals(True)
             
             try:
-                # Prefer dataframe columns, but fall back to parameter_names for loaders
-                # that provide names/values before a full dataframe-backed column map exists.
                 try:
-                    pn = [str(c) for c in list(self.parent.data_source.data.columns)]
+                    pn = [str(c) for c in list(self.parent.data_source.parameter_names)]
                 except Exception:
                     pn = []
-                if not pn:
-                    try:
-                        pn = [str(c) for c in list(self.parent.data_source.parameter_names)]
-                    except Exception:
-                        pn = []
                 self.comboBoxSelX.clear()
                 self.comboBoxSelY.clear()
                 self.comboBoxSelZ.clear()

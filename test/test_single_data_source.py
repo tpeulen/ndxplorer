@@ -16,11 +16,10 @@ The field is gone. These tests keep it gone.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from qtpy import QtWidgets
 
-from ndxplorer.core.data_source import DataSource
+from ndxplorer.core.data_source import DataSource, store_from_columns
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +37,7 @@ def _select_axes(window, x_name: str, y_name: str) -> None:
     """
     control = window.plot_control
     control.update(update_comboboxes=True, update_plots=False)
-    columns = list(window.data_source.data.columns)
+    columns = window.data_source.parameter_names
     control.comboBoxSelX.setCurrentIndex(columns.index(x_name))
     control.comboBoxSelY.setCurrentIndex(columns.index(y_name))
     QtWidgets.QApplication.instance().processEvents()
@@ -49,8 +48,8 @@ def window(qt_app):
     """A window holding two columns."""
     from ndxplorer.core.plot_main import NDXplorer
 
-    frame = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0]})
-    win = NDXplorer(data_source=DataSource(list(frame.columns), frame))
+    source = DataSource.from_columns({"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0]})
+    win = NDXplorer(data_source=source)
     yield win
     win.close()
 
@@ -66,9 +65,9 @@ def test_there_is_no_second_data_source(window):
 
 def test_the_property_is_what_the_constructor_filled(window):
     """Data passed in must be reachable through the public property."""
-    frame = window.data_source.data
-    assert list(frame.columns) == ["x", "y"]
-    assert len(frame) == 3
+    source = window.data_source
+    assert source.parameter_names == ["x", "y"]
+    assert len(source) == 3
 
 
 def test_appending_reaches_the_visible_data(window):
@@ -80,12 +79,12 @@ def test_appending_reaches_the_visible_data(window):
     """
     from ndxplorer.io.file_operations import _handle_append
 
-    extra = DataSource(["z"], pd.DataFrame({"z": [7.0, 8.0, 9.0]}))
+    extra = DataSource.from_columns({"z": [7.0, 8.0, 9.0]})
     _handle_append(window, extra, "columns")
 
-    columns = list(window.data_source.data.columns)
+    columns = window.data_source.parameter_names
     assert "z" in columns, f"the appended column never arrived; got {columns}"
-    assert list(window.data_source.data["z"]) == [7.0, 8.0, 9.0]
+    assert list(window.data_source.column_values("z")) == [7.0, 8.0, 9.0]
 
 
 def test_appending_into_an_empty_window_replaces(qt_app):
@@ -96,8 +95,8 @@ def test_appending_into_an_empty_window_replaces(qt_app):
     win = NDXplorer()
     try:
         win.data_source.clear()
-        _handle_append(win, DataSource(["a"], pd.DataFrame({"a": [1.0, 2.0]})), "columns")
-        assert "a" in list(win.data_source.data.columns)
+        _handle_append(win, DataSource.from_columns({"a": [1.0, 2.0]}), "columns")
+        assert "a" in win.data_source.parameter_names
     finally:
         win.close()
 
@@ -130,7 +129,8 @@ def test_the_surviving_cache_is_stable_and_versioned(window):
     first = window.value_mask
     assert window.value_mask is first
 
-    window.data_source.data = pd.DataFrame({"x": [9.0, 9.0, 9.0], "y": [1.0, 1.0, 1.0]})
+    window.data_source.replace_store(
+        store_from_columns({"x": [9.0, 9.0, 9.0], "y": [1.0, 1.0, 1.0]}))
     assert window.value_mask is not first
 
 
@@ -149,8 +149,8 @@ def test_a_gating_change_changes_the_rows_a_redraw_may_use(window):
     """
     from ndxplorer.utils.histogram_helpers import keep_mask
 
-    window.data_source.data = pd.DataFrame({"x": [1.0, np.nan, 3.0],
-                                            "y": [4.0, 5.0, 6.0]})
+    window.data_source.replace_store(
+        store_from_columns({"x": [1.0, np.nan, 3.0], "y": [4.0, 5.0, 6.0]}))
     _select_axes(window, "x", "y")
 
     window._mask_nan = True
@@ -204,9 +204,7 @@ def test_the_window_collects_cluster_isolation(window):
     """
     from ndxplorer.core.data.mask_state import MaskState
 
-    frame = window.data_source.data
-    frame["Cluster Label"] = [0, 1, 1]
-    window.data_source.data = frame
+    window.data_source.set_column("Cluster Label", np.array([0, 1, 1]))
 
     _select_axes(window, "x", "y")
     window._use_clustering = True

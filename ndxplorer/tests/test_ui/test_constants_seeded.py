@@ -73,8 +73,8 @@ def test_empty_constants_drop_constant_dependent_columns():
     full_ds = read_burst_analysis(str(_BURST_DIR))
     full_ds.compute_columns(constants=constants, equations=equations)
 
-    empty_cols = set(empty_ds.data.columns)
-    full_cols = set(full_ds.data.columns)
+    empty_cols = set(empty_ds.parameter_names)
+    full_cols = set(full_ds.parameter_names)
 
     # Table constants derive a strict superset — the dropped ones are the bug.
     assert empty_cols < full_cols
@@ -86,8 +86,8 @@ def test_empty_constants_drop_constant_dependent_columns():
     tweaked["Bg"] = float(constants["Bg"]) * 1.01
     twk_ds = read_burst_analysis(str(_BURST_DIR))
     twk_ds.compute_columns(constants=tweaked, equations=equations)
-    fe_full = np.asarray(full_ds.data["FRET efficiency"], dtype=float)
-    fe_twk = np.asarray(twk_ds.data["FRET efficiency"], dtype=float)
+    fe_full = full_ds.column_values("FRET efficiency")
+    fe_twk = twk_ds.column_values("FRET efficiency")
     m = np.isfinite(fe_full) & np.isfinite(fe_twk)
     assert abs(fe_full[m].mean() - fe_twk[m].mean()) < 0.01
 

@@ -13,7 +13,6 @@ lets the fill bin with a multiply and a logarithm instead of a binary search.
 import numpy as np
 import pytest
 
-import pandas as pd
 
 from ndxplorer.core.data_source import DataSource
 from ndxplorer.utils.histogram_computation import (
@@ -28,8 +27,8 @@ def _DS(values):
     one -- and a double that diverges from the thing it doubles is how a test
     keeps passing after the code it covers has changed underneath it.
     """
-    return DataSource(data=pd.DataFrame(
-        {f"p{i}": row for i, row in enumerate(np.asarray(values, dtype=float))}))
+    return DataSource.from_columns(
+        {f"p{i}": row for i, row in enumerate(np.asarray(values, dtype=float))})
 
 
 def _axes(x_bins, x_range, y_bins, y_range, y_scale="linear"):

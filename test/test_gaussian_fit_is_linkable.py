@@ -11,7 +11,6 @@ never writes over its master's value.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 from ndxplorer.core.data_source import DataSource
 from qtpy import QtCore, QtWidgets
@@ -49,12 +48,12 @@ def window(qt_app):
             for cx, cy, sx, sy in BLOBS
         ]
     )
-    frame = pd.DataFrame(
+    source = DataSource.from_columns(
         {"E": data[:, 0], "S": data[:, 1], "z": rng.normal(0, 1, len(data))}
     )
-    columns = list(frame.columns)
+    columns = source.parameter_names
 
-    win = NDXplorer(data_source=DataSource(columns, frame))
+    win = NDXplorer(data_source=source)
     win.resize(900, 700)
     win.show()
     qt_app.processEvents()
