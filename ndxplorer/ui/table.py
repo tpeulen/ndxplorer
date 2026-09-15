@@ -5,8 +5,7 @@ import the shared table. But when ChiSurf *is* present there is no reason to sho
 a bare ``QTableWidget``: ``chisurf.gui.widgets.chitable`` brings search, per-column
 filters, sorting, a column picker, value colouring and CSV export that the local
 version does not have. This is the same arrangement
-:mod:`ndxplorer.ui.dataframe_editor` and :mod:`ndxplorer.ui.parameter_editor`
-already use, applied to the ordinary item-based tables.
+:mod:`ndxplorer.ui.parameter_editor` already uses, applied to the ordinary item-based tables.
 
 Both branches present the ``QTableWidget`` item API the call sites already use --
 ``item``, ``setItem``, ``rowCount``, ``insertRow`` and so on -- so a call site does
