@@ -6,10 +6,9 @@ asserted, all at import time, with no test function. pytest ran it during
 failing test — and it had been failing, because the data was passed in the
 wrong orientation.
 
-The two orientations are both real and easy to swap. A :class:`DataSource` holds
-one **column per parameter**, so its array is ``(n_points, n_parameters)``;
+A :class:`DataSource` holds one **column per parameter**;
 :meth:`DataSource.get_mask` answers ``(n_parameters, n_points)``, the shape a
-:class:`DataSelection` works in. They are transposes of each other on purpose.
+:class:`DataSelection` works in.
 """
 
 from __future__ import annotations
@@ -26,14 +25,13 @@ N_POINTS = 5
 @pytest.fixture
 def source():
     rng = np.random.default_rng(0)
-    points = np.column_stack([
-        rng.normal(4.0, 0.1, N_POINTS),
-        rng.normal(4.0, 0.1, N_POINTS),
-    ])
-    return DataSource(["x", "y"], points)
+    return DataSource.from_columns({
+        "x": rng.normal(4.0, 0.1, N_POINTS),
+        "y": rng.normal(4.0, 0.1, N_POINTS),
+    })
 
 
-def test_the_mask_is_parameter_major_even_though_the_frame_is_point_major(source):
+def test_the_mask_is_parameter_major(source):
     selection = RectangularDataSelection(0, 3.95, 4.05, False, True)
     mask = source.get_mask([selection])
 

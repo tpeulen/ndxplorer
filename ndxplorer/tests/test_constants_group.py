@@ -2,13 +2,17 @@
 from collections import OrderedDict
 
 import numpy as np
-import pandas as pd
 import pytest
 
 pytest.importorskip("chisurf.core.fitting.parameter", reason="chisurf not importable")
 
 from ndxplorer.core import constants_group as cg  # noqa: E402
 from ndxplorer.core.equation_graph import compute_values_ast  # noqa: E402
+from ndxplorer.core.data_source import float_column, store_from_columns  # noqa: E402
+
+
+def _column(store, name):
+    return float_column(store, store.find(name))
 
 
 CONSTANTS = OrderedDict([
@@ -42,15 +46,15 @@ def test_mapping_contract():
 def test_engine_reads_live_values():
     g = cg.build_constants_group(CONSTANTS)
     m = cg.ConstantsMapping(g)
-    df = pd.DataFrame({"Sg": np.array([10.0, 20.0, 30.0])})
+    df = store_from_columns({"Sg": np.array([10.0, 20.0, 30.0])})
     eqs = [{"Fg": "'Sg' - 'Bg'"}]
 
     compute_values_ast(df, m, eqs)
-    np.testing.assert_allclose(df["Fg"].to_numpy(), [10 - 1.2, 20 - 1.2, 30 - 1.2])
+    np.testing.assert_allclose(_column(df, "Fg"), [10 - 1.2, 20 - 1.2, 30 - 1.2])
 
     g.parameters_all_dict["Bg"].value = 5.0
     compute_values_ast(df, m, eqs)
-    np.testing.assert_allclose(df["Fg"].to_numpy(), [10 - 5, 20 - 5, 30 - 5])
+    np.testing.assert_allclose(_column(df, "Fg"), [10 - 5, 20 - 5, 30 - 5])
 
 
 def test_linked_constant_follows_master_in_engine():
@@ -62,13 +66,13 @@ def test_linked_constant_follows_master_in_engine():
     g.parameters_all_dict["Bg"].link = master
 
     assert m["Bg"] == 3.0  # follows the master immediately
-    df = pd.DataFrame({"Sg": np.array([10.0])})
+    df = store_from_columns({"Sg": np.array([10.0])})
     compute_values_ast(df, m, [{"Fg": "'Sg' - 'Bg'"}])
-    assert df["Fg"].iloc[0] == 7.0
+    assert _column(df, "Fg")[0] == 7.0
 
     master.value = 1.0
     compute_values_ast(df, m, [{"Fg": "'Sg' - 'Bg'"}])
-    assert df["Fg"].iloc[0] == 9.0
+    assert _column(df, "Fg")[0] == 9.0
 
 
 def test_state_roundtrip_with_bounds_and_fixed():

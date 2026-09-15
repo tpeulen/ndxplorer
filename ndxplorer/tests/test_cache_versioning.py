@@ -12,28 +12,26 @@ caches that self-guard on ``DataSource.data_version``:
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from ndxplorer.core.data_source import DataSource
+from ndxplorer.core.data_source import DataSource, store_from_columns
 from ndxplorer.core.data.data_manager import DataManager
 
 
 def _make_source(scale: float = 1.0) -> DataSource:
-    df = pd.DataFrame(
+    return DataSource.from_columns(
         {
             "a": np.arange(10, dtype=float) * scale,
             "b": np.arange(10, dtype=float)[::-1] * scale,
         }
     )
-    return DataSource(data=df)
 
 
 def test_data_version_bumps_on_data_change():
     ds = _make_source()
     v0 = ds.data_version
-    # Reassigning .data is the canonical "data changed" event.
-    ds.data = pd.DataFrame({"a": np.ones(10), "b": np.ones(10)})
+    # Replacing the store is the canonical "data changed" event.
+    ds.replace_store(store_from_columns({"a": np.ones(10), "b": np.ones(10)}))
     assert ds.data_version != v0
 
 
@@ -55,8 +53,8 @@ def test_filtered_values_cache_misses_after_data_change():
     first = dm.get_filtered_values().copy()
     # Mutate the underlying data in place (bumps data_version) without any
     # explicit cache invalidation — the version guard must catch it.
-    ds.data = pd.DataFrame({"a": np.arange(10, dtype=float) * 3.0,
-                            "b": np.arange(10, dtype=float)[::-1] * 3.0})
+    ds.replace_store(store_from_columns({"a": np.arange(10, dtype=float) * 3.0,
+                                               "b": np.arange(10, dtype=float)[::-1] * 3.0}))
     second = dm.get_filtered_values()
 
     assert not np.array_equal(first, second)
@@ -73,8 +71,8 @@ def test_axis_values_cache_respects_version():
     a0_again = dm.get_axis_values("x", 0)
     assert a0_again is a0  # cache hit, same object
 
-    ds.data = pd.DataFrame({"a": np.arange(10, dtype=float) * 5.0,
-                            "b": np.arange(10, dtype=float)[::-1] * 5.0})
+    ds.replace_store(store_from_columns({"a": np.arange(10, dtype=float) * 5.0,
+                                               "b": np.arange(10, dtype=float)[::-1] * 5.0}))
     a1 = dm.get_axis_values("x", 0)
     assert not np.array_equal(a0, a1)
     np.testing.assert_allclose(np.sort(a1), np.sort(np.arange(10) * 5.0))
@@ -102,7 +100,7 @@ def test_value_mask_cache_hits_and_versions():
     # A data change bumps data_version; the mask must be recomputed even though
     # no explicit invalidation was called and the selection/view key is
     # byte-for-byte identical.
-    ds.data = pd.DataFrame({"a": np.ones(10), "b": np.zeros(10)})
+    ds.replace_store(store_from_columns({"a": np.ones(10), "b": np.zeros(10)}))
     m1 = dm.get_value_mask()
     assert m1 is not m0
 

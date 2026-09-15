@@ -2,8 +2,7 @@
 
 Each equation ``{out_key: "expr"}`` has an arithmetic expression whose *quoted*
 names refer to columns or constants (e.g. ``"'Fg' / 'Fr'"``,
-``"(1.+ 'Fd/Fa' * 'PhiA' / 'PhiD')**(-1.0)"``). This module replaces the old
-string-preprocess + ``CaseInsensitiveDict`` + ``eval`` pipeline with:
+``"(1.+ 'Fd/Fa' * 'PhiA' / 'PhiD')**(-1.0)"``). Evaluation:
 
 1. **Parse once** — each expression is parsed to a Python AST; quoted names
    become variables (validated against a small arithmetic whitelist, so nothing
@@ -16,12 +15,12 @@ string-preprocess + ``CaseInsensitiveDict`` + ``eval`` pipeline with:
    forward reference (equation B using equation A's output, declared earlier)
    is always correct, and a changed constant recomputes exactly its transitive
    dependents.
-4. **Evaluate on NumPy arrays** — references are resolved to arrays once and the
-   compiled expression runs on them (no per-access dict lookups / Series
-   alignment), which is also faster.
+4. **Evaluate on the store's columns** — each referenced column is read out of
+   the :class:`tttrlib.DataStore` once as float64 and the compiled expression
+   runs on those arrays; the output is written back into the store.
 
-The public entry point mirrors the legacy ``compute_values`` contract: it
-mutates ``d`` in place and returns the list of output columns it (re)computed.
+:func:`compute_values_ast` writes into the store in place and returns the list
+of output columns it (re)computed.
 """
 
 from __future__ import annotations
@@ -31,7 +30,6 @@ import threading
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
-import pandas as pd
 
 from ..logging_config import logging
 
@@ -292,17 +290,20 @@ class EquationGraph:
 
     def compute(
         self,
-        d: pd.DataFrame,
+        store,
         constants: Dict[str, float],
         changed_constants: Optional[Set[str]] = None,
         targets: Optional[Sequence[str]] = None,
     ) -> List[str]:
-        """Evaluate (a subset of) the graph into ``d`` in place; return outputs written.
+        """Evaluate (a subset of) the graph into ``store``; return outputs written.
 
-        ``targets`` narrows the work to the columns those names depend on — the
-        two plotted axes, when a fit is moving a constant and re-reading them
-        thousands of times.
+        An output column that exists is rewritten in place, keeping its
+        position; a new one is appended. Outputs are float64, so a chain of
+        equations carries full precision. ``targets`` narrows the work to the
+        columns those names depend on.
         """
+        from .data_source import float_column
+
         # Which outputs to (re)compute.
         if changed_constants:
             changed_lower = {str(x).lower() for x in changed_constants}
@@ -327,34 +328,30 @@ class EquationGraph:
         if targets:
             to_compute = to_compute & self._needed_for(targets)
 
-        # Case-insensitive / left-of-pipe resolver over the live frame plus the
-        # output keys (which appear as columns are written in topological order).
+        # Case-insensitive / left-of-pipe resolver over the store's columns plus
+        # the output keys (which appear as columns are written in topological order).
         name_map: Dict[str, str] = {}
-        for col in d.columns:
-            cs = str(col)
-            name_map.setdefault(cs.lower(), col)
-            name_map.setdefault(_normalize_left(cs).lower(), col)
+        for i in range(store.n_columns()):
+            cs = store.column(i).name()
+            name_map.setdefault(cs.lower(), cs)
+            name_map.setdefault(_normalize_left(cs).lower(), cs)
         for e in self._ordered:
-            name_map.setdefault(str(e.out_key).lower(), e.out_key)
+            name_map.setdefault(str(e.out_key).lower(), str(e.out_key))
         const_map = {str(k).lower(): k for k in constants}
+        n_rows = int(store.n_rows())
 
         arr_cache: Dict[str, np.ndarray] = {}
 
         def _column_array(ref: str) -> np.ndarray:
             actual = name_map.get(ref.lower()) or name_map.get(_normalize_left(ref).lower())
-            if actual is None or actual not in d.columns:
+            index = -1 if actual is None else store.find(actual)
+            if index < 0:
                 raise KeyError(ref)
-            key = str(actual)
-            cached = arr_cache.get(key)
+            cached = arr_cache.get(actual)
             if cached is not None:
                 return cached
-            series = d[actual]
-            arr = (
-                series.to_numpy()
-                if pd.api.types.is_numeric_dtype(series)
-                else pd.to_numeric(series, errors="coerce").to_numpy()
-            )
-            arr_cache[key] = arr
+            arr = float_column(store, index)
+            arr_cache[actual] = arr
             return arr
 
         computed: List[str] = []
@@ -371,10 +368,19 @@ class EquationGraph:
                         ns[f"_r{i}"] = _column_array(ref)
                 with np.errstate(all="ignore"):
                     value = eval(e.code, _EVAL_GLOBALS, ns)  # noqa: S307 (whitelisted AST)
-                d[e.out_key] = value
+                value = np.ascontiguousarray(
+                    np.broadcast_to(np.asarray(value, dtype=np.float64), (n_rows,)))
+                name = str(e.out_key)
+                index = store.find(name)
+                if index >= 0:
+                    column = store.column(index)
+                    column.clear_mask()
+                    column.set_numpy(value)
+                else:
+                    store.add(name, value)
                 # A freshly written column invalidates any cached array of the
                 # same name (a later equation may read it).
-                arr_cache.pop(str(e.out_key), None)
+                arr_cache.pop(name, None)
                 computed.append(e.out_key)
             except Exception as exc:
                 logging.debug("equation_graph: could not compute %r: %s", e.out_key, exc)
@@ -393,22 +399,23 @@ def _graph_key(equations, columns, constant_keys):
 
 
 def compute_values_ast(
-    d: pd.DataFrame,
+    store,
     constants: Dict[str, float],
     equations: Optional[List[Dict[str, str]]] = None,
     changed_constants: Optional[Set[str]] = None,
     targets: Optional[Sequence[str]] = None,
 ) -> List[str]:
-    """AST-graph replacement for ``compute_values`` (same mutate-and-return contract)."""
+    """Evaluate `equations` into the columns of `store`; return the outputs written."""
     equations = equations or []
-    key = _graph_key(equations, d.columns, constants.keys())
+    columns = [store.column(i).name() for i in range(store.n_columns())]
+    key = _graph_key(equations, columns, constants.keys())
     graph = _GRAPH_CACHE.get(key)
     if graph is None:
-        graph = EquationGraph(equations, list(d.columns), list(constants.keys()))
+        graph = EquationGraph(equations, columns, list(constants.keys()))
         with _GRAPH_LOCK:
             _GRAPH_CACHE[key] = graph
     return graph.compute(
-        d, constants, changed_constants=changed_constants, targets=targets
+        store, constants, changed_constants=changed_constants, targets=targets
     )
 
 

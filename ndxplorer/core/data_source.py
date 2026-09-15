@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Data utilities: case-insensitive column lookup, computed columns from formulas,
-and selection masks (rectangular & 2D Gaussian). Includes a DataSource wrapper.
+The table ndXplorer shows, its computed columns, and the gates on it.
 
-Key improvements
----------------
-- De-duplicated imports & added type hints/docstrings.
-- Robust equation-file loading (YAML or JSON by extension).
-- Constant handling fixed: quoted names that match constants are wrapped as c['Name'].
-- Safer evaluation: try pandas.eval (engine='python'), fall back to plain eval.
-- Case-insensitive + "left-of-pipe" column matching preserved.
-- DataSource cache invalidation and merge helpers retained and clarified.
+:class:`DataSource` holds exactly one :class:`tttrlib.DataStore`. Readers
+produce the store, gates and histograms are evaluated in it, equations write
+their outputs into it and writers save it; there is no second representation
+of the table. Column names resolve case-insensitively and on the part left of
+``|``.
 """
 
 from __future__ import annotations
@@ -19,11 +15,11 @@ from __future__ import annotations
 import abc
 import json
 import sys
-from typing import Dict, List, Optional, Iterable, Any, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Iterable, Any, Sequence, Set, Tuple
 from collections import OrderedDict
 
 import numpy as np
-import pandas as pd
+import tttrlib
 
 from ..logging_config import logging
 
@@ -31,31 +27,6 @@ try:
     import yaml  # optional
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
-
-# ---------------------------
-# Fast numeric conversion
-# ---------------------------
-
-def _fast_to_numeric(df: pd.DataFrame, use_float32: bool = True) -> pd.DataFrame:
-    """Convert DataFrame columns to numeric; anything that is not a number becomes NaN.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame with potentially mixed types
-    use_float32 : bool
-        If True (default), use float32 to halve memory usage.
-    """
-    if df.empty:
-        return df.copy()
-    target_dtype = np.float32 if use_float32 else np.float64
-    result = df.copy()
-    for col in result.columns:
-        if not pd.api.types.is_numeric_dtype(result[col]):
-            result[col] = pd.to_numeric(result[col], errors='coerce').astype(target_dtype)
-        elif result[col].dtype != target_dtype:
-            result[col] = result[col].astype(target_dtype)
-    return result
 
 
 # ---------------------------
@@ -81,38 +52,33 @@ def _load_equations_file(path: str) -> List[Dict[str, str]]:
 
 
 def compute_values(
-    d: pd.DataFrame,
+    store: "tttrlib.DataStore",
     constants: Dict[str, float],
     equations: Optional[List[Dict[str, str]]] = None,
     equation_json_fn: Optional[str] = None,
-    engine: str = "python",
     changed_constants: Optional[Set[str]] = None,
     targets: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """
-    Compute columns in DataFrame `d` from `equations`, using case-insensitive
-    column lookup and quoted-name replacement for data/constant references.
+    Compute columns of `store` from `equations`, using case-insensitive column
+    lookup for the quoted data and constant references.
 
     Parameters
     ----------
-    d : pd.DataFrame
-        The table to augment; new columns are added/overwritten in-place.
+    store : tttrlib.DataStore
+        The table to augment; output columns are added, or replaced in place.
     constants : Dict[str, float]
-        Name → value constants. Accessed in formulas as c['Name'].
+        Name → value constants.
     equations : Optional[List[Dict[str, str]]]
         List of {new_column_name: "expression"} dicts. If None, taken from file.
     equation_json_fn : Optional[str]
         Path to YAML/JSON file with equations (detected by extension).
-    engine : str
-        Passed to pandas.eval. Use 'python' (default) for widest syntax support.
 
     Notes
     -----
-    - Expressions may refer to columns or constants using *quoted* names:
-        'Sg' / 'Sr'               -> columns
-        'Bg'                      -> constant (if present in `constants`)
-    - The preprocessor will auto-wrap quoted names not already written
-      as d['...'] or c['...'] into the appropriate form (favoring data columns).
+    Expressions refer to columns or constants using *quoted* names:
+    ``'Sg' / 'Sr'`` reads two columns, ``'Bg'`` reads a constant when
+    `constants` has one of that name.
     """
     equations = equations or []
     if not equations and equation_json_fn:
@@ -122,15 +88,13 @@ def compute_values(
             logging.warning(f"compute_values: Failed to load equations from {equation_json_fn}: {e}")
             equations = []
 
-    # Delegate to the AST dependency-graph engine: quoted names resolve by exact
-    # (case-insensitive / left-of-pipe) match, equations evaluate in topological
-    # order on NumPy arrays, and a changed constant recomputes exactly its
-    # transitive dependents. Idempotent by construction and faster than the old
-    # string-preprocess + eval pipeline.
+    # Quoted names resolve by exact (case-insensitive / left-of-pipe) match,
+    # equations evaluate in topological order, and a changed constant recomputes
+    # exactly its transitive dependents.
     from .equation_graph import compute_values_ast
 
     return compute_values_ast(
-        d, constants or {}, equations,
+        store, constants or {}, equations,
         changed_constants=changed_constants, targets=targets,
     )
 
@@ -508,205 +472,363 @@ class MaskDataSelection(DataSelection):
 
 
 # ---------------------------
-# DataSource wrapper
+# DataSource
 # ---------------------------
 
+#: Prefix of the scratch columns :mod:`tttrlib_selection` appends to the store.
+GATE_SCRATCH_PREFIX = "__gate_"
 
-def _numeric_column(series) -> np.ndarray:
-    """One DataFrame column as a contiguous float32 array.
 
-    float32 rather than float64 throughout: it halves the table, and no plot
-    axis, gate boundary or histogram edge in this program can show the
-    difference. A column that is not numeric becomes NaN, which is the store's
-    "not measured" and gates as such.
+def _left_of_pipe(name) -> str:
+    return str(name).split("|", 1)[0].strip().lower()
 
-    RECONSTRUCTED after the working-tree copy of this file was lost; the
-    docstring and the names it referred to came from the compiled bytecode.
+
+def float_column(store: "tttrlib.DataStore", index: int,
+                 dtype=np.float64) -> np.ndarray:
+    """One column of `store` as a new float array.
+
+    A row the column marks as not measured reads as NaN, and so does every row
+    of a text column: neither holds a number.
     """
-    import pandas as pd
-    try:
-        if pd.api.types.is_bool_dtype(series):
-            return np.ascontiguousarray(series.to_numpy(dtype=np.float32))
-        if pd.api.types.is_numeric_dtype(series):
-            return np.ascontiguousarray(series.to_numpy(dtype=np.float32))
-        coerced = pd.to_numeric(series, errors="coerce")
-        return np.ascontiguousarray(coerced.to_numpy(dtype=np.float32))
-    except (TypeError, ValueError):
-        return np.full(len(series), np.nan, dtype=np.float32)
+    column = store[int(index)]
+    if column.type() == tttrlib.ColumnType_String:
+        return np.full(int(store.n_rows()), np.nan, dtype=dtype)
+    values = np.array(column.numpy(), dtype=dtype, copy=True)
+    if column.has_missing():
+        values[~column.mask_numpy()[:len(values)]] = np.nan
+    return values
 
 
-def build_store(frame, label: str = ""):
-    """A :class:`tttrlib.DataStore` holding `frame`'s columns as float32.
+def store_from_columns(columns: Mapping[str, Any]) -> "tttrlib.DataStore":
+    """A :class:`tttrlib.DataStore` holding `columns`, in mapping order.
 
-    The store is the numeric representation -- there is no second one. Gates are
-    evaluated in it, histograms fill out of it, and :attr:`DataSource.values`
-    is assembled from it when a caller still wants the whole table at once.
-
-    Columns are addressed by POSITION, never by the name given here: a
-    DataFrame may carry the same column name twice, and a lookup by name would
-    silently answer with the first.
-
-    RECONSTRUCTED after the working-tree copy of this file was lost.
+    Numeric arrays keep their dtype; a sequence of strings becomes a
+    dictionary-encoded text column.
     """
-    import tttrlib
     store = tttrlib.DataStore()
-    n_rows = int(len(frame))
-    for i in range(frame.shape[1]):
-        store.add(str(frame.columns[i]), _numeric_column(frame.iloc[:, i]))
-    store.set_n_rows(n_rows)
-    if label:
-        store.set_label(label)
+    n_rows = None
+    for name, values in columns.items():
+        array = np.asarray(values)
+        if array.ndim == 0:
+            array = array.reshape(1)
+        store.add(str(name), array)
+        n_rows = len(array) if n_rows is None else n_rows
+    if n_rows is not None:
+        store.set_n_rows(int(n_rows))
     return store
+
+
+def store_with_columns(store: "tttrlib.DataStore",
+                       names: Sequence[str]) -> "tttrlib.DataStore":
+    """A new store holding copies of the columns `names` of `store`, in that order."""
+    out = tttrlib.DataStore()
+    for name in names:
+        index = store.find(str(name))
+        if index < 0:
+            raise KeyError(name)
+        column = store[index]
+        out.add(str(name), column.numpy())
+        if column.has_missing():
+            out[out.n_columns() - 1].set_mask(
+                np.ascontiguousarray(column.mask_numpy(), dtype=np.uint8))
+    out.set_n_rows(int(store.n_rows()))
+    return out
 
 
 class DataSource:
     """
-    Light wrapper around a DataFrame that provides:
-    - cached numeric values (transposed) for fast selection operations,
-    - computed columns from equations/constants,
-    - merge (by columns or rows) convenience,
-    - masking utilities that combine multiple selections and NaN/Inf culling.
-    - **column filtering** for operating on only relevant columns (axes + selections)
+    The table: one :class:`tttrlib.DataStore`, and what the program asks of it.
+
+    - column access by name or position (:meth:`column_view` without a copy,
+      :meth:`column_values` as a float copy),
+    - column edits that keep every other column where it is,
+    - computed columns from equations and constants,
+    - gates evaluated in the store (:meth:`selection_mask`),
+    - row subsets (:meth:`take`) and merges by columns or rows.
+
+    Columns are addressed by position throughout the program; a store refuses
+    two columns of one name, so position and name always agree.
     """
 
-    _data: pd.DataFrame
-    _data_numeric: pd.DataFrame
-    _parameter_names: List[str]
-    _relevant_columns_cache: Optional[Tuple[Tuple[int, ...], np.ndarray]] = None
-
-    def __init__(self, parameter_names: Optional[List[str]] = None, data: Optional[pd.DataFrame | np.ndarray] = None, is_computed: bool = False):
-        # Performance optimization: initialize cache before data assignment
-        self._column_cache = {}
-        self._cache_valid = False
-        self._cached_values_array = None
+    def __init__(self, store: Optional["tttrlib.DataStore"] = None,
+                 is_computed: bool = False):
+        self._store = store if store is not None else tttrlib.DataStore()
         self.is_computed = is_computed
-        
-        if isinstance(data, np.ndarray):
-            self.data = pd.DataFrame(data, columns=parameter_names)
-        elif isinstance(data, pd.DataFrame):
-            self.data = data
-        else:
-            self.data = pd.DataFrame()
+        self._data_version = 0
+        self._parameter_names: Optional[List[str]] = None
+        self._cached_values_array: Optional[np.ndarray] = None
+        self._relevant_columns_cache = None
+        self._gate_scratch: Dict[Any, int] = {}
 
-        if isinstance(parameter_names, list):
-            self._parameter_names = parameter_names
-        else:
-            self._parameter_names = list(self._data.columns)
+    @classmethod
+    def from_columns(cls, columns: Mapping[str, Any],
+                     is_computed: bool = False) -> "DataSource":
+        """A source holding `columns` (name → array), in mapping order."""
+        return cls(store_from_columns(columns), is_computed=is_computed)
 
     def __str__(self) -> str:  # pragma: no cover
-        return self._data.__str__()
+        return repr(self._store)
 
     def __len__(self) -> int:
         return self.size
 
-    # ---- properties ----
+    # ---- the store ----
+
+    @property
+    def store(self) -> "tttrlib.DataStore":
+        """The :class:`tttrlib.DataStore` holding the table.
+
+        Gates leave their answer in its row selection and may append scratch
+        columns past :attr:`n_parameters`; everything else goes through the
+        methods of this class so the caches stay right.
+        """
+        return self._store
+
+    def replace_store(self, store: "tttrlib.DataStore") -> None:
+        """Make `store` the table, dropping everything derived from the old one."""
+        self._store = store
+        self._gate_scratch = {}
+        self._structure_changed()
+
+    def _drop_gate_scratch(self) -> None:
+        """Remove the gate scratch columns, so new columns land at the next position."""
+        store = self._store
+        for index in range(store.n_columns() - 1, -1, -1):
+            if store.column(index).name().startswith(GATE_SCRATCH_PREFIX):
+                store.remove_column(index)
+        self._gate_scratch = {}
+
+    def _structure_changed(self) -> None:
+        self._parameter_names = None
+        self._values_changed()
+
+    def _values_changed(self) -> None:
+        """Drop everything derived from the numbers and bump :attr:`data_version`."""
+        self._cached_values_array = None
+        self._relevant_columns_cache = None
+        # The scratch columns stay where they are and are rewritten in place on
+        # the next gate evaluation.
+        self._gate_scratch = {}
+        self._data_version += 1
+
+    # ---- shape ----
 
     @property
     def parameter_names(self) -> List[str]:
+        if self._parameter_names is None:
+            store = self._store
+            names = [store.column(i).name() for i in range(store.n_columns())]
+            self._parameter_names = [n for n in names
+                                     if not n.startswith(GATE_SCRATCH_PREFIX)]
         return self._parameter_names
-
-    @property
-    def values(self) -> np.ndarray:
-        """
-        Returns (n_parameters, n_points) numeric np.ndarray (cached).
-        Optimized for large datasets with lazy evaluation and memory efficiency.
-        Uses float32 to halve memory usage compared to float64.
-        
-        The transposed array is cached to avoid repeated memory copies.
-        """
-        if self._cached_values_array is not None:
-            return self._cached_values_array
-
-        if self._data is None:
-            # A store-backed source: the columns are read from the store, not
-            # from a DataFrame nobody asked to build.
-            store = self.store
-            columns = [np.asarray(store[i].numpy(), dtype=np.float32)
-                       for i in range(self.n_parameters)]
-            self._cached_values_array = (np.vstack(columns) if columns
-                                         else np.zeros((0, 0), dtype=np.float32))
-            return self._cached_values_array
-
-        # Get underlying numpy array - avoid DataFrame overhead
-        numeric_data = self._data_numeric.values
-        
-        # Convert to float32 only if needed (halves memory vs float64)
-        if numeric_data.dtype != np.float32:
-            # Use Fortran order for the transposed result to be C-contiguous
-            self._cached_values_array = np.ascontiguousarray(
-                numeric_data.T, dtype=np.float32
-            )
-        else:
-            # If already float32, just transpose with contiguous memory
-            self._cached_values_array = np.ascontiguousarray(numeric_data.T)
-        
-        return self._cached_values_array
-
-    @property
-    def store(self):
-        """The :class:`tttrlib.DataStore` holding the numeric columns.
-
-        Built once when the data changes. Gates are evaluated in it and
-        histograms fill out of it, so nothing on either path copies the table.
-        """
-        store = getattr(self, "_store", None)
-        if store is None:
-            store = build_store(self.data)
-            self._store = store
-        return store
 
     @property
     def n_parameters(self) -> int:
         """How many parameter columns the table has."""
-        return len(self._parameter_names)
+        return len(self.parameter_names)
 
-    @classmethod
-    def from_store(cls, store, is_computed: bool = False) -> "DataSource":
-        """Wrap a :class:`tttrlib.DataStore` -- the store IS the data.
+    @property
+    def size(self) -> int:
+        """How many rows the table has."""
+        return int(self._store.n_rows()) if self.n_parameters else 0
 
-        The shortest path from a file to a plot. A columnar HDF5 or a CSV read
-        by tttrlib arrives as a store already, and this takes it as it is: no
-        DataFrame is built, no column is converted, and nothing is copied. The
-        table can be most of the memory in the process, so "nothing is copied"
-        is the difference between a file opening and not.
+    @property
+    def empty(self) -> bool:
+        return self._store.n_rows() == 0 or self.n_parameters == 0
 
-        The DataFrame is built lazily, and only by the things that genuinely
-        need one -- the equation engine, the table editor, a pandas ``query``.
-        Loading, gating, histogramming and plotting never ask for it.
+    @property
+    def data_version(self) -> int:
+        """Monotonic counter bumped whenever the table changes.
+
+        Lets caches detect a change with an integer compare instead of hashing
+        the columns on every access.
         """
-        source = cls()
-        source._store = store
-        source._data = None
-        source._data_numeric = None
-        source._parameter_names = [store.column(i).name()
-                                   for i in range(store.n_columns())]
-        source.is_computed = is_computed
-        source._invalidate_caches()
-        return source
+        return self._data_version
+
+    # ---- reading columns ----
 
     def column_index(self, name: str) -> int:
         """The position of `name`, or -1.
 
-        Case-insensitive and on the part left of ``|``, as everywhere else. By
-        position rather than by name because a table may carry the same column
-        name twice and a lookup by name would silently answer with the first.
+        An exact match first, then case-insensitive on the part left of ``|``.
         """
-        wanted = str(name).split("|")[0].strip().lower()
-        for i, candidate in enumerate(list(self._parameter_names)):
-            if str(candidate).split("|")[0].strip().lower() == wanted:
+        names = self.parameter_names
+        if name in names:
+            return names.index(name)
+        wanted = _left_of_pipe(name)
+        for i, candidate in enumerate(names):
+            if _left_of_pipe(candidate) == wanted:
                 return i
         return -1
 
-    def column_view(self, index: int) -> Optional[np.ndarray]:
-        """One column as a float32 view INTO the store -- no copy.
+    def has_column(self, name: str) -> bool:
+        return self.column_index(name) >= 0
 
-        The view keeps the store alive, so it cannot outlive its data. Write to
-        it and you have written to the table; :meth:`column_values` is the
-        copying form for a caller that wants to modify what it gets.
+    def is_text_column(self, index: int) -> bool:
+        return self._store.column(int(index)).type() == tttrlib.ColumnType_String
+
+    def column_view(self, index: int) -> Optional[np.ndarray]:
+        """One column as a view INTO the store, in its own dtype -- no copy.
+
+        The view keeps the store alive. Write to it and you have written to the
+        table; :meth:`column_values` is the copying form. A text column holds no
+        numbers and reads as a new all-NaN float32 array.
         """
         if not (0 <= int(index) < self.n_parameters):
             return None
-        return self.store[int(index)].numpy()
+        if self.is_text_column(index):
+            return np.full(int(self._store.n_rows()), np.nan, dtype=np.float32)
+        return self._store[int(index)].numpy()
+
+    def column_values(self, name: str) -> Optional[np.ndarray]:
+        """One column as a new float64 array, or ``None`` if there is no such column.
+
+        Rows marked not measured, and text, read as NaN.
+        """
+        if name is None:
+            return None
+        index = self.column_index(name)
+        if index < 0:
+            return None
+        return float_column(self._store, index)
+
+    def column_items(self, index: int) -> np.ndarray:
+        """One column's values as they are stored: numbers in their dtype, text as str."""
+        return np.array(self._store[int(index)].numpy(), copy=True)
+
+    @property
+    def values(self) -> np.ndarray:
+        """The table as a ``(n_parameters, n_points)`` float32 array (cached).
+
+        A copy of every column; a caller that needs one or two columns reads
+        them with :meth:`column_view` instead.
+        """
+        if self._cached_values_array is None:
+            store = self._store
+            columns = [float_column(store, i, dtype=np.float32)
+                       for i in range(self.n_parameters)]
+            self._cached_values_array = (
+                np.vstack(columns) if columns
+                else np.zeros((0, 0), dtype=np.float32))
+        return self._cached_values_array
+
+    # ---- editing columns ----
+
+    def set_column(self, name: str, values) -> int:
+        """Write `values` into the column `name`, adding it at the end if new.
+
+        An existing column keeps its position and takes the dtype of `values`;
+        a scalar fills every row. Returns the column's position.
+        """
+        store = self._store
+        array = np.asarray(values)
+        n_rows = int(store.n_rows())
+        if array.ndim == 0 and (self.n_parameters or n_rows):
+            array = np.full(n_rows, array.item(),
+                            dtype=array.dtype if array.dtype.kind != "U" else object)
+        if self.n_parameters and len(array) != n_rows:
+            raise ValueError(
+                "column %r has %d rows, the table has %d" % (name, len(array), n_rows))
+        index = store.find(str(name))
+        if index >= 0:
+            column = store.column(index)
+            if column.type() == tttrlib.ColumnType_String or array.dtype.kind in ("U", "S", "O"):
+                # Text is appended code by code, so the column is rebuilt.
+                self._drop_gate_scratch()
+                return self._rebuild_column(index, str(name), array)
+            column.clear_mask()
+            column.set_numpy(array)
+            self._values_changed()
+            return index
+        self._drop_gate_scratch()
+        store.add(str(name), array)
+        if store.n_columns() == 1:
+            store.set_n_rows(len(array))
+        self._structure_changed()
+        return store.n_columns() - 1
+
+    def _rebuild_column(self, index: int, name: str, array: np.ndarray) -> int:
+        store = self._store
+        tail = [store.column(i).name() for i in range(index + 1, store.n_columns())]
+        rest = store_with_columns(store, tail)
+        for i in range(store.n_columns() - 1, index - 1, -1):
+            store.remove_column(i)
+        store.add(name, array)
+        store.append_columns(rest)
+        self._structure_changed()
+        return index
+
+    def remove_column(self, name: str) -> bool:
+        """Remove the column `name`; the columns after it move up one position."""
+        index = self._store.find(str(name))
+        if index < 0:
+            return False
+        self._drop_gate_scratch()
+        self._store.remove_column(index)
+        self._structure_changed()
+        return True
+
+    def rename_column(self, name: str, new_name: str) -> bool:
+        index = self._store.find(str(name))
+        if index < 0:
+            return False
+        if self._store.find(str(new_name)) >= 0:
+            raise ValueError("a column named %r exists" % new_name)
+        self._store.column(index).set_name(str(new_name))
+        self._structure_changed()
+        return True
+
+    def clear(self) -> None:
+        self.replace_store(tttrlib.DataStore())
+
+    # ---- rows ----
+
+    def take(self, rows) -> "DataSource":
+        """A new source holding `rows` (positions, or one bool per row), in that order."""
+        rows = np.asarray(rows)
+        if rows.dtype == bool:
+            rows = np.flatnonzero(rows)
+        taken = self._store.take(np.ascontiguousarray(rows, dtype=np.int32))
+        source = DataSource(taken, is_computed=self.is_computed)
+        source._drop_gate_scratch()
+        return source
+
+    def copy(self) -> "DataSource":
+        """An independent copy of the table, without its row selection."""
+        source = DataSource(self._store.copy(), is_computed=self.is_computed)
+        source._store.clear_row_mask()
+        source._drop_gate_scratch()
+        return source
+
+    # ---- equations ----
+
+    def compute_columns(
+        self,
+        constants: Dict[str, float],
+        equations: Optional[List[Dict[str, str]]] = None,
+        equation_json_fn: Optional[str] = None,
+        changed_constants: Optional[Set[str]] = None,
+        targets: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """Evaluate the equations into the store; returns the columns written."""
+        self._drop_gate_scratch()
+        n_before = self._store.n_columns()
+        computed = compute_values(
+            store=self._store,
+            constants=constants,
+            equations=equations,
+            equation_json_fn=equation_json_fn,
+            changed_constants=changed_constants,
+            targets=targets,
+        )
+        self.is_computed = True
+        if self._store.n_columns() != n_before:
+            self._structure_changed()
+        else:
+            self._values_changed()
+        return computed
+
+    # ---- gates ----
 
     def selection_mask(self, selections, idxs=(), mask_nan: bool = True,
                        mask_inf: bool = True) -> np.ndarray:
@@ -714,99 +836,36 @@ class DataSource:
 
         The one place a gate is evaluated. It happens in the store: the columns
         are already there in their own dtype, the answer is a bit per row, and
-        the histogram fill reads that bit directly -- so no ``(n_parameters,
-        n_points)`` boolean array is built, no index array is made from it, and
-        no rows are copied.
+        the histogram fill reads that bit directly.
 
         :param selections: the gates, in any order; disabled ones are ignored
         :param idxs: columns that must have a finite value for the row to count
         :param mask_nan, mask_inf: which kinds of non-finite ``idxs`` rejects
         """
         from . import tttrlib_selection
-        store = self.store
+        store = self._store
         n_rows = int(store.n_rows())
         if n_rows == 0:
             return np.zeros(0, dtype=bool)
         if not selections and not idxs:
             return np.ones(n_rows, dtype=bool)
-        if getattr(self, "_gate_scratch", None) is None:
-            self._gate_scratch = {}
         return tttrlib_selection.apply(
             store, selections, idxs=idxs, mask_nan=mask_nan,
             mask_inf=mask_inf, n_columns=self.n_parameters,
             scratch=self._gate_scratch,
         )
 
-    def _refresh_store_columns(self, names) -> bool:
-        """Write recomputed columns back into the store, in place.
-
-        **The store is what the picture is made of.** Gates are evaluated in it
-        and histograms fill out of it, so a column that changed in ``_data``
-        and not in the store is a plot that disagrees with its own numbers —
-        which is exactly what a parameter edit produced: the derived FRET
-        columns moved and the histograms did not, with nothing anywhere saying
-        so.
-
-        Returns
-        -------
-        bool
-            ``True`` when every named column was written. ``False`` means the
-            store no longer matches the table (a column was added, or the
-            positions moved) and the caller must drop it so it rebuilds —
-            columns are addressed by **position**, so a mismatch cannot be
-            patched, only rebuilt.
-        """
-        store = getattr(self, "_store", None)
-        if store is None or self._data is None:
-            return True
-        columns = list(self._data.columns)
-        for name in names:
-            try:
-                index = columns.index(name)
-            except ValueError:
-                return False
-            if index >= store.n_columns() or store.column(index).name() != str(name):
-                return False
-            try:
-                store.column(index).set_numpy(
-                    _numeric_column(self._data.iloc[:, index]))
-            except Exception:
-                return False
-        return True
-
-    def _invalidate_caches(self) -> None:
-        """Drop everything derived from the numeric data.
-
-        The store itself is kept unless the caller cleared it: rewriting one
-        column in place is a targeted refresh, and rebuilding the whole table
-        for it is what this exists to avoid.
-        """
-        self._cached_values_array = None
-        self._cache_valid = False
-        if hasattr(self, "_column_cache"):
-            self._column_cache.clear()
-        self._relevant_columns_cache = None
-        self._data_version = getattr(self, "_data_version", 0) + 1
-
     def query_mask(self, query: str) -> np.ndarray:
         """Rows kept by a boolean query over the parameter columns.
 
-        Evaluated by the store itself: ``DataStore.select_expression`` compiles
-        the query once and runs it over the columns in their own types --
-        float32 bound directly, integers widened through typed pointers --
-        writing a bit-packed selection. Nothing is copied per query, and the
-        DataFrame is never built for one.
-
-        The store's own selection is left as it was: this answers a question
-        rather than applying a gate. To *set* the selection, call
-        ``select_expression`` on the store directly, where it composes with
-        the other gates through ``Combine_And``/``Or``/``AndNot``.
+        Evaluated by ``DataStore.expression_mask``: compiled once and run over
+        the columns in their own types. The store's own selection is untouched.
 
         Parameters
         ----------
         query : str
             Boolean expression over the parameter names. ``&``, ``|`` and
-            ``~`` mean what they do in a pandas query.
+            ``~`` mean and, or and not.
 
         Returns
         -------
@@ -818,115 +877,15 @@ class DataSource:
         ValueError
             If the query does not compile, or names an unknown parameter.
         """
-        store = self.store
-        had_mask = store.has_row_mask()
-        saved = store.selection().copy() if had_mask else None
-        try:
-            store.select_expression(query)
-            return store.selection().copy()
-        finally:
-            if had_mask:
-                store.select(saved)
-            else:
-                store.clear_row_mask()
+        store = self._store
+        mask = store.expression_mask(query)
+        out = np.empty(int(store.n_rows()), dtype=np.uint8)
+        mask.to_bytes(out)
+        return out.astype(bool)
 
     def query_count(self, query: str) -> int:
-        """How many rows a query keeps, without materialising a mask.
-
-        The cheapest form of the question: the store counts the bits and
-        nothing crosses into Python.
-        """
-        return int(self.store.count_expression(query))
-
-    def column_values(self, name: str) -> Optional[np.ndarray]:
-        """One numeric column as a float array, or ``None`` if there is no such column.
-
-        :attr:`values` rebuilds a ``(n_parameters, n_points)`` copy of the
-        *whole* table whenever anything changed — right once per redraw, ruinous
-        inside a fit that recomputes one column and re-reads it thousands of
-        times. Names resolve case-insensitively and on the part left of ``|``,
-        as everywhere else.
-        """
-        frame = self._data_numeric if self._data_numeric is not None else self._data
-        if frame is None and name is not None and getattr(self, "_store", None) is not None:
-            index = self.column_index(name)
-            return None if index < 0 else np.array(self._store[index].numpy(), copy=True)
-        if frame is None or name is None:
-            return None
-        column = None
-        if name in frame.columns:
-            column = name
-        else:
-            wanted = str(name).lower()
-            wanted_left = str(name).split("|", 1)[0].strip().lower()
-            for candidate in frame.columns:
-                text = str(candidate)
-                if text.lower() == wanted or text.split("|", 1)[0].strip().lower() == wanted_left:
-                    column = candidate
-                    break
-        if column is None:
-            return None
-        return np.asarray(frame[column].values, dtype=float)
-
-    def clear(self) -> None:
-        self.data = pd.DataFrame()
-
-    def compute_columns(
-        self,
-        constants: Dict[str, float],
-        equations: Optional[List[Dict[str, str]]] = None,
-        equation_json_fn: Optional[str] = None,
-        engine: str = "python",
-        changed_constants: Optional[Set[str]] = None,
-        targets: Optional[Sequence[str]] = None,
-    ) -> None:
-        computed = compute_values(
-            d=self.data,
-            constants=constants,
-            equations=equations,
-            equation_json_fn=equation_json_fn,
-            engine=engine,
-            changed_constants=changed_constants,
-            targets=targets,
-        )
-        self.is_computed = True
-
-        if changed_constants and computed and getattr(self, "_data_numeric", None) is not None:
-            # Targeted refresh: only re-convert the columns that were actually
-            # recomputed instead of re-running _fast_to_numeric over the whole
-            # (100-column) frame. Avoids a full reconversion on every param edit.
-            try:
-                existing = [c for c in computed if c in self._data.columns]
-                if existing:
-                    sub = _fast_to_numeric(self._data[existing])
-                    for col in existing:
-                        if col in sub.columns:
-                            self._data_numeric[col] = sub[col]
-                # The store holds its own copy of every column and is what the
-                # histograms and gates read. Updating only `_data_numeric` left
-                # it on the previous values, so an edited constant changed the
-                # table and not the picture.
-                if not self._refresh_store_columns(existing):
-                    self._store = None
-                self._cached_values_array = None
-                self._cache_valid = False
-                if hasattr(self, "_column_cache"):
-                    self._column_cache.clear()
-                self._relevant_columns_cache = None
-                self._data_version = getattr(self, "_data_version", 0) + 1
-                return
-            except Exception as exc:
-                logging.debug("Targeted numeric refresh failed, full refresh: %s", exc)
-
-        # Full refresh (initial load or no targeting info)
-        self.data = self.data
-
-    @property
-    def empty(self) -> bool:
-        if self._data is None:
-            store = self.store
-            return store.n_rows() == 0 or store.n_columns() == 0
-        return self._data.empty
+        """How many rows a query keeps, without materialising a mask."""
+        return int(self._store.count_expression(query))
 
     def get_mask(
         self,
@@ -937,89 +896,19 @@ class DataSource:
     ) -> np.ndarray:
         """
         Combine selection masks and optionally mask NaN/Inf on selected parameter indices.
-        Optimized for large datasets with vectorized operations and early termination.
 
         Returns
         -------
         mask : np.ndarray (bool), shape (n_parameters, n_points)
-            True → masked/excluded.
+            True → masked/excluded. One read-only row broadcast over the parameters.
         """
-        from ..logging_config import logging
         idxs = idxs or []
-        d = self.values
-        n_param, n_pts = d.shape
-
-        # Pre-allocate mask with zeros for better performance
-        mask = np.zeros((n_param, n_pts), dtype=bool)
-
-        # Early exit if no selections and no idx filtering
+        n_param, n_pts = self.n_parameters, self.size
         if not selections and not idxs:
-            return mask
-
-        # The gates are evaluated in tttrlib's DataStore, which answers per row
-        # ("True means KEPT"); this method's contract is per parameter row and
-        # inverted ("True means masked out"), so the one answer is broadcast:
-        # a read-only view, every parameter row the same row.
+            return np.zeros((n_param, n_pts), dtype=bool)
         keep = self.selection_mask(selections, idxs=idxs,
                                    mask_nan=mask_nan, mask_inf=mask_inf)
         return np.broadcast_to(~keep, (n_param, n_pts))
-
-    @property
-    def data(self) -> pd.DataFrame:
-        """The table as a DataFrame, built from the store the first time a
-        store-backed source is asked for one (the equation engine, the table
-        editor); loading, gating and histogramming never ask."""
-        if self._data is None and getattr(self, "_store", None) is not None:
-            store = self._store
-            frame = pd.DataFrame({i: np.array(store[i].numpy(), copy=True)
-                                  for i in range(store.n_columns())})
-            frame.columns = list(self._parameter_names)
-            self._data = frame
-            self._data_numeric = frame
-        return self._data
-
-    @data.setter
-    def data(self, v: pd.DataFrame) -> None:
-        # Avoid copy if v is already a DataFrame and caller doesn't need original
-        # For large datasets, this saves significant memory and time
-        if isinstance(v, pd.DataFrame):
-            # Always copy to ensure we own the data and avoid unexpected mutations
-            # The copy is necessary for correctness but we optimize the numeric conversion
-            self._data = v.copy()
-        else:
-            self._data = pd.DataFrame()
-        self._parameter_names = list(self._data.columns)
-        # Optimized numeric conversion using PyArrow when available
-        self._data_numeric = _fast_to_numeric(self._data)
-        # The store is derived from this table and addresses its columns by
-        # position, so a new table invalidates it wholesale. Keeping it meant an
-        # in-place data replacement went on plotting the previous table.
-        self._store = None
-        # Invalidate all caches
-        self._cached_values_array = None
-        self._cache_valid = False
-        if hasattr(self, '_column_cache'):
-            self._column_cache.clear()
-        # Invalidate column subset cache
-        self._relevant_columns_cache = None
-        # Bump the monotonic data version so downstream caches can detect a data
-        # change with an O(1) integer compare instead of hashing the whole array.
-        self._data_version = getattr(self, "_data_version", 0) + 1
-
-    @property
-    def size(self) -> int:
-        if self._data is None:
-            return int(self.store.n_rows()) if not self.empty else 0
-        return self.values.shape[1] if not self.empty else 0
-
-    @property
-    def data_version(self) -> int:
-        """Monotonic counter bumped whenever the underlying data changes.
-
-        Lets caches detect a data change with an O(1) integer compare instead of
-        hashing the array on every access.
-        """
-        return getattr(self, "_data_version", 0)
 
     # ---- column filtering for performance ----
 
@@ -1057,7 +946,7 @@ class DataSource:
                 indices.add(sel.parameter_idx1)
                 indices.add(sel.parameter_idx2)
 
-        n_cols = len(self._parameter_names)
+        n_cols = self.n_parameters
         return sorted(idx for idx in indices if 0 <= idx < n_cols)
 
     def get_values_subset(
@@ -1065,34 +954,24 @@ class DataSource:
         column_indices: List[int],
     ) -> Tuple[np.ndarray, Dict[int, int]]:
         """
-        Return a subset of the values array containing only the specified columns.
-
-        Parameters
-        ----------
-        column_indices : List[int]
-            Original column indices to include.
+        The columns `column_indices` as a ``(len(column_indices), n_points)`` float32 array.
 
         Returns
         -------
         subset : np.ndarray
-            Shape (len(column_indices), n_points) with only the requested columns.
         index_map : Dict[int, int]
             Mapping from original column index to new index in the subset.
         """
         cache_key = tuple(column_indices)
-        if (
-            hasattr(self, '_relevant_columns_cache')
-            and self._relevant_columns_cache is not None
-            and self._relevant_columns_cache[0] == cache_key
-        ):
+        if (self._relevant_columns_cache is not None
+                and self._relevant_columns_cache[0] == cache_key):
             return self._relevant_columns_cache[1], self._relevant_columns_cache[2]
 
-        all_values = self.values
         if not column_indices:
-            empty = np.empty((0, all_values.shape[1]), dtype=np.float32)
-            return empty, {}
+            return np.empty((0, self.size), dtype=np.float32), {}
 
-        subset = all_values[column_indices, :]
+        subset = np.vstack([float_column(self._store, i, dtype=np.float32)
+                            for i in column_indices])
         index_map = {orig: new for new, orig in enumerate(column_indices)}
         self._relevant_columns_cache = (cache_key, subset, index_map)
         return subset, index_map
@@ -1103,12 +982,8 @@ class DataSource:
         axis_indices: List[int],
         mask_nan: bool = True,
         mask_inf: bool = True,
-        use_bitfield: bool = True,
     ) -> np.ndarray:
         """Per-point exclusion mask: the gates, and non-finite values on the axes.
-
-        Evaluated in tttrlib's DataStore through :meth:`selection_mask`, the one
-        gate implementation. ``use_bitfield`` is ignored.
 
         Returns
         -------
@@ -1119,23 +994,21 @@ class DataSource:
                                    mask_nan=mask_nan, mask_inf=mask_inf)
         return ~keep
 
-    # ---- merge helpers ----
+    # ---- merge ----
 
     def merge(self, other_source: "DataSource", mode: str = 'columns') -> bool:
         """
         Merge data from another DataSource.
 
-        Parameters
-        ----------
-        other_source : DataSource
-        mode : {'columns', 'rows'}
+        ``'columns'`` puts the other table's columns beside these (same rows;
+        a name already present keeps this table's column). ``'rows'`` stacks the
+        other table's rows under these, keeping only the columns both have.
 
         Returns
         -------
         bool
             True on success, False otherwise.
         """
-        # Lazy import to avoid hard dependency on Qt in headless environments
         def _warn(title: str, msg: str) -> None:
             try:
                 from qtpy.QtWidgets import QMessageBox  # type: ignore
@@ -1143,40 +1016,51 @@ class DataSource:
             except Exception:
                 print(f"[merge:{title}] {msg}", file=sys.stderr)
 
+        own_names = list(self.parameter_names)
+        other_names = list(other_source.parameter_names)
+
         if mode == 'columns':
-            if len(self.data) != len(other_source.data):
+            if self.size != other_source.size and self.n_parameters:
                 _warn(
                     "Row Count Mismatch",
-                    f"New data has {len(other_source.data)} rows, current has {len(self.data)} rows. Not merging."
+                    f"New data has {other_source.size} rows, current has {self.size} rows. Not merging."
                 )
                 return False
-
-            duplicate_cols = set(self.data.columns).intersection(set(other_source.data.columns))
-            df_unique = other_source.data.drop(columns=list(duplicate_cols)) if duplicate_cols else other_source.data
-            combined = pd.concat([self.data, df_unique], axis=1)
-            self.data = combined
+            new = [n for n in other_names if n not in own_names]
+            if not new:
+                return True
+            self._drop_gate_scratch()
+            addition = store_with_columns(other_source.store, new)
+            if not own_names:
+                self.replace_store(addition)
+                return True
+            self._store.append_columns(addition)
+            self._structure_changed()
             return True
 
         if mode == 'rows':
-            existing = set(self.data.columns)
-            incoming = set(other_source.data.columns)
-            new_unique = incoming - existing
+            new_unique = set(other_names) - set(own_names)
             if new_unique:
                 _warn(
                     "New Columns Found",
                     f"New data contains columns not in current data: {', '.join(sorted(new_unique))}. "
                     f"Only rows of existing columns will be appended."
                 )
-
-            common = sorted(existing.intersection(incoming))
+            common = sorted(set(own_names).intersection(other_names))
             if not common:
                 _warn("No Common Columns", "No overlapping columns. Cannot append rows.")
                 return False
-
-            other_common = other_source.data[common]
-            combined = pd.concat([self.data[common], other_common], axis=0, ignore_index=True)
-            # Keep original full set of columns if desired; here we keep only common to ensure consistency
-            self.data = combined
+            combined = store_with_columns(self._store, common)
+            appended = store_with_columns(other_source.store, common)
+            for name in common:
+                mine, theirs = combined[name], appended[name]
+                if (mine.type() != theirs.type() and mine.is_numeric()
+                        and theirs.is_numeric()):
+                    # Two numeric types meet in float64, which holds both.
+                    for column in (mine, theirs):
+                        column.set_numpy(np.asarray(column.numpy(), dtype=np.float64))
+            combined.append_rows(appended, tttrlib.DataStore.Join_Inner)
+            self.replace_store(combined)
             return True
 
         _warn("Invalid Merge Mode", f"Invalid mode: {mode}. Must be 'columns' or 'rows'.")
