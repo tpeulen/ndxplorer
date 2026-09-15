@@ -83,3 +83,12 @@ def open_smfret(ndxplorer, merge_mode: str = "columns"):
             return
         append, merge_mode = result
     open_files(ndxplorer, file_type="burst_dir", append=append, merge_mode=merge_mode)
+
+
+def open_pto(
+    ndxplorer,
+    filenames: Optional[List[str]] = None,
+    append: bool = False,
+    merge_mode: str = "columns",
+):
+    _open_with_merge_dialog(ndxplorer, filenames, "pto", "Open PTO Container", append, merge_mode)
