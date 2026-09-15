@@ -37,7 +37,6 @@ ndXplorer requires the following dependencies:
 * matplotlib and PyQtGraph (for plotting)
 * UMAP-learn (for dimensionality reduction)
 * HDBSCAN and scikit-learn (for clustering)
-* guidata and guiqwt (for GUI components)
 
 ## Installation
 

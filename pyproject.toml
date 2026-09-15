@@ -36,7 +36,6 @@ dependencies = [
     "pyqtgraph",
     "tables",
     "PyYAML",
-    "pyarrow>=10.0.0",
     "pandas>=1.5.0",
     "click>=8.0.0",
     # Mask images (ndxplorer.utils.mask_helpers) are TIFF, read and written
@@ -45,6 +44,21 @@ dependencies = [
     # scikit-image/tifffile, neither of which was declared here, so loading a
     # mask raised ImportError on a clean install. The array TIFF API needs 0.27.
     "tttrlib>=0.27",
+    # ChiSurf. Not an optional integration: region/lasso gates are
+    # `chisurf.core.roi` shapes (ndxplorer.core.region_selection), the parameter
+    # and constants tables are `chisurf.core.fitting.parameter` groups, and the
+    # data-frame editor, curve-fit dialog and glyphs come from `chisurf.gui`.
+    # It was used in all of those places and declared in none, so a clean
+    # install imported fine and then raised ModuleNotFoundError the first time
+    # somebody drew a lasso.
+    #
+    # ChiSurf is on no package index; it and ndXplorer are installed from the
+    # same source tree, which is why the documented install is
+    # `pip install --no-deps -e .`. Naming it here is the statement of what this
+    # package needs, not a resolvable requirement -- and a loud failure at
+    # install time is the better half of the trade against a silent one at the
+    # first drawn gate.
+    "chisurf",
 ]
 
 [project.urls]
@@ -74,7 +88,7 @@ include = ["ndxplorer*"]
     "*.dll", "*.so", "*.pyd",
     "*.txt"
 ]
-"ndxplorer.plotting" = ["*.ui"]
+"ndxplorer.plotting" = ["*.ui", "*.json"]
 "ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg"]
 "ndxplorer.settings" = ["*.json", "*.yaml"]
 "ndxplorer.settings.templates" = ["*"]
