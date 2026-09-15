@@ -87,13 +87,10 @@ def _apply_filter_logic(data_source, select, query):
     mask = data_source.get_mask(selections=selections)
     keep_mask = ~np.any(mask, axis=0)
     
-    # Apply pandas query if provided
+    # Apply the query if provided. Evaluated by the store, not pandas.
     if query:
-        query_keep = data_source.data.eval(query)
-        if isinstance(query_keep, pd.Series):
-            query_keep = query_keep.to_numpy()
-        keep_mask = keep_mask & query_keep
-        
+        keep_mask = keep_mask & data_source.query_mask(query)
+
     return keep_mask
 
 
