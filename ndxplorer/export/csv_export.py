@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
+import tttrlib
 
 from ..logging_config import logging
 from ..utils.performance_optimizations import get_performance_monitor
@@ -29,12 +29,11 @@ def export_table(
     path: Path,
     *,
     delimiter: Optional[str] = None,
-    encoding: str = "utf-8",
     include_metadata: bool = True,
     metadata_path: Optional[Path] = None,
 ) -> None:
     """
-    Write the selection data as CSV/TSV.
+    Write the selection data as CSV/TSV (UTF-8) with tttrlib's CSV writer.
 
     Parameters
     ----------
@@ -44,8 +43,6 @@ def export_table(
         Destination file path.
     delimiter:
         Column separator. If None, inferred from suffix (.csv/.tsv).
-    encoding:
-        Text encoding for the CSV file.
     include_metadata:
         When True, write a sidecar JSON file describing selections & metadata.
     metadata_path:
@@ -56,12 +53,12 @@ def export_table(
         raise ValueError("export_table requires payload.table or payload.values.")
 
     delimiter = delimiter or _guess_delimiter(path)
-    df: pd.DataFrame = payload.as_dataframe()
+    table = payload.as_store()
 
     logging.info(
         "Exporting %d rows x %d cols to %s (delimiter=%r)",
-        len(df.index),
-        len(df.columns),
+        table.n_rows(),
+        table.n_columns(),
         path,
         delimiter,
     )
@@ -71,7 +68,7 @@ def export_table(
     op_name = f"export_csv[{path.suffix or 'unknown'}]"
     perf.start_timer(op_name)
     try:
-        df.to_csv(path, sep=delimiter, index=False, encoding=encoding)
+        tttrlib.write_csv(str(path), table, delimiter=delimiter, selected_only=False)
         if include_metadata:
             meta_path = metadata_path or path.with_suffix(path.suffix + ".meta.json")
             _write_metadata(payload, meta_path)

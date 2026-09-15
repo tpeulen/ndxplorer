@@ -8,7 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
-import pandas as pd
+import tttrlib
+
+from ..core.data_source import store_from_columns
 
 SelectionLike = Any
 
@@ -18,15 +20,14 @@ class ExportValidationError(ValueError):
 
 
 def _to_plain_value(value: Any) -> Any:
-    """Convert numpy/Pandas scalar types to native Python for serialization."""
+    """Convert numpy types and stores to native Python for serialization."""
     if isinstance(value, np.ndarray):
         return value.tolist()
     if isinstance(value, (np.generic,)):
         return value.item()
-    if isinstance(value, pd.Series):
-        return value.to_list()
-    if isinstance(value, pd.DataFrame):
-        return value.to_dict(orient="list")
+    if isinstance(value, tttrlib.DataStore):
+        return {value.column(i).name(): np.asarray(value[i].numpy()).tolist()
+                for i in range(value.n_columns())}
     return value
 
 
@@ -84,7 +85,7 @@ class SelectionExportPayload:
     selections:
         Original selection objects (RectangularDataSelection, Gaussian2DSelection, etc.).
     table:
-        PANDAS DataFrame representing the selected data (optional).
+        :class:`tttrlib.DataStore` holding the selected data (optional).
     values:
         Raw numpy array version of the selected data (shape (n_features, n_points)).
     columns:
@@ -102,7 +103,7 @@ class SelectionExportPayload:
     """
 
     selections: Sequence[SelectionLike] = field(default_factory=list)
-    table: Optional[pd.DataFrame] = None
+    table: Optional[tttrlib.DataStore] = None
     values: Optional[np.ndarray] = None
     columns: Optional[Sequence[str]] = None
     figure: Any = None
@@ -114,20 +115,26 @@ class SelectionExportPayload:
     def has_tabular_data(self) -> bool:
         return self.table is not None or self.values is not None
 
-    def as_dataframe(self) -> pd.DataFrame:
-        """Return a pandas.DataFrame view of the payload data."""
+    def as_store(self) -> tttrlib.DataStore:
+        """The payload data as a :class:`tttrlib.DataStore`.
+
+        Built from ``values`` (one row per parameter) and ``columns`` when no
+        ``table`` was given; a parameter without a column label is named by its
+        position.
+        """
         if self.table is not None:
             return self.table
         if self.values is None:
             raise ValueError("Selection payload does not include tabular data.")
 
-        data = self.values
-        if data.ndim == 2:
-            # Values are stored as (n_parameters, n_points); transpose to rows.
-            data = data.T
-        df = pd.DataFrame(data, columns=list(self.columns) if self.columns else None)
-        self.table = df
-        return df
+        data = np.asarray(self.values)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        names = list(self.columns) if self.columns else []
+        names += [str(i) for i in range(len(names), data.shape[0])]
+        self.table = store_from_columns(
+            {str(name): np.ascontiguousarray(data[i]) for i, name in enumerate(names)})
+        return self.table
 
     def serialized_selections(self) -> list[Mapping[str, Any]]:
         """Return selections as JSON-friendly dictionaries."""
@@ -160,14 +167,14 @@ def validate_payload_integrity(payload: SelectionExportPayload) -> None:
     errors: list[str] = []
 
     if payload.table is not None:
-        df = payload.table
-        if df.empty:
-            errors.append("Tabular export requested but the provided DataFrame is empty.")
+        table = payload.table
+        if table.n_rows() == 0 or table.n_columns() == 0:
+            errors.append("Tabular export requested but the provided table is empty.")
         if payload.columns:
-            missing = [col for col in payload.columns if col not in df.columns]
+            missing = [col for col in payload.columns if table.find(str(col)) < 0]
             if missing:
                 errors.append(
-                    "Payload columns do not match DataFrame columns "
+                    "Payload columns do not match table columns "
                     f"(missing: {', '.join(map(str, missing))})."
                 )
     elif payload.values is not None:

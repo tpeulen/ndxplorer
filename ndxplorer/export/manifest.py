@@ -21,12 +21,13 @@ def _build_data_summary(payload: SelectionExportPayload) -> dict[str, Any]:
     }
 
     if payload.has_tabular_data():
-        df = payload.as_dataframe()
+        table = payload.as_store()
+        columns = [table.column(i).name() for i in range(table.n_columns())]
         summary.update(
             {
-                "rows": len(df.index),
-                "columns": list(df.columns),
-                "column_count": len(df.columns),
+                "rows": int(table.n_rows()),
+                "columns": columns,
+                "column_count": len(columns),
             }
         )
     elif payload.values is not None:

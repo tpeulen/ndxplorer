@@ -34,7 +34,6 @@ import pathlib
 import sys
 
 import numpy as np
-import pandas as pd
 import tttrlib
 
 #: The CLSM measurement this was written against: 40 frames, 256 x 256, two
@@ -63,8 +62,8 @@ def channel_image(tttr, channels, n_frames_max=None):
     return counts, micro, phasor
 
 
-def build(path, green, red, n_frames_max=None, min_total=1):
-    """The per-pixel table, as a DataFrame."""
+def build(path, green, red, n_frames_max=None, min_total=1, label="image"):
+    """The per-pixel table, as a :class:`tttrlib.DataStore`."""
     tttr = tttrlib.TTTR(str(path))
     print(f"read {len(tttr):,} photons from {pathlib.Path(path).name}")
 
@@ -110,7 +109,10 @@ def build(path, green, red, n_frames_max=None, min_total=1):
         ratio = np.where(sr > 0, sg / sr, np.nan)
 
     frame_index = column(frame).astype(np.int32)
-    table = pd.DataFrame({
+    # A per-frame timestamp, so the frame slider has something continuous to
+    # show alongside the index.
+    duration = tttr.header.macro_time_resolution * len(tttr) / max(n_frames, 1)
+    columns = {
         # ndXplorer finds the imaging axes by name, case-insensitively.
         "x pixel": column(x).astype(np.int32),
         "y pixel": column(y).astype(np.int32),
@@ -124,12 +126,18 @@ def build(path, green, red, n_frames_max=None, min_total=1):
         "s (green)": as_phasor(pg[..., 1], tg),
         "Proximity Ratio": proximity,
         "Sg/Sr": ratio,
-    })
-    # A per-frame timestamp, so the frame slider has something continuous to
-    # show alongside the index.
-    duration = tttr.header.macro_time_resolution * len(tttr) / max(n_frames, 1)
-    table["Frame Time (s)"] = frame_index * duration
-    return table
+        "Frame Time (s)": frame_index * duration,
+    }
+    store = tttrlib.DataStore(label)
+    store.set_n_rows(len(frame_index))
+    for name, values in columns.items():
+        added = store.add(name, values)
+        if values.dtype.kind == "f":
+            # A pixel with too few photons has no lifetime. Saying so with the
+            # column's own validity bit is what keeps it out of a gate and out
+            # of a histogram, rather than binning it at whatever NaN casts to.
+            added.mask_non_finite()
+    return store
 
 
 def main(argv=None):
@@ -147,28 +155,29 @@ def main(argv=None):
                         help="drop pixels with fewer photons than this in total")
     args = parser.parse_args(argv)
 
-    table = build(args.file, args.green, args.red, args.frames, args.min_photons)
     out = pathlib.Path(args.out)
+    store = build(args.file, args.green, args.red, args.frames, args.min_photons,
+                  label=out.stem)
 
-    # A columnar HDF5 -- one dataset per column -- rather than a pandas table.
-    # That is the layout a DataStore already has, so ndXplorer reads it with
-    # tttrlib.read_hdf5 straight into the store it evaluates gates and fills
-    # histograms in: no DataFrame in between, no second copy of the table at the
-    # moment it is largest, and every column keeps the type it was written as.
-    store = tttrlib.DataStore(out.stem)
-    store.set_n_rows(len(table))
-    for name in table.columns:
-        column = store.add(name, table[name].to_numpy())
-        if table[name].dtype.kind == "f":
-            # A pixel with too few photons has no lifetime. Saying so with the
-            # column's own validity bit is what keeps it out of a gate and out
-            # of a histogram, rather than binning it at whatever NaN casts to.
-            column.mask_non_finite()
-    tttrlib.write_hdf5(str(out), store)
+    # A columnar HDF5 -- one dataset per column. That is the layout a DataStore
+    # already has, so ndXplorer reads it with tttrlib.read_hdf5 straight into
+    # the store it evaluates gates and fills histograms in, and every column
+    # keeps the type it was written as.
+    if not tttrlib.write_hdf5(str(out), store):
+        raise OSError(f"could not write {out}")
 
-    print(f"wrote {len(table):,} rows x {table.shape[1]} columns to {out} "
+    print(f"wrote {store.n_rows():,} rows x {store.n_columns()} columns to {out} "
           f"({out.stat().st_size / 1e6:.1f} MB)")
-    print(table.describe().T[["count", "mean", "min", "max"]].to_string())
+    print(f"{'column':<28}{'count':>10}{'mean':>14}{'min':>14}{'max':>14}")
+    for i in range(store.n_columns()):
+        values = np.asarray(store[i].numpy(), dtype=float)
+        mask = store[i].mask_numpy()
+        if mask is not None:
+            values = values[mask]
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            print(f"{store.column(i).name():<28}{finite.size:>10}{finite.mean():>14.4g}"
+                  f"{finite.min():>14.4g}{finite.max():>14.4g}")
     return 0
 
 

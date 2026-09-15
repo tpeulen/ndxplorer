@@ -8,7 +8,6 @@ import json
 import logging
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import click
 
 # Set up simple logging
@@ -87,7 +86,7 @@ def _apply_filter_logic(data_source, select, query):
     mask = data_source.get_mask(selections=selections)
     keep_mask = ~np.any(mask, axis=0)
     
-    # Apply the query if provided. Evaluated by the store, not pandas.
+    # The query is evaluated by the store.
     if query:
         keep_mask = keep_mask & data_source.query_mask(query)
 
@@ -103,7 +102,7 @@ def cli():
 @cli.command("filter")
 @click.option('--folder', '-d', required=True, type=click.Path(exists=True), help="Burst folder or zip file.")
 @click.option('--select', '-s', multiple=True, type=str, help="Selection format: param:min-max")
-@click.option('--query', '-q', type=str, help="Pandas eval query string.")
+@click.option('--query', '-q', type=str, help="Boolean query over the column names, e.g. '(E > 0.2) & (S < 0.8)'.")
 @click.option('--out', '-o', required=True, type=click.Path(), help="Output folder to write filtered bursts.")
 @click.option('--skip-nth-row', type=int, default=1, show_default=True, help="Skip every Nth row (1 to load all).")
 def filter_cmd(folder, select, query, out, skip_nth_row):
@@ -126,8 +125,7 @@ def filter_cmd(folder, select, query, out, skip_nth_row):
     n_out = int(np.count_nonzero(keep_mask))
     logging.info(f"Filtered to {n_out} bursts.")
     
-    # Modify data source in place
-    data_source.data = data_source.data.iloc[keep_mask].reset_index(drop=True)
+    data_source = data_source.take(keep_mask)
     
     # Save burst IDs headlessly
     save_burst_ids_headless(
@@ -149,7 +147,7 @@ def filter_cmd(folder, select, query, out, skip_nth_row):
 @click.option('--file', '-f', required=True, type=click.Path(exists=True), help="Input MFD-HDF5, CLSM PTU file or folder.")
 @click.option('--map', 'map_param', required=True, type=str, help="Parameter map to render (intensity, lifetime, etc.)")
 @click.option('--select', '-s', multiple=True, type=str, help="Selection format: param:min-max")
-@click.option('--query', '-q', type=str, help="Pandas eval query string.")
+@click.option('--query', '-q', type=str, help="Boolean query over the column names, e.g. '(E > 0.2) & (S < 0.8)'.")
 @click.option('--roi', type=click.Path(exists=True), help="TIFF file class mask ROI.")
 @click.option('--out', '-o', type=click.Path(), help="Rendered map output image path (.png, .tiff).")
 @click.option('--out-selection', type=click.Path(), help="Folder to write filtered burst sub-selection from ROI/gate.")
@@ -297,8 +295,7 @@ def image_cmd(file, map_param, select, query, roi, out, out_selection, skip_nth_
     # Export selection if requested
     if out_selection:
         from ndxplorer.io.writer import save_burst_ids_headless
-        # Slice original data source data frame
-        data_source.data = data_source.data.iloc[keep_mask].reset_index(drop=True)
+        data_source = data_source.take(keep_mask)
         save_burst_ids_headless(
             folder_name=out_selection,
             selections=[],

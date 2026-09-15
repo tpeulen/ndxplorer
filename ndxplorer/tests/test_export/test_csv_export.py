@@ -3,16 +3,17 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
+import tttrlib
 
+from ndxplorer.core.data_source import store_from_columns
 from ndxplorer.export.csv_export import export_table
 from ndxplorer.export.models import SelectionExportPayload
 
 
 @pytest.fixture
 def sample_data():
-    return pd.DataFrame(
+    return store_from_columns(
         {
             "x": np.arange(10),
             "y": np.linspace(0.0, 1.0, 10),
@@ -21,13 +22,25 @@ def sample_data():
     )
 
 
+def _assert_same_table(loaded, expected):
+    names = [expected.column(i).name() for i in range(expected.n_columns())]
+    assert [loaded.column(i).name() for i in range(loaded.n_columns())] == names
+    assert loaded.n_rows() == expected.n_rows()
+    for name in names:
+        want = expected[name].numpy()
+        got = loaded[name].numpy()
+        if want.dtype == object:
+            assert list(got) == list(want)
+        else:
+            np.testing.assert_array_equal(np.asarray(got, dtype=want.dtype), want)
+
+
 def test_export_basic_csv(sample_data):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "test.csv"
         export_table(SelectionExportPayload(table=sample_data), path, include_metadata=False)
         assert path.exists()
-        loaded = pd.read_csv(path)
-        pd.testing.assert_frame_equal(loaded, sample_data)
+        _assert_same_table(tttrlib.read_csv(str(path)), sample_data)
 
 
 def test_export_tsv_delimiter_inferred(sample_data):
@@ -36,8 +49,7 @@ def test_export_tsv_delimiter_inferred(sample_data):
         path = Path(tmp) / "test.tsv"
         export_table(SelectionExportPayload(table=sample_data), path, include_metadata=False)
         assert path.exists()
-        loaded = pd.read_csv(path, sep="\t")
-        pd.testing.assert_frame_equal(loaded, sample_data)
+        _assert_same_table(tttrlib.read_csv(str(path), delimiter="\t"), sample_data)
 
 
 def test_export_writes_metadata_sidecar(sample_data):
@@ -62,10 +74,11 @@ def test_export_from_values_and_columns():
             path,
             include_metadata=False,
         )
-        loaded = pd.read_csv(path)
-        assert list(loaded.columns) == ["a", "b"]
-        assert len(loaded) == 5
-        np.testing.assert_allclose(loaded["b"].to_numpy(), np.arange(5) * 2.0)
+        loaded = tttrlib.read_csv(str(path))
+        assert list(loaded.column_names()) == ["a", "b"]
+        assert loaded.n_rows() == 5
+        np.testing.assert_allclose(np.asarray(loaded["b"].numpy(), dtype=float),
+                                   np.arange(5) * 2.0)
 
 
 def test_export_requires_tabular_data():
@@ -76,14 +89,13 @@ def test_export_requires_tabular_data():
 
 
 def test_export_large_dataset():
-    large = pd.DataFrame(
+    large = store_from_columns(
         {"x": np.arange(10000), "y": np.random.random(10000), "z": np.random.random(10000)}
     )
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "large.csv"
         export_table(SelectionExportPayload(table=large), path, include_metadata=False)
-        loaded = pd.read_csv(path)
-        pd.testing.assert_frame_equal(loaded, large)
+        _assert_same_table(tttrlib.read_csv(str(path)), large)
 
 
 if __name__ == "__main__":  # pragma: no cover

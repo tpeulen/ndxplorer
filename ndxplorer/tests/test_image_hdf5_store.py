@@ -2,8 +2,8 @@
 
 The short path, and the one the imaging work is for: chisurf writes a columnar
 HDF5 -- one dataset per column -- and ndXplorer reads it straight into the
-``tttrlib.DataStore`` it evaluates gates in and fills histograms out of. No
-DataFrame is built on the way, so nothing is copied and no column is widened.
+``tttrlib.DataStore`` it evaluates gates in and fills histograms out of, with no
+copy and no column widened.
 
 The realistic file is made by ``tools/make_image_hdf5.py`` from a CLSM
 measurement; this builds a small one of the same shape so the path is tested
@@ -50,13 +50,10 @@ def image_file(tmp_path):
     return path
 
 
-def test_the_file_becomes_a_store_with_no_frame_built(image_file):
+def test_the_file_becomes_the_store(image_file):
     source = read_mfd_hdf5([str(image_file)])
     assert source.size == N_FRAMES * NY * NX
     assert source.n_parameters == 6
-    # The DataFrame is what the equation engine and the table editor need. The
-    # load path does not, and building one would be a full copy of the table.
-    assert source._data is None
 
 
 def test_the_column_types_are_the_ones_that_were_written(image_file):
@@ -100,12 +97,14 @@ def test_gating_and_histogramming_the_loaded_store(image_file):
     source.store.select_all()
 
 
-def test_a_pandas_table_is_not_mistaken_for_a_columnar_one(tmp_path):
-    """``read_hdf5_store`` says None rather than raising, so the caller can read
-    the file the long way without catching anything."""
-    pd = pytest.importorskip("pandas")
-    path = tmp_path / "pandas.h5"
-    pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]}).to_hdf(path, key="results")
+def test_a_table_that_is_not_columnar_is_not_mistaken_for_one(tmp_path):
+    """``read_hdf5_store`` says None rather than raising, so the caller can ask
+    what else the file is without catching anything."""
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "records.h5"
+    records = np.zeros(2, dtype=[("a", "f8"), ("b", "f8")])
+    with h5py.File(path, "w") as f:
+        f.create_dataset("results/table", data=records)
     store = read_hdf5_store(path)
     assert store is None or store.n_columns() == 0
 
@@ -115,11 +114,3 @@ def test_a_slashed_column_name_survives(image_file):
     assert "Sg/Sr" in source.parameter_names
     assert source.column_index("Sg/Sr") >= 0
     assert source.column_view(source.column_index("Sg/Sr")) is not None
-
-
-def test_the_frame_is_materialised_only_when_asked_for(image_file):
-    source = read_mfd_hdf5([str(image_file)])
-    assert source._data is None
-    frame = source.data
-    assert list(frame.columns) == source.parameter_names
-    assert len(frame) == source.size

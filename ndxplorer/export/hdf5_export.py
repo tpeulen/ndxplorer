@@ -2,82 +2,84 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Mapping
 
 import numpy as np
-import pandas as pd
+import tttrlib
 
 from ..logging_config import logging
 from ..utils.performance_optimizations import get_performance_monitor
 from .models import SelectionExportPayload
 
+#: Attribute of the table's first column holding the payload metadata as JSON.
+METADATA_ATTRIBUTE = "ndxplorer_metadata_json"
+#: Attribute of the table's first column holding ``values.shape`` as JSON.
+VALUES_SHAPE_ATTRIBUTE = "ndxplorer_values_shape"
+
 
 class HDFBackendUnavailable(RuntimeError):
-    """Raised when pandas cannot persist HDF5 (typically missing PyTables)."""
+    """Raised when tttrlib was built without HDF5 support."""
 
 
 def export_hdf5(
     payload: SelectionExportPayload,
     path: Path,
     *,
-    compression: str = "zlib",
     compression_level: int = 4,
-    key: str = "ndxplorer_table",
+    group: str = "/",
 ) -> None:
     """
-    Persist selection data + metadata in an HDF5 container using pandas only.
+    Persist selection data + metadata as a columnar HDF5 table.
+
+    One 1-D dataset per column, written by :func:`tttrlib.write_hdf5`, so
+    :func:`tttrlib.read_hdf5` (and ndXplorer) reads the file straight back into
+    a store. The payload metadata and, for a values payload, the shape of
+    ``values`` are stored as JSON attributes of the first column.
 
     Parameters
     ----------
     payload:
-        SelectionExportPayload containing arrays and/or DataFrame.
+        SelectionExportPayload containing a table or values.
     path:
-        Destination file.
-    compression:
-        Compression algorithm handled by pandas/HDFStore (e.g. zlib, blosc).
+        Destination file. An existing file is replaced.
     compression_level:
-        Compression level (0-9) where supported by the underlying writer.
-    key:
-        HDF5 dataset path within the store. Deliberately flat: a nested key such
-        as ``ndxplorer/table`` makes pandas register the parent group as a second
-        key, so ``pd.read_hdf(path)`` -- the obvious way to read the file back --
-        fails with "key must be provided when HDF5 file contains multiple
-        datasets" on a store that holds exactly one table.
+        gzip level 0-9 (0 for none).
+    group:
+        HDF5 group the table is written to; the root by default, so the file is
+        read back without naming one.
     """
 
     if not payload.has_tabular_data():
         raise ValueError("export_hdf5 requires payload.table or payload.values.")
+    if not tttrlib.hdf5_table_available():
+        raise HDFBackendUnavailable("tttrlib was built without HDF5 support.")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    dataframe = payload.as_dataframe()
+    table = payload.as_store().copy()
+    table.clear_row_mask()
+    if table.n_columns():
+        first = table.column(0)
+        first.set_attribute(METADATA_ATTRIBUTE, payload.to_json_metadata())
+        if payload.values is not None:
+            first.set_attribute(VALUES_SHAPE_ATTRIBUTE,
+                                json.dumps(list(np.asarray(payload.values).shape)))
 
-    store_kwargs = {
-        "mode": "w",
-        "complevel": compression_level,
-        "complib": compression,
-    }
-
-    logging.info("Exporting selection to %s via pandas.HDFStore", path)
+    logging.info("Exporting selection to %s via tttrlib.write_hdf5", path)
 
     perf = get_performance_monitor()
-    op_name = f"export_hdf5[{key}]"
+    op_name = f"export_hdf5[{group}]"
     perf.start_timer(op_name)
     try:
-        with pd.HDFStore(path, **store_kwargs) as store:
-            store.put(key, dataframe, format="table", data_columns=True)
-            storer = store.get_storer(key)
-            if payload.values is not None:
-                storer.attrs.values_shape = np.asarray(payload.values).shape
-            storer.attrs.metadata_json = payload.to_json_metadata()
-    except (ImportError, ValueError) as exc:  # pragma: no cover - depends on env
-        raise HDFBackendUnavailable(
-            "pandas could not open an HDF5 store. Install pandas with HDF5 support "
-            "(e.g. `pip install pandas[pytables]`)."
-        ) from exc
+        written = tttrlib.write_hdf5(str(path), table, group=group,
+                                     compression=int(compression_level),
+                                     mode=tttrlib.Hdf5WriteMode_Truncate)
+        if not written:
+            raise OSError(f"tttrlib could not write {path}")
     finally:
         perf.end_timer(op_name)
         perf.log_memory_usage(op_name)
 
 
-__all__ = ["export_hdf5", "HDFBackendUnavailable"]
+__all__ = ["export_hdf5", "HDFBackendUnavailable", "METADATA_ATTRIBUTE",
+           "VALUES_SHAPE_ATTRIBUTE"]

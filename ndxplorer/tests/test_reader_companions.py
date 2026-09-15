@@ -4,12 +4,14 @@ from __future__ import annotations
 import os
 
 import numpy as np
-import pandas as pd
 import pytest
+
+from ndxplorer.core.data_source import store_from_columns
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ndxplorer.io import reader as R  # noqa: E402
+from ndxplorer.io import tables  # noqa: E402
 
 
 def _write_interleaved(path, header, values):
@@ -19,12 +21,13 @@ def _write_interleaved(path, header, values):
     on the odd (1,3,…) rows, a trailing empty placeholder column mimicking the
     writers.
     """
-    n = len(values)
-    cols = list(header) + [""]
-    frame = pd.DataFrame(np.zeros((2 * n + 1, len(cols))), columns=cols)
-    frame[""] = ""
-    frame.loc[1::2, list(header)] = values
-    frame.to_csv(path, sep="\t", index=False)
+    values = np.asarray(values, dtype=float)
+    n, k = values.shape
+    rows = np.zeros((2 * n + 1, k))
+    rows[1::2] = values
+    lines = ["\t".join(list(header) + [""])]
+    lines += ["\t".join([repr(float(v)) for v in row] + [""]) for row in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_2c4_in_default_endings_and_union_with_settings():
@@ -48,15 +51,15 @@ def test_single_column_tab_file_gets_a_header():
     # A one-column companion (e.g. a 2c4 whose only column is FRET-2CDE) must be
     # detected with its header, not read headerless with an integer column name.
     lines = ["FRET-2CDE\t\n", "0.0\t\n", "10.0\t\n", "0.0\t\n", "20.0\t\n"]
-    kwargs = R._detect_and_build_kwargs(lines)
-    assert kwargs.get("header") == 0
-    assert kwargs.get("sep") == "\t"
+    layout = R._detect_table_format(lines)
+    assert layout["header_line"] == 0
+    assert layout["delimiter"] == "\t"
 
 
 def test_drop_trailing_empty_keeps_real_last_column():
-    df = pd.DataFrame({"FRET-2CDE": [1.0, 2.0], "": ["", ""]})
-    out = R._drop_trailing_empty_columns(df)
-    assert list(out.columns) == ["FRET-2CDE"]
+    store = store_from_columns({"FRET-2CDE": [1.0, 2.0], "": ["", ""]})
+    out = tables.drop_trailing_empty_columns(store)
+    assert list(out.column_names()) == ["FRET-2CDE"]
 
 
 def test_read_burst_analysis_merges_bv4_and_2c4(tmp_path):
@@ -84,6 +87,6 @@ def test_read_burst_analysis_merges_bv4_and_2c4(tmp_path):
         pass
 
     ds = R.read_burst_analysis(str(tmp_path), skip_nth_row=2)
-    cols = list(ds.data.columns)
+    cols = ds.parameter_names
     assert "Proximity Ratio Std" in cols  # bv4
     assert "FRET-2CDE" in cols            # 2c4

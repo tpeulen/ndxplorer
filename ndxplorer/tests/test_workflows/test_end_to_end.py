@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pandas as pd
 import pytest
+import tttrlib
 
 from ndxplorer.export.api import save_selection
 from ndxplorer.tests.fixtures.dataset_fixtures import (
@@ -30,16 +30,15 @@ def test_export_round_trip_with_synthetic_payload(tmp_path):
     save_selection(payload, csv_path, format="csv")
     save_selection(payload, hdf5_path, format="hdf5")
 
-    csv_df = pd.read_csv(csv_path)
-    # No key: reading an export back with the plain one-liner is the point of
-    # writing the table under a flat key.
-    hdf5_df = pd.read_hdf(hdf5_path)
+    csv_table = tttrlib.read_csv(str(csv_path))
+    # No group: the table is written at the root of the file.
+    hdf5_table = tttrlib.read_hdf5(str(hdf5_path))
 
     expected_rows = payload.values.shape[1]
-    assert len(csv_df) == expected_rows
-    assert len(hdf5_df) == expected_rows
-    assert list(csv_df.columns) == list(hdf5_df.columns)
-    assert list(csv_df.columns) == list(payload.columns)
+    assert csv_table.n_rows() == expected_rows
+    assert hdf5_table.n_rows() == expected_rows
+    assert list(csv_table.column_names()) == list(hdf5_table.column_names())
+    assert list(csv_table.column_names()) == list(payload.columns)
 
     meta_path = csv_path.with_suffix(csv_path.suffix + ".meta.json")
     assert meta_path.exists()

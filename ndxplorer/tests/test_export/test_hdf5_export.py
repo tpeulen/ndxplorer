@@ -1,26 +1,37 @@
 """
-Tests for HDF5 export functionality (pandas-only backend).
+Tests for HDF5 export functionality (tttrlib columnar tables).
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 
 import numpy as np
-import pandas as pd
 import pytest
+import tttrlib
 
-from ndxplorer.export.hdf5_export import HDFBackendUnavailable, export_hdf5
+from ndxplorer.core.data_source import store_from_columns
+from ndxplorer.export import hdf5_export
+from ndxplorer.export.hdf5_export import (
+    METADATA_ATTRIBUTE,
+    VALUES_SHAPE_ATTRIBUTE,
+    HDFBackendUnavailable,
+    export_hdf5,
+)
 from ndxplorer.export.models import SelectionExportPayload
+
+pytestmark = pytest.mark.skipif(not tttrlib.hdf5_table_available(),
+                                reason="tttrlib built without HDF5")
 
 
 class TestHDF5Export:
-    """Test pandas-backed HDF5 export."""
+    """Test the columnar HDF5 export."""
 
     @pytest.fixture
     def payload(self) -> SelectionExportPayload:
-        df = pd.DataFrame(
+        table = store_from_columns(
             {
                 "x": np.arange(10, dtype=float),
                 "y": np.random.random(10),
@@ -29,13 +40,10 @@ class TestHDF5Export:
         )
         return SelectionExportPayload(
             selections=[{"name": "test"}],
-            table=df,
+            table=table,
             metadata={"experiment": "test"},
             name="sample",
         )
-
-    def _read_back(self, path: Path, key: str = "ndxplorer_table") -> pd.DataFrame:
-        return pd.read_hdf(path, key=key)
 
     def test_basic_export(self, payload: SelectionExportPayload) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -43,18 +51,20 @@ class TestHDF5Export:
             export_hdf5(payload, path)
 
             assert path.exists()
-            df = self._read_back(path)
-            pd.testing.assert_frame_equal(df, payload.table)
+            loaded = tttrlib.read_hdf5(str(path))
+            assert list(loaded.column_names()) == ["x", "y", "category"]
+            np.testing.assert_array_equal(loaded["x"].numpy(), payload.table["x"].numpy())
+            np.testing.assert_array_equal(loaded["y"].numpy(), payload.table["y"].numpy())
+            assert list(loaded["category"].numpy()) == ["A", "B"] * 5
 
     def test_metadata_persisted(self, payload: SelectionExportPayload) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "meta.h5"
             export_hdf5(payload, path)
 
-            with pd.HDFStore(path, "r") as store:
-                storer = store.get_storer("ndxplorer_table")
-                assert storer.attrs.metadata_json
-                assert "test" in storer.attrs.metadata_json
+            loaded = tttrlib.read_hdf5(str(path))
+            metadata = json.loads(loaded.column(0).attribute(METADATA_ATTRIBUTE))
+            assert metadata["metadata"]["experiment"] == "test"
 
     def test_values_shape_attribute(self) -> None:
         values = np.random.random((3, 20))
@@ -64,15 +74,23 @@ class TestHDF5Export:
             path = Path(tmpdir) / "values.h5"
             export_hdf5(payload, path)
 
-            with pd.HDFStore(path, "r") as store:
-                attrs = store.get_storer("ndxplorer_table").attrs
-                assert tuple(attrs.values_shape) == values.shape
+            loaded = tttrlib.read_hdf5(str(path))
+            shape = json.loads(loaded.column(0).attribute(VALUES_SHAPE_ATTRIBUTE))
+            assert tuple(shape) == values.shape
 
     def test_compression_options(self, payload: SelectionExportPayload) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "compressed.h5"
-            export_hdf5(payload, path, compression="blosc", compression_level=5)
+            export_hdf5(payload, path, compression_level=5)
             assert path.exists()
+            assert tttrlib.read_hdf5(str(path)).n_rows() == 10
+
+    def test_an_existing_file_is_replaced(self, payload: SelectionExportPayload) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "twice.h5"
+            export_hdf5(payload, path)
+            export_hdf5(SelectionExportPayload(values=np.ones((1, 4)), columns=["q"]), path)
+            assert list(tttrlib.read_hdf5(str(path)).column_names()) == ["q"]
 
     def test_missing_tabular_data_raises(self) -> None:
         payload = SelectionExportPayload()
@@ -82,10 +100,7 @@ class TestHDF5Export:
                 export_hdf5(payload, path)
 
     def test_backend_error_wrapped(self, monkeypatch, payload: SelectionExportPayload) -> None:
-        def _broken_store(*args, **kwargs):
-            raise ImportError("missing pytables")
-
-        monkeypatch.setattr(pd, "HDFStore", _broken_store)
+        monkeypatch.setattr(hdf5_export.tttrlib, "hdf5_table_available", lambda: False)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "broken.h5"
@@ -93,16 +108,8 @@ class TestHDF5Export:
                 export_hdf5(payload, path)
 
 
-def test_export_is_readable_without_naming_a_key(tmp_path):
-    """``pd.read_hdf(path)`` must open our own export.
-
-    The table used to be written under the nested key ``ndxplorer/table``, which
-    makes pandas register the parent group as a *second* key. Reading the file
-    back the obvious way then failed with "key must be provided when HDF5 file
-    contains multiple datasets" — on a store holding exactly one table.
-    """
-    import pandas as pd
-
+def test_export_is_readable_without_naming_a_group(tmp_path):
+    """The table is written at the root: ``read_hdf5(path)`` opens it as it is."""
     from ndxplorer.export.api import save_selection
     from ndxplorer.tests.fixtures.dataset_fixtures import (
         create_synthetic_selection_payload,
@@ -114,11 +121,7 @@ def test_export_is_readable_without_naming_a_key(tmp_path):
     path = tmp_path / "roundtrip.h5"
     save_selection(payload, path, format="hdf5")
 
-    with pd.HDFStore(path) as store:
-        assert len(store.keys()) == 1, (
-            f"one table should register one key, got {store.keys()}"
-        )
-
-    frame = pd.read_hdf(path)  # no key, no error
-    assert list(frame.columns) == list(payload.columns)
-    assert len(frame) == payload.values.shape[1]
+    loaded = tttrlib.read_hdf5(str(path))
+    assert loaded.n_groups() == 0
+    assert list(loaded.column_names()) == list(payload.columns)
+    assert loaded.n_rows() == payload.values.shape[1]

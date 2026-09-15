@@ -16,9 +16,10 @@ import logging
 import pathlib
 from typing import Any, Dict, Optional
 
-import pandas as pd
+import tttrlib
 
-from ndxplorer.core.data_source import DataSource
+from ndxplorer.core.data_source import DataSource, float_column
+from ndxplorer.io import tables
 
 __all__ = ["is_container", "read_container"]
 
@@ -81,17 +82,23 @@ def read_container(
         )
 
     logging.info("Reading %d burst table(s) from %s: %s", len(frames), path, names)
-    combined = pd.concat(frames, axis=1) if len(frames) > 1 else frames[0]
-    combined = combined.loc[:, ~combined.columns.duplicated()]
+    combined = tables.concat_columns(frames)
 
-    # Apply ChiSurf unit conventions (convert ms to s)
-    if _MACRO_MS in combined.columns:
-        combined = combined.assign(**{_MACRO_S: pd.to_numeric(combined[_MACRO_MS], errors="coerce") / 1000.0}).drop(columns=[_MACRO_MS])
-    elif "Mean Macrotime (ms)" in combined.columns:
-        combined = combined.assign(**{_MACRO_S: pd.to_numeric(combined["Mean Macrotime (ms)"], errors="coerce") / 1000.0}).drop(columns=["Mean Macrotime (ms)"])
+    # Apply ChiSurf unit conventions (convert ms to s). The seconds column goes
+    # at the end, where the milliseconds column is removed from.
+    for milliseconds in (_MACRO_MS, "Mean Macrotime (ms)"):
+        index = combined.find(milliseconds)
+        if index < 0:
+            continue
+        seconds = float_column(combined, index) / 1000.0
+        combined.remove_column(index)
+        existing = combined.find(_MACRO_S)
+        if existing >= 0:
+            combined.remove_column(existing)
+        combined.add(_MACRO_S, seconds)
+        break
 
-    ds = DataSource()
-    ds.data = combined.reset_index(drop=True)
+    ds = DataSource(combined)
 
     # Attach mapped MMFDB provenance metadata
     setattr(ds, "provenance", provenance)
@@ -99,7 +106,7 @@ def read_container(
         ds.metadata["provenance"] = provenance
         ds.metadata["settings_hash"] = provenance.get("settings_hash", "")
 
-    logging.info("Burst load complete: %d rows from %s with provenance mapped.", len(ds.data), path.name)
+    logging.info("Burst load complete: %d rows from %s with provenance mapped.", ds.size, path.name)
     return ds
 
 
@@ -118,12 +125,11 @@ def _parse_json(val: Any) -> Dict[str, Any]:
 
 def _burst_frames(
     path: pathlib.Path, table: Optional[str]
-) -> tuple[list[pd.DataFrame], list[str], Dict[str, Any]]:
+) -> tuple[list["tttrlib.DataStore"], list[str], Dict[str, Any]]:
     """Return the current burst table, companions, and mapped MMFDB provenance."""
-    from chisurf.core.datastore import column_names
     from chisurf.core.fio.pto import Measurement
 
-    file_frames: list[pd.DataFrame] = []
+    file_frames: list["tttrlib.DataStore"] = []
     all_names: list[str] = []
     provenance: Dict[str, Any] = {
         "container_path": str(path),
@@ -138,7 +144,7 @@ def _burst_frames(
         def _grain(uid: int) -> str:
             return measurement.tag(uid, "_mmfdb_artifact.row_grain") or ""
 
-        def _frame(obj) -> Optional[pd.DataFrame]:
+        def _frame(obj) -> Optional["tttrlib.DataStore"]:
             try:
                 store = measurement.get_store(obj.uid)
             except Exception:  # noqa: BLE001
@@ -149,10 +155,7 @@ def _burst_frames(
             )
 
             store = deinterleave_bursts(store)
-            built = pd.DataFrame(
-                {name: _column(store, name) for name in column_names(store)}
-            )
-            return None if built.empty else built
+            return None if store.n_rows() == 0 or store.n_columns() == 0 else store
 
         # Read file-level container profile tags
         provenance["container_profile"] = measurement.tag(0, "_mmfdb_container.profile") or "PTO.MFDB"
@@ -241,7 +244,7 @@ def _burst_frames(
                     continue
 
                 companion = _frame(obj)
-                if companion is None or len(companion) != len(built):
+                if companion is None or companion.n_rows() != built.n_rows():
                     continue
                 current_frames.append(companion)
                 all_names.append(obj.name)
@@ -261,8 +264,7 @@ def _burst_frames(
 
                 provenance["edges"].append({"source": primary.uid, "target": obj.uid, "type": "companion_of"})
 
-            file_frame = pd.concat(current_frames, axis=1) if len(current_frames) > 1 else current_frames[0]
-            file_frames.append(file_frame)
+            file_frames.append(tables.concat_columns(current_frames))
 
     if not file_frames:
         return [], [], provenance
@@ -271,12 +273,4 @@ def _burst_frames(
         return [file_frames[0]], all_names, provenance
 
     # Multiple ingested files: stack rows vertically across files
-    stacked = pd.concat(file_frames, axis=0, ignore_index=True)
-    return [stacked], all_names, provenance
-
-
-def _column(store: Any, name: str):
-    """Return one column as something pandas can hold, numbers stayed numbers."""
-    import numpy as np
-
-    return np.asarray(store[name])
+    return [tables.concat_rows(file_frames)], all_names, provenance

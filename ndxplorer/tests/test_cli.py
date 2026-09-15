@@ -5,8 +5,8 @@
 import json
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import pytest
+import tttrlib
 from click.testing import CliRunner
 from ndxplorer.cli import filter_cmd, image_cmd
 
@@ -61,7 +61,7 @@ def test_cli_filter_subcommand(dummy_burst_dir, tmp_path):
 
 
 def test_cli_filter_with_query(dummy_burst_dir, tmp_path):
-    """Test click filter_cmd with pandas query."""
+    """Test click filter_cmd with a store query."""
     runner = CliRunner()
     out_dir = tmp_path / "filtered_output_query"
     
@@ -86,13 +86,12 @@ def dummy_image_hdf5(tmp_path):
     """Create a dummy HDF5 with image-axis data."""
     h5_path = tmp_path / "image_data.h5"
     # Create simple columns: x pixel, y pixel, intensity, lifetime
-    df = pd.DataFrame({
-        "x pixel": [0, 0, 1, 1, 0, 1],
-        "y pixel": [0, 1, 0, 1, 0, 1],
-        "intensity": [10, 20, 30, 40, 50, 60],
-        "lifetime": [1.5, 2.5, 3.5, 4.5, 1.0, 4.0],
-    })
-    df.to_hdf(h5_path, key="data")
+    store = tttrlib.DataStore()
+    store.add("x pixel", np.array([0, 0, 1, 1, 0, 1]))
+    store.add("y pixel", np.array([0, 1, 0, 1, 0, 1]))
+    store.add("intensity", np.array([10, 20, 30, 40, 50, 60]))
+    store.add("lifetime", np.array([1.5, 2.5, 3.5, 4.5, 1.0, 4.0]))
+    assert tttrlib.write_hdf5(str(h5_path), store, group="/")
     return h5_path
 
 

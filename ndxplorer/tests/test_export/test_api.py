@@ -6,8 +6,9 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
+
+from ndxplorer.core.data_source import store_from_columns
 
 from ndxplorer.export.api import (
     save_selection,
@@ -22,11 +23,11 @@ class TestExportAPI:
     @pytest.fixture
     def sample_payload(self):
         """Create sample SelectionExportPayload for testing."""
-        df = pd.DataFrame({
+        table = store_from_columns({
             'x': np.arange(10),
             'y': np.random.random(10)
         })
-        return SelectionExportPayload(table=df, name="test-selection")
+        return SelectionExportPayload(table=table, name="test-selection")
     
     def test_csv_export_via_api(self, sample_payload):
         """Test CSV export through API."""
@@ -104,14 +105,14 @@ class TestExportAPI:
 
     def test_payload_validation_errors(self):
         """Ensure save_selection raises ExportValidationError for bad payloads."""
-        payload = SelectionExportPayload(table=pd.DataFrame())
+        payload = SelectionExportPayload(table=store_from_columns({}))
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = Path(tmpdir) / "bad.csv"
             with pytest.raises(ExportValidationError) as excinfo:
                 save_selection(payload, filepath, format='csv')
         message = str(excinfo.value)
         assert "Export payload failed validation" in message
-        assert "- Tabular export requested but the provided DataFrame is empty." in message
+        assert "- Tabular export requested but the provided table is empty." in message
 
     def test_image_export_requires_drawable(self, sample_payload):
         """Ensure image export fails without drawable data."""
@@ -133,7 +134,7 @@ class TestExportAPI:
     def test_payload_metadata_must_be_mapping(self):
         """Validator should enforce mapping metadata."""
         payload = SelectionExportPayload(
-            table=pd.DataFrame({"x": [1]}),
+            table=store_from_columns({"x": [1]}),
             metadata=["not", "mapping"],
         )
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -145,7 +146,7 @@ class TestExportAPI:
     def test_payload_none_selection_entries(self):
         """Validator should report None entries in selections."""
         payload = SelectionExportPayload(
-            table=pd.DataFrame({"x": [1]}),
+            table=store_from_columns({"x": [1]}),
             selections=[None, object()],
         )
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -164,7 +165,7 @@ class TestExportAPI:
             assert manifest_path.exists()
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
             assert data["family"] == "csv"
-            assert data["data_summary"]["rows"] == len(sample_payload.table.index)
+            assert data["data_summary"]["rows"] == sample_payload.table.n_rows()
 
     def test_manifest_can_be_disabled(self, sample_payload):
         """write_manifest_file flag should skip manifest creation."""
@@ -194,7 +195,7 @@ class TestExportAPI:
     def test_payload_none_selection_entries(self):
         """None selections should trigger validation error."""
         payload = SelectionExportPayload(
-            table=pd.DataFrame({"x": [1, 2]}),
+            table=store_from_columns({"x": [1, 2]}),
             selections=[None, object()],
         )
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,10 +1,11 @@
 from __future__ import print_function
+from datetime import datetime
 from typing import List, Dict, Optional, Set
 from pathlib import Path
 from ..logging_config import logging
 import numpy as np
 import json
-import pandas as pd
+import tttrlib
 try:
     from qtpy.QtWidgets import QApplication
     from qtpy.QtCore import QCoreApplication
@@ -15,7 +16,31 @@ except Exception:
     QCoreApplication = None
     ProgressWindow = None
     _HAS_QT = False
-from ..core.data_source import DataSource, DataSelection
+from ..core.data_source import DataSource, DataSelection, float_column
+
+
+def _burst_id_groups(selections: List[DataSelection], data_source: DataSource):
+    """``(file name, first photons, last photons)`` per file, for the kept bursts
+    that start and end in the same file, in file-name order."""
+    store = data_source.store
+    keep = data_source.selection_mask(selections)
+    first_file = store.find("First File")
+    last_file = store.find("Last File")
+    first = store.column(first_file)
+    last = store.column(last_file)
+    first_names = np.asarray(first.labels(), dtype=object)
+    first_codes = np.asarray(first.codes())
+    last_names = np.asarray(last.labels(), dtype=object)[np.asarray(last.codes())]
+    rows = keep & (first_names[first_codes] == last_names)
+    for mask in (first.mask_numpy(), last.mask_numpy()):
+        if mask is not None:
+            rows &= mask
+    first_photon = float_column(store, store.find("First Photon"))
+    last_photon = float_column(store, store.find("Last Photon"))
+    for code in sorted(np.unique(first_codes[rows]), key=lambda c: first_names[c]):
+        in_file = rows & (first_codes == code)
+        ids = np.vstack([first_photon[in_file], last_photon[in_file]]).astype(int)
+        yield str(first_names[code]), ids
 
 
 def save_burst_ids(
@@ -31,28 +56,14 @@ def save_burst_ids(
     folder_path.mkdir(parents=True, exist_ok=True)
     logging.info(f"Saving burst IDs to {folder_path}")
 
-    df = data_source.data
-    mask = data_source.get_mask(selections=selections)
-
-    mask_flat = np.sum(mask, axis=0).astype(bool)
-    mas = np.broadcast_to(mask_flat, (df.shape[1], df.shape[0]))
-    dm = df.mask(mas.T)
-
-    dm = dm.loc[dm['First File'] == dm['Last File']]
-    grouped = dm.groupby('First File')
-
-    total_files = len(grouped)
+    groups = list(_burst_id_groups(selections, data_source))
+    total_files = len(groups)
     progress_window = ProgressWindow(title="Saving Files", message="Saving Burst ID files...", max_value=total_files)
     progress_window.show()
 
-    for i, (filename, g) in enumerate(grouped, start=1):
-        fn = Path(filename).name
-        ext = Path(filename).suffix
-        bst_file = folder_path / f"{fn}.bst"
-
-        a = np.vstack([g["First Photon"], g["Last Photon"]]).astype(int)
-        np.savetxt(bst_file, a.T, fmt='%i', delimiter='\t')
-
+    for i, (filename, ids) in enumerate(groups, start=1):
+        bst_file = folder_path / f"{Path(filename).name}.bst"
+        np.savetxt(bst_file, ids.T, fmt='%i', delimiter='\t')
         logging.info(f"Saved burst ID file: {bst_file}")
         progress_window.set_value(i)
         QCoreApplication.processEvents()
@@ -71,25 +82,10 @@ def save_burst_ids_headless(
     folder_path.mkdir(parents=True, exist_ok=True)
     logging.info(f"Saving burst IDs to {folder_path}")
 
-    df = data_source.data
-    mask = data_source.get_mask(selections=selections)
-
-    mask_flat = np.sum(mask, axis=0).astype(bool)
-    mas = np.broadcast_to(mask_flat, (df.shape[1], df.shape[0]))
-    dm = df.mask(mas.T)
-
-    dm = dm.loc[dm['First File'] == dm['Last File']]
-    grouped = dm.groupby('First File')
-
-    for filename, g in grouped:
-        fn = Path(filename).name
-        ext = Path(filename).suffix
-        bst_file = folder_path / f"{fn}.bst"
-
-        a = np.vstack([g["First Photon"], g["Last Photon"]]).astype(int)
-        np.savetxt(bst_file, a.T, fmt='%i', delimiter='\t')
+    for filename, ids in _burst_id_groups(selections, data_source):
+        bst_file = folder_path / f"{Path(filename).name}.bst"
+        np.savetxt(bst_file, ids.T, fmt='%i', delimiter='\t')
         logging.info(f"Saved burst ID file: {bst_file}")
-
 
 
 def save_clustering_data(
@@ -139,7 +135,7 @@ def save_clustering_data(
             "method": cluster_method,
             "columns": list(cluster_columns),
             "parameters": parameters,
-            "timestamp": pd.Timestamp.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
         # Save parameters to a JSON file
@@ -155,42 +151,37 @@ def save_clustering_data(
         QCoreApplication.processEvents()
 
         if cluster_labels is not None:
-            # Get the data frame
-            df = data_source.data.copy()
+            table = data_source.copy()
+            labels = np.asarray(cluster_labels)
 
             # Add cluster labels and probabilities if they don't exist
-            if 'Cluster Label' not in df.columns:
-                df['Cluster Label'] = cluster_labels
+            if not table.has_column('Cluster Label'):
+                table.set_column('Cluster Label', labels)
 
-            if cluster_probabilities is not None and 'Cluster Probability' not in df.columns:
-                df['Cluster Probability'] = cluster_probabilities
+            if cluster_probabilities is not None and not table.has_column('Cluster Probability'):
+                table.set_column('Cluster Probability', np.asarray(cluster_probabilities))
 
             # Save the full data with cluster labels to a CSV file
             full_data_file = clustering_folder / "clustering_full_data.csv"
-            df.to_csv(full_data_file, index=False)
+            tttrlib.write_csv(str(full_data_file), table.store)
             logging.info(f"Saved full data with cluster labels to {full_data_file}")
 
             # Save just the cluster information (ID, label, probability)
-            cluster_info = pd.DataFrame({
-                'ID': range(len(cluster_labels)),
-                'Cluster Label': cluster_labels
-            })
-
+            info_columns = {
+                'ID': np.arange(len(labels)),
+                'Cluster Label': labels,
+            }
             if cluster_probabilities is not None:
-                cluster_info['Cluster Probability'] = cluster_probabilities
-
+                info_columns['Cluster Probability'] = np.asarray(cluster_probabilities)
             cluster_info_file = clustering_folder / "cluster_labels.csv"
-            cluster_info.to_csv(cluster_info_file, index=False)
+            tttrlib.write_csv(str(cluster_info_file), DataSource.from_columns(info_columns).store)
             logging.info(f"Saved cluster labels to {cluster_info_file}")
 
             # Save data for each cluster separately
-            unique_labels = np.unique(cluster_labels)
-            for label in unique_labels:
+            for label in np.unique(labels):
                 if label >= 0:  # Skip noise points (label -1)
-                    cluster_mask = cluster_labels == label
-                    cluster_df = df[cluster_mask]
                     cluster_file = clustering_folder / f"cluster_{label}.csv"
-                    cluster_df.to_csv(cluster_file, index=False)
+                    tttrlib.write_csv(str(cluster_file), table.take(labels == label).store)
                     logging.info(f"Saved data for cluster {label} to {cluster_file}")
         else:
             logging.warning("No cluster labels to save")

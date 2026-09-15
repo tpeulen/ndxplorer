@@ -1,7 +1,7 @@
-# reader.py — NDXplorer Reader Module (drop-in replacement)
+# reader.py — NDXplorer Reader Module
 
 from __future__ import annotations
-from typing import List, Union, Optional, BinaryIO, TextIO, Dict, Tuple
+from typing import Callable, List, Union, Optional, TextIO, Dict, Tuple
 import pathlib
 import os
 import tempfile
@@ -13,16 +13,15 @@ import json
 import pickle
 
 import numpy as np
-import pandas as pd
-from pandas.errors import EmptyDataError
 
 try:
     from ..logging_config import logging
 except Exception:  # pragma: no cover
     import logging  # type: ignore
 
-from ..core.data_source import DataSource
+from ..core.data_source import DataSource, float_column, store_from_columns, store_with_columns
 from ..settings import get_settings_path, ensure_default_settings
+from . import tables
 
 import tttrlib
 
@@ -45,48 +44,32 @@ from .file_metadata_cache import get_metadata_cache
 
 
 """
-NDXplorer Reader Module (fixed)
+NDXplorer Reader Module
 
-Key improvements:
-- Delimiter autodetection for text-like files (.bur/.csv/.txt/.dat) incl. zipped.
-- MSVC NaN/Inf token normalization (e.g., 1.#INF, -1.#IND00e+000, 1.#QNAN).
-- Robust handling of “selector zips” (loose .bur) and full MFD zips.
-- Prefer HDF5 if present; fallback to BUR+extras merge.
-- Concatenate macro time across files, convert to seconds, rename to "Mean Macro Time (s)".
-- Deduplicate columns and select numeric for CSV/HDF5 readers.
+Every table is read by tttrlib into a :class:`tttrlib.DataStore`:
+
+- Delimiter and header autodetection for text-like files (.bur/.csv/.txt/.dat),
+  zipped or not. A layout tttrlib's CSV reader does not take directly --
+  whitespace alignment, a decimal comma, lines before the header, no header --
+  is rewritten as a tab-delimited text with a header first.
+- MSVC NaN/Inf spellings (e.g., 1.#INF, -1.#IND00e+000, 1.#QNAN) read as numbers.
+- "Selector zips" (loose .bur) and full MFD zips.
+- HDF5 preferred when present; otherwise BUR plus companions, side by side.
+- Macro time concatenated across files, converted to seconds and named
+  "Mean Macro Time (s)".
 """
 
 # ----------------------------- constants -------------------------------------
 
 FILL_MISSING_VALUE = -1.0
 
-# MSVC weird tokens as compiled regex (full-cell matches)
-#  - 1.#INF, -1.#INF, 1.#IND, -1.#IND, 1.#QNAN, 1.#SNAN with optional trailing digits and exponent
-_WIN_NAN_RE  = re.compile(r'^\s*[+-]?(?:\d*\.)?#(?:IND|QNAN|SNAN)\d*(?:e[+-]?\d+)?\s*$', re.IGNORECASE)
-_WIN_PINF_RE = re.compile(r'^\s*\+?(?:\d*\.)?#INF\d*(?:e[+-]?\d+)?\s*$', re.IGNORECASE)
-_WIN_NINF_RE = re.compile(r'^\s*-(?:\d*\.)?#INF\d*(?:e[+-]?\d+)?\s*$', re.IGNORECASE)
-
 _TEXT_EXTS = (".bur", ".csv", ".txt", ".dat")
 _HDF5_EXTS = (".h5", ".hdf5")
 
 _DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4", "2c4"]
 
-
-def _drop_trailing_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop trailing empty/``Unnamed`` columns (companion writers append a blank).
-
-    Unlike a blanket "drop the last column", this removes only placeholder columns,
-    so a companion's real last column (a bv4 ``Proximity Ratio Std``, a 2c4
-    ``FRET-2CDE``) survives the merge.
-    """
-    while df.shape[1] > 1:
-        last = str(df.columns[-1]).strip()
-        if last == "" or last.lower().startswith("unnamed"):
-            df = df.iloc[:, :-1]
-        else:
-            break
-    return df
-
+#: Keys of a detected text layout; a cached layout lacking one is detected again.
+_FORMAT_KEYS = ("delimiter", "header_line", "data_start", "decimal_comma", "width")
 
 def _discover_burst_extra_endings(base_path: pathlib.Path) -> List[str]:
     """Companion endings to merge beside each ``.bur`` in *base_path*.
@@ -136,47 +119,6 @@ def _zip_contains_any(zip_path: str, exts: tuple[str, ...]) -> bool:
     except Exception as e:
         logging.debug("Zip inspect failed for '%s': %s", zip_path, e)
         return False
-
-
-# ------------------------------- fast table read ------------------------------
-
-
-def read_table_tttrlib(
-    path: Union[str, pathlib.Path],
-    delimiter: str = ",",
-    has_header: bool = True,
-) -> Optional[pd.DataFrame]:
-    """Read a delimited text table with tttrlib's threaded CSV reader.
-
-    Returns ``None`` when the file is not one this reader handles, which is the
-    caller's signal to use pandas. That is not a fallback engine kept around in
-    parallel -- it is the general reader for the files this one deliberately
-    does not do: decimal commas, whitespace alignment, skipped preamble lines,
-    embedded newlines. The point of the fast path is to be fast on the burst
-    tables that actually get opened, and the point of naming its limits is that
-    a caller can tell which one it got.
-
-    The columns come back as views into the store rather than as copies, so the
-    frame this returns costs the parse and nothing else.
-    """
-    try:
-        store = tttrlib.read_csv(str(path), delimiter=delimiter,
-                                 has_header=has_header, use_float32=True)
-    except Exception as exc:
-        logging.info("[read] tttrlib.read_csv declined %s (%s)",
-                     pathlib.Path(path).name, exc)
-        return None
-
-    columns = {}
-    for i in range(store.n_columns()):
-        column = store[i]
-        name = column.name()
-        # A duplicate header name would silently drop a column here, so make it
-        # unique the way pandas does rather than losing one.
-        if name in columns:
-            name = "%s.%d" % (name, i)
-        columns[name] = column.numpy()
-    return pd.DataFrame(columns, copy=False)
 
 
 def _get_burst_additional_endings() -> List[str]:
@@ -447,14 +389,14 @@ def _process_burst_analysis_dir(
         )
         progress.show()
 
-    pieces: List[pd.DataFrame] = []
+    pieces: List["tttrlib.DataStore"] = []
     macro_time_offset_ms = 0.0
     macro_col_ms = "Mean Macro Time (ms)"
     macro_col_s  = "Mean Macro Time (s)"
 
     # Cache format detection from first file for speed (all .bur files share format)
     bur_format_cache: Optional[Dict] = None
-    extra_format_cache: Dict[str, Dict] = {}  # ending -> kwargs
+    extra_format_cache: Dict[str, Dict] = {}  # ending -> layout
 
     for i, bur in enumerate(bur_files, start=1):
         # Check for cancellation
@@ -466,16 +408,15 @@ def _process_burst_analysis_dir(
         # Detect format from first file, reuse for rest
         if bur_format_cache is None:
             bur_format_cache = _detect_format(bur)
-        df_main = _read_text_table_auto(bur, cached_kwargs=bur_format_cache)
-        df_main.columns = [str(c).strip() for c in df_main.columns]
+        main = _read_text_table_auto(bur, cached_format=bur_format_cache)
         # Same rule as the companions below: the trailing tab on the header line
         # is already resolved by the parser, so a blanket drop-last would delete
         # a real measurement column ("Red Count Rate (KHz)", "S delayed yellow
         # (kHz)") and with it every derived red/FRET quantity.
         if drop_last_column:
-            df_main = _drop_trailing_empty_columns(df_main)
+            tables.drop_trailing_empty_columns(main)
 
-        dfs = [df_main]
+        parts = [main]
 
         # extras beside this bur (by stem) in base_path/<ending>/*.ending
         stem = bur.stem
@@ -486,40 +427,49 @@ def _process_burst_analysis_dir(
             # Cache format per extra file type
             if ending not in extra_format_cache:
                 extra_format_cache[ending] = _detect_format(extra)
-            df_extra = _read_text_table_auto(extra, cached_kwargs=extra_format_cache[ending])
-            df_extra.columns = [str(c).strip() for c in df_extra.columns]
-            if df_extra.shape[1] == 0:
+            companion = _read_text_table_auto(extra, cached_format=extra_format_cache[ending])
+            if companion.n_columns() == 0:
                 continue
             # For companions, drop only the trailing empty/placeholder column (the
             # writers append one so a blanket drop-last would remove real data,
             # e.g. a bv4's "Proximity Ratio Std" or a 2c4's "FRET-2CDE").
             if drop_last_column:
-                df_extra = _drop_trailing_empty_columns(df_extra)
-            dfs.append(df_extra)
+                tables.drop_trailing_empty_columns(companion)
+            parts.append(companion)
 
-        combined = pd.concat(dfs, axis=1)
-        combined = combined.loc[:, ~combined.columns.duplicated()]
+        # The macro time of the file's last burst, before any row is skipped:
+        # the next file's macro times continue from it.
+        last_ms = None
+        for part in reversed(parts):
+            index = part.find(macro_col_ms)
+            if index >= 0 and part.n_rows() > 0:
+                last_ms = float(float_column(part, index)[-1])
+                break
+
+        combined = tables.concat_columns(parts)
 
         # skip every Nth row
-        if skip_nth_row > 1 and not combined.empty:
-            combined = combined[combined.index % skip_nth_row != 0]
+        n_rows = int(combined.n_rows())
+        if skip_nth_row > 1 and n_rows and combined.n_columns():
+            keep = np.flatnonzero(np.arange(n_rows) % skip_nth_row != 0)
+            combined = combined.take(keep)
+
+        # Every column numeric except the ones naming a file.
+        tables.as_numeric(combined, keep_text=tables.is_filename_column)
 
         # concatenate macro time (ms → s) and rename
-        if macro_col_ms in combined.columns and not combined.empty:
-            combined[macro_col_ms] = pd.to_numeric(combined[macro_col_ms], errors="coerce")
-            combined[macro_col_ms] = combined[macro_col_ms] + macro_time_offset_ms
-            combined.rename(columns={macro_col_ms: macro_col_s}, inplace=True)
-            combined[macro_col_s] = combined[macro_col_s] / 1000.0
-
-            # update offset (use last value from ORIGINAL df that had the macro column)
-            last_ms = None
-            for df in reversed(dfs):
-                if macro_col_ms in df.columns and not df.empty:
-                    last_ms = pd.to_numeric(df[macro_col_ms], errors="coerce").iloc[-1]
-                    break
-            if last_ms is None:
-                last_ms = 0.0
-            macro_time_offset_ms += float(last_ms)
+        index = combined.find(macro_col_ms)
+        if index >= 0 and combined.n_rows() > 0:
+            seconds = (float_column(combined, index) + macro_time_offset_ms) / 1000.0
+            existing = combined.find(macro_col_s)
+            if existing >= 0:
+                combined.remove_column(existing)
+                index = combined.find(macro_col_ms)
+            column = combined.column(index)
+            column.clear_mask()
+            column.set_numpy(seconds)
+            column.set_name(macro_col_s)
+            macro_time_offset_ms += 0.0 if last_ms is None else last_ms
 
         pieces.append(combined)
 
@@ -534,35 +484,14 @@ def _process_burst_analysis_dir(
     t1 = _time.perf_counter()
     logging.info("Read %d files in %.2fs, concatenating...", n_files, t1 - t0)
 
-    # Optimize memory usage during concatenation
-    if pieces:
-        # Pre-allocate list with estimated size to reduce memory reallocations
-        total_rows = sum(len(df) for df in pieces if not df.empty)
-        logging.info("Estimated total rows: %d", total_rows)
-        
-        # Use ignore_index=True and optimize dtypes before concatenation
-        for i, df in enumerate(pieces):
-            if not df.empty:
-                # Downcast only non-filename columns to save memory
-                cols_to_convert = [col for col in df.columns if not any(keyword in str(col).lower() for keyword in ['file', 'path', 'name', 'directory'])]
-                if cols_to_convert:
-                    converted = df[cols_to_convert].apply(pd.to_numeric, errors='coerce').convert_dtypes(convert_integer=False, convert_floating=True)
-                    for col in cols_to_convert:
-                        df[col] = converted[col]
-                pieces[i] = df
-        
-        # Concatenate with optimized memory settings
-        final_df = pd.concat(pieces, ignore_index=True, copy=False)
-    else:
-        final_df = pieces[0].iloc[0:0] if pieces else pd.DataFrame()
+    final = tables.concat_rows(pieces)
+    tables.as_numeric(final, keep_text=tables.is_filename_column)
 
     t2 = _time.perf_counter()
     logging.info("Burst load complete: %d rows, %.2fs total (concat %.2fs)",
-                 len(final_df), t2 - t0, t2 - t1)
+                 final.n_rows(), t2 - t0, t2 - t1)
 
-    ds = DataSource()
-    ds.data = final_df
-    return ds
+    return DataSource(final)
 
 
 #: Suffixes a stored chain can carry: tab-separated text, or an HDF5 table.
@@ -571,31 +500,35 @@ def _process_burst_analysis_dir(
 _CHAIN_SUFFIXES = (".er4", ".h5", ".hdf5")
 
 
-def _read_chain_frame(filename: str, sep: str = '\t') -> pd.DataFrame:
-    """Load one chain file, text or HDF5, as a frame of draws.
+def _read_chain_store(filename: str, sep: str = '\t') -> "tttrlib.DataStore":
+    """Load one chain file, text or HDF5, as a store of draws.
 
     Parameters
     ----------
     filename : str
-        Path to a ``.er4`` text chain or an HDF5 chain table.
+        Path to a ``.er4`` text chain or a columnar HDF5 chain table.
     sep : str
         Column separator of the text format.
 
     Returns
     -------
-    pandas.DataFrame
+    tttrlib.DataStore
         One row per draw.
     """
     path = pathlib.Path(filename)
     if path.suffix.lower() in (".h5", ".hdf5"):
         if is_ensemble_sampling_hdf5(str(path)):
             source = read_ensemble_sampling_hdf5(str(path))
-            if source.data is None:
+            if source.empty:
                 raise ValueError("no sampled states in the file")
-            return source.data
-        # ChiSurf writes the chain as a pandas table under 'results'.
-        return pd.read_hdf(path, key="results")
-    return pd.read_csv(path, sep=sep, header=0, comment=None)
+            return source.store
+        store = read_hdf5_store(path)
+        if store is None:
+            store = read_hdf5_store(path, "/results")
+        if store is None:
+            raise ValueError("no columnar HDF5 table in the file")
+        return store
+    return tttrlib.read_csv(str(path), delimiter=sep, has_header=True)
 
 
 def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
@@ -613,20 +546,22 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     if not filenames:
         return DataSource()
 
-    dfs = []
+    chains: List["tttrlib.DataStore"] = []
     skipped: List[str] = []
     expected_columns: Optional[set] = None
     for fn in filenames:
         try:
-            df = _read_chain_frame(fn, sep)
+            raw = _read_chain_store(fn, sep)
             # Normalize column names (strip whitespace and leading #)
-            df.columns = [str(c).strip().lstrip('#').strip() for c in df.columns]
+            names = [str(raw.column(i).name()).strip().lstrip('#').strip()
+                     for i in range(raw.n_columns())]
+            store = tables.rename_columns(raw, names)
         except Exception as e:
             logging.warning(f"Could not read sampling file {fn}: {e}")
             skipped.append(str(fn))
             continue
 
-        if df.empty or df.shape[1] < 2:
+        if store.n_rows() == 0 or store.n_columns() < 2:
             # Not a chain. Concatenated anyway it would contribute a column of
             # its own that every other chain is missing, and the missing values
             # are then filled -- inventing draws that were never sampled.
@@ -634,7 +569,7 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
             skipped.append(str(fn))
             continue
 
-        columns = set(df.columns) - {'chain', 'draw'}
+        columns = set(names) - {'chain', 'draw'}
         if expected_columns is None:
             expected_columns = columns
         elif columns != expected_columns:
@@ -647,31 +582,27 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
             skipped.append(str(fn))
             continue
 
-        if 'chain' not in df.columns:
-            df['chain'] = len(dfs)
-        if 'draw' not in df.columns:
-            df['draw'] = np.arange(len(df), dtype=np.int64)
-        dfs.append(df)
+        n_draws = int(store.n_rows())
+        if store.find('chain') < 0:
+            store.add('chain', np.full(n_draws, len(chains), dtype=np.int64))
+        if store.find('draw') < 0:
+            store.add('draw', np.arange(n_draws, dtype=np.int64))
+        chains.append(store)
 
     if skipped:
         # One line the user can actually notice: a chain silently missing from a
         # posterior is a posterior that is quietly wrong.
         logging.warning(
             "read %d of %d sampling chains; skipped: %s",
-            len(dfs), len(filenames), ", ".join(pathlib.Path(f).name for f in skipped),
+            len(chains), len(filenames), ", ".join(pathlib.Path(f).name for f in skipped),
         )
 
-    if not dfs:
+    if not chains:
         return DataSource()
 
-    # Concatenate all chains by rows (stacking samples)
-    combined_df = pd.concat(dfs, axis=0, ignore_index=True)
-    
-    # Ensure all columns are numeric (non-numeric become NaN)
-    combined_df = _best_effort_numeric(combined_df)
-    combined_df = _fill_missing(combined_df, FILL_MISSING_VALUE)
-    
-    return DataSource(data=combined_df)
+    combined = tables.concat_rows(chains)
+    tables.as_numeric(combined, fill=FILL_MISSING_VALUE)
+    return DataSource(combined)
 
 
 def _sampling_chain_files(folder: pathlib.Path) -> List[pathlib.Path]:
@@ -845,7 +776,7 @@ def read_ensemble_sampling_hdf5(filenames: Union[str, List[str]]) -> DataSource:
     if not filenames:
         return DataSource()
 
-    frames = []
+    chains = []
     chain_offset = 0
     for fn in filenames:
         try:
@@ -869,22 +800,22 @@ def read_ensemble_sampling_hdf5(filenames: Union[str, List[str]]) -> DataSource:
                 and all(isinstance(n, str) for n in names)):
             names = [f"p{i}" for i in range(n_dim)]
 
-        df = pd.DataFrame(chain.reshape(-1, n_dim), columns=list(names))
-        df["log_prob"] = log_prob.reshape(-1)
+        draws = chain.reshape(-1, n_dim)
+        columns = {name: np.ascontiguousarray(draws[:, i]) for i, name in enumerate(names)}
+        columns["log_prob"] = log_prob.reshape(-1)
         # ``reshape`` runs the walker axis fastest, so the walker index cycles
         # and the step index repeats.
-        df["chain"] = np.tile(np.arange(n_walkers), n_steps) + chain_offset
-        df["draw"] = np.repeat(np.arange(n_steps), n_walkers)
+        columns["chain"] = np.tile(np.arange(n_walkers), n_steps) + chain_offset
+        columns["draw"] = np.repeat(np.arange(n_steps), n_walkers)
         chain_offset += n_walkers
-        frames.append(df)
+        chains.append(store_from_columns(columns))
 
-    if not frames:
+    if not chains:
         return DataSource()
 
-    combined = pd.concat(frames, axis=0, ignore_index=True)
-    combined = _best_effort_numeric(combined)
-    combined = _fill_missing(combined, FILL_MISSING_VALUE)
-    return DataSource(data=combined)
+    combined = tables.concat_rows(chains)
+    tables.as_numeric(combined, fill=FILL_MISSING_VALUE)
+    return DataSource(combined)
 
 
 def read_hdf5_store(filename: Union[str, pathlib.Path], group: str = "/"):
@@ -893,13 +824,13 @@ def read_hdf5_store(filename: Union[str, pathlib.Path], group: str = "/"):
     The short path, and the one chisurf writes for: an HDF5 group holding one
     1-D dataset per column is the layout a DataStore already has, so the file
     becomes the store the gates are evaluated in and the histograms fill out of
-    -- with no DataFrame in between, no conversion, and no second copy of the
+    -- with no conversion, and no second copy of the
     table at the moment it is largest. Types survive too: a float32 column stays
     float32 and an integer column stays an integer.
 
-    ``None`` means the file is not that shape -- a pandas HDFStore table, a
-    Photon-HDF5 measurement -- and the caller reads it the long way. Returning
-    None rather than raising is what keeps the two readable side by side.
+    ``None`` means the file is not that shape -- a PyTables table written by
+    a data-frame library, a Photon-HDF5 measurement -- and the caller decides
+    what else the file may be.
     """
     try:
         columns = tttrlib.read_hdf5_table_columns(str(filename), group)
@@ -937,7 +868,7 @@ def read_mfd_hdf5(filenames: List[str], merge_mode: str = "columns") -> DataSour
         if store is not None:
             logging.info("[read] %s: %d rows x %d columns straight into a store",
                          pathlib.Path(first).name, store.n_rows(), store.n_columns())
-            return DataSource.from_store(store)
+            return DataSource(store)
 
     if first.lower().endswith(".zip") and not _zip_contains_any(first, _HDF5_EXTS):
         logging.info("No HDF5 in zip; treating as burst analysis: %s", first)
@@ -947,54 +878,58 @@ def read_mfd_hdf5(filenames: List[str], merge_mode: str = "columns") -> DataSour
         logging.info("Sampling chain detected in %s", first)
         return read_ensemble_sampling_hdf5([str(f) for f in filenames])
 
-    base_df = read_hdf5_file(first)
-    row_count = len(base_df)
+    base = read_hdf5_file(first)
+    row_count = int(base.n_rows())
 
     if len(filenames) == 1:
-        ds = DataSource()
-        ds.data = base_df.select_dtypes(include=["number"])
-        return ds
+        return DataSource(tables.numeric_columns_only(base))
 
-    combined = base_df.copy()
+    combined = base
     for fn in filenames[1:]:
-        df = read_hdf5_file(fn)
+        store = read_hdf5_file(fn)
+        own = [combined.column(i).name() for i in range(combined.n_columns())]
+        other = [store.column(i).name() for i in range(store.n_columns())]
         if merge_mode == "rows":
-            common = sorted(set(combined.columns).intersection(df.columns))
+            common = sorted(set(own).intersection(other))
             if not common:
                 _safe_warning("No Common Columns",
                               f"{fn} shares no columns with the first file. Skipping.")
                 continue
-            combined = pd.concat([combined[common], df[common]], axis=0,
-                                 ignore_index=True)
+            combined = tables.concat_rows([store_with_columns(combined, common),
+                                           store_with_columns(store, common)],
+                                          join="inner")
             continue
-        if len(df) != row_count:
+        if int(store.n_rows()) != row_count:
             _safe_warning(
                 "Row Count Mismatch",
-                f"File {fn} has {len(df)} rows, expected {row_count}. Skipping."
+                f"File {fn} has {store.n_rows()} rows, expected {row_count}. Skipping."
             )
             continue
-        dup = set(combined.columns).intersection(df.columns)
-        combined = pd.concat([combined, df.drop(columns=list(dup))], axis=1) if dup else pd.concat([combined, df], axis=1)
+        combined = tables.concat_columns([combined, store])
 
-    ds = DataSource()
-    ds.data = combined.select_dtypes(include=["number"])
-    return ds
+    return DataSource(tables.numeric_columns_only(combined))
 
 
-def read_hdf5_file(filename: str) -> pd.DataFrame:
+def read_hdf5_file(filename: str) -> "tttrlib.DataStore":
     """
-    Read a single HDF5 (optionally inside a .zip).
-    Tries '/results' first, else the first available key.
+    Read a single columnar HDF5 table (optionally inside a .zip).
+    Tries the group '/results' first, else the file root.
+
+    Raises
+    ------
+    ValueError
+        When the file holds no columnar table. A PyTables table written by a
+        data-frame library is not one; it has to be rewritten as columns.
     """
-    def _read_one(h5_path: pathlib.Path) -> pd.DataFrame:
-        try:
-            with pd.HDFStore(str(h5_path), mode="r") as st:
-                keys = st.keys()
-                key = "/results" if "/results" in keys else (keys[0] if keys else "/results")
-            return pd.read_hdf(h5_path, key=key)
-        except Exception as e:
-            # final fallback to default key
-            return pd.read_hdf(h5_path)
+    def _read_one(h5_path: pathlib.Path) -> "tttrlib.DataStore":
+        store = read_hdf5_store(h5_path, "/results")
+        if store is None:
+            store = read_hdf5_store(h5_path, "/")
+        if store is None:
+            raise ValueError(
+                f"{h5_path.name} holds no columnar HDF5 table (one 1-D dataset "
+                "per column, at the root or under /results)")
+        return store
 
     p = pathlib.Path(filename)
     if p.suffix.lower() == ".zip":
@@ -1014,58 +949,45 @@ def read_csv(filenames: List[str]) -> DataSource:
     """
     Read one or multiple CSV-like files.
     - Per-file autodetection + normalization (MSVC NaN/Inf)
-    - If same ncols: stack rows; elif same nrows: stack cols (drop dups); else fallback to col-wise merge.
+    - Same number of columns: stack rows under the first file's names; same
+      number of rows: put the columns side by side (a repeated name keeps the
+      first); otherwise only files with the first file's row count are merged
+      side by side.
     """
     if not filenames:
         return DataSource()
 
-    dfs: List[pd.DataFrame] = []
+    stores: List["tttrlib.DataStore"] = []
     for fn in filenames:
         try:
-            df = read_csv_file(fn)
-            dfs.append(df)
+            stores.append(read_csv_file(fn))
         except Exception as e:
             _safe_warning("Open CSV", f"Could not read file {fn}: {e}")
 
-    if not dfs:
+    if not stores:
         return DataSource()
 
-    if len(dfs) == 1:
-        dfn = dfs[0].select_dtypes(include=["number"])
-        return DataSource(data=dfn)
+    if len(stores) == 1:
+        return DataSource(tables.numeric_columns_only(stores[0]))
 
-    ncols = [d.shape[1] for d in dfs]
-    nrows = [d.shape[0] for d in dfs]
+    ncols = [s.n_columns() for s in stores]
+    nrows = [s.n_rows() for s in stores]
 
     if len(set(ncols)) == 1:
-        base_cols = list(dfs[0].columns)
-        norm = []
-        for d in dfs:
-            dd = d.copy()
-            dd.columns = base_cols
-            norm.append(dd)
-        combined = pd.concat(norm, axis=0, ignore_index=True)
-
-    elif len(set(nrows)) == 1:
-        combined = dfs[0].copy()
-        for d in dfs[1:]:
-            dup = set(combined.columns).intersection(d.columns)
-            d2 = d.drop(columns=list(dup)) if dup else d
-            combined = pd.concat([combined, d2], axis=1)
+        base_cols = [stores[0].column(i).name() for i in range(stores[0].n_columns())]
+        combined = tables.concat_rows([tables.rename_columns(s, base_cols) for s in stores])
     else:
-        _safe_warning(
-            "Auto-merge CSV",
-            "Files share neither column count nor row count. Using column-wise merge with duplicate-column removal."
-        )
-        combined = dfs[0].copy()
-        for d in dfs[1:]:
-            dup = set(combined.columns).intersection(d.columns)
-            d2 = d.drop(columns=list(dup)) if dup else d
-            combined = pd.concat([combined, d2], axis=1)
+        if len(set(nrows)) != 1:
+            _safe_warning(
+                "Auto-merge CSV",
+                "Files share neither column count nor row count. Merging column-wise "
+                "the files with the first file's row count."
+            )
+        combined = tables.concat_columns(stores)
 
-    dfn = combined.select_dtypes(include=["number"])
-    dfn = _fill_missing(dfn, FILL_MISSING_VALUE)
-    return DataSource(data=dfn)
+    combined = tables.numeric_columns_only(combined)
+    tables.as_numeric(combined, fill=FILL_MISSING_VALUE)
+    return DataSource(combined)
 
 
 def start_read_csv_async(
@@ -1111,86 +1033,14 @@ def start_read_csv_async(
 
 # ----------------------------- helpers ---------------------------------------
 
-def _fill_missing(df: pd.DataFrame, sentinel: float = FILL_MISSING_VALUE) -> pd.DataFrame:
-    # If you also want to neutralize ±inf: df = df.replace([np.inf, -np.inf], np.nan)
-    return df.fillna(sentinel)
-
-
-def coerce_numeric_majority(df: pd.DataFrame, threshold: float = 0.55, verbose: bool = False) -> pd.DataFrame:
-    """
-    Try to coerce mostly-numeric string columns using several locale patterns.
-    """
-    out = df.copy()
-
-    def _to_numeric_series(s: pd.Series):
-        s_obj = s.astype("string", copy=False)
-
-        a = pd.to_numeric(s_obj, errors="coerce")
-        a_rate = float(a.notna().mean())
-
-        sb = s_obj.copy()
-        mb = sb.notna() & sb.str.contains(",", na=False) & ~sb.str.contains(r"\.", na=False)
-        if mb.any():
-            sb.loc[mb] = sb.loc[mb].str.replace(",", ".", regex=False)
-        b = pd.to_numeric(sb, errors="coerce")
-        b_rate = float(b.notna().mean())
-
-        sc = s_obj.copy()
-        mc = sc.notna() & sc.str.contains(",", na=False)
-        if mc.any():
-            sc.loc[mc] = sc.loc[mc].str.replace(",", "", regex=False)
-        c = pd.to_numeric(sc, errors="coerce")
-        c_rate = float(c.notna().mean())
-
-        sd = s_obj.copy()
-        md = sd.notna() & sd.str.contains(r",", na=False) & sd.str.contains(r"\.", na=False)
-        if md.any():
-            sd.loc[md] = (sd.loc[md].str.replace(".", "", regex=False)
-                                   .str.replace(",", ".", regex=False))
-        d = pd.to_numeric(sd, errors="coerce")
-        d_rate = float(d.notna().mean())
-
-        candidates = [("direct", a_rate, a), ("dec_comma", b_rate, b), ("us_thousands", c_rate, c), ("eu_thousands", d_rate, d)]
-        how, rate, ser = max(candidates, key=lambda x: x[1])
-        return ser, rate, how
-
-    for col in out.columns:
-        if pd.api.types.is_numeric_dtype(out[col]):
-            if verbose:
-                logging.info("[coerce_numeric_majority] %s: already numeric", col)
-            continue
-        ser, rate, how = _to_numeric_series(out[col])
-        if rate >= threshold:
-            if verbose:
-                logging.info("[coerce_numeric_majority] %s → numeric (%.1f%%, %s)", col, 100*rate, how)
-            out[col] = ser
-        else:
-            if verbose:
-                logging.info("[coerce_numeric_majority] %s: keep as text (%.1f%% numeric)", col, 100*rate)
-    return out
-
-
-def _pandas_kwargs(kwargs: Dict) -> Dict:
-    """Return *kwargs* without the private flags, for handing to pandas.
-
-    `_detect_and_build_kwargs` mixes two things into one dict: arguments for the
-    CSV reader, and decisions about WHICH reader to use (`_tttrlib`). The second
-    kind is prefixed and has to be dropped before the dict is splatted, or pandas
-    raises `unexpected keyword argument '_tttrlib'` -- and every caller catches
-    that as "could not read the file", so a perfectly ordinary comma-delimited
-    file with a header on line 1 reads as empty and reports nothing but a
-    warning. One function, so a third call site cannot forget.
-    """
-    return {k: v for k, v in kwargs.items() if not k.startswith("_")}
-
-
-def read_csv_file(filename: str) -> pd.DataFrame:
+def read_csv_file(filename: str) -> "tttrlib.DataStore":
     """
     Read a CSV-like text file or a .zip containing exactly one CSV-like text file.
-    - Autodetect delimiter (, \\t ; | or whitespace).
+    - Autodetect delimiter (, \\t ; or whitespace).
     - Choose the first full-width *texty* row as header when available.
-    - Normalize MSVC NaN/Inf/IND/QNAN/SNAN tokens.
-    - Force numeric columns (non-numeric → NaN) and fill NaNs with FILL_MISSING_VALUE.
+    - MSVC NaN/Inf/IND/QNAN/SNAN spellings read as numbers.
+    - Every column numeric (text that is not a number → NaN), NaNs filled
+      with FILL_MISSING_VALUE.
     """
     p = pathlib.Path(filename)
 
@@ -1199,229 +1049,150 @@ def read_csv_file(filename: str) -> pd.DataFrame:
             inner = _find_first_member(zf, _TEXT_EXTS)
             if inner is None:
                 raise ValueError(f"No CSV-like files found in zip: {filename}")
-            with zf.open(inner) as bio:
-                tio = io.TextIOWrapper(bio, encoding="utf-8", errors="ignore")
-                head = _read_head_lines(tio)
-            kwargs = _detect_and_build_kwargs(head)
-            with zf.open(inner) as bio:
-                tio = io.TextIOWrapper(bio, encoding="utf-8", errors="ignore")
-                df = pd.read_csv(tio, **_pandas_kwargs(kwargs))
+            with tempfile.TemporaryDirectory() as tdir:
+                extracted = pathlib.Path(zf.extract(inner, tdir))
+                store = _read_text_store(extracted, _detect_format(extracted, use_cache=False))
     else:
-        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-            head = _read_head_lines(f)
-            kwargs = _detect_and_build_kwargs(head)
-            f.seek(0)
-            df = pd.read_csv(f, **_pandas_kwargs(kwargs))
+        store = _read_text_store(p, _detect_format(p))
 
-    logging.info("[read_csv_file] Read %d rows from %s", len(df), filename)
-    logging.info("[read_csv_file] Columns: %s", ", ".join(map(str, df.columns)))
+    names = [store.column(i).name() for i in range(store.n_columns())]
+    logging.info("[read_csv_file] Read %d rows from %s", store.n_rows(), filename)
+    logging.info("[read_csv_file] Columns: %s", ", ".join(names))
 
-    # normalize MSVC tokens then coerce to numeric
-    df = _normalize_msvc_tokens(df)
-    df = df.apply(pd.to_numeric, errors="coerce")
-    df = df.fillna(FILL_MISSING_VALUE)
-    return df
+    tables.as_numeric(store, fill=FILL_MISSING_VALUE)
+    return store
 
 
 # --------------------- low-level text-table helpers --------------------------
 
-def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = None) -> pd.DataFrame:
+def _is_plain_layout(layout: Dict) -> bool:
+    """Whether tttrlib's CSV reader takes the file as it is.
+
+    A plain layout is delimited by one character, uses a decimal point, and
+    starts with its header (or with data, when there is no header).
     """
-    Read a single text-like file (.bur/.csv/.txt/.dat) with autodetection + MSVC normalization.
+    header_line = layout["header_line"]
+    return (
+        layout["delimiter"] is not None
+        and not layout["decimal_comma"]
+        and (header_line == 0 or (header_line is None and layout["data_start"] == 0))
+    )
+
+
+def _normalised_text(path: pathlib.Path, layout: Dict) -> str:
+    """The table in `path` as tab-delimited text with a header line.
+
+    Lines before the header or data are dropped, whitespace alignment and the
+    detected delimiter become tabs, a decimal comma becomes a point, and a file
+    without a header gets the column positions as names.
+    """
+    delimiter = layout["delimiter"]
+    width = int(layout["width"])
+    header_line = layout["header_line"]
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.read().splitlines()
+    if header_line is not None:
+        header = [t.strip() for t in _tokenize(lines[header_line], delimiter)]
+        first = header_line + 1
+    else:
+        header = [str(i) for i in range(width)]
+        first = int(layout["data_start"])
+    width = len(header)
+    out = ["\t".join(header)]
+    for line in lines[first:]:
+        tokens = [t.strip() for t in _tokenize(line, delimiter)]
+        if not tokens:
+            continue
+        if layout["decimal_comma"]:
+            tokens = [t.replace(",", ".") for t in tokens]
+        tokens = (tokens + [""] * width)[:width]
+        out.append("\t".join(tokens))
+    return "\n".join(out) + "\n"
+
+
+def _read_text_store(path: pathlib.Path, layout: Dict) -> "tttrlib.DataStore":
+    """Read one text table with tttrlib, rewriting its layout first when it is not plain."""
+    if _is_plain_layout(layout):
+        has_header = layout["header_line"] == 0
+        store = tttrlib.read_csv(str(path), delimiter=layout["delimiter"],
+                                 has_header=has_header, use_float32=True)
+        if not has_header:
+            store = tables.rename_columns(store, [str(i) for i in range(store.n_columns())])
+    else:
+        with tempfile.TemporaryDirectory() as tdir:
+            normalised = pathlib.Path(tdir) / (path.stem + ".tsv")
+            normalised.write_text(_normalised_text(path, layout), encoding="utf-8")
+            store = tttrlib.read_csv(str(normalised), delimiter="\t",
+                                     has_header=True, use_float32=True)
+    stripped = [store.column(i).name().strip() for i in range(store.n_columns())]
+    if stripped != [store.column(i).name() for i in range(store.n_columns())]:
+        store = tables.rename_columns(store, stripped)
+    return store
+
+
+def _read_text_table_auto(path: pathlib.Path, cached_format: Optional[Dict] = None) -> "tttrlib.DataStore":
+    """
+    Read a single text-like file (.bur/.csv/.txt/.dat) with layout autodetection.
 
     Parameters
     ----------
     path : pathlib.Path
         File to read.
-    cached_kwargs : Optional[Dict]
-        If provided, skip detection and use these kwargs directly for pd.read_csv.
-        This speeds up reading many files with the same format.
+    cached_format : Optional[Dict]
+        A layout detected on an earlier file of the same kind. When reading with
+        it fails, the layout is detected again and the dict updated in place, so
+        the next file of that kind uses the new one.
 
-    This implementation avoids double-reading the file by rewinding the same handle after sampling.
+    Trailing blank columns are dropped, and every column whose name does not
+    name a file is made numeric.
     """
     import time as _time
-    
-    if cached_kwargs is not None:
-        kwargs = cached_kwargs.copy()
-    else:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            head = _read_head_lines(f)
-            kwargs = _detect_and_build_kwargs(head)
-    
-    def _load_with_kwargs(read_kwargs: Dict) -> pd.DataFrame:
-        # Read, not pop: the same kwargs dict is cached and reused for every
-        # further file of this format, so consuming the flag here would send
-        # all but the first through pandas.
-        if read_kwargs.get("_tttrlib", False):
-            frame = read_table_tttrlib(
-                path,
-                delimiter=read_kwargs.get("sep", ","),
-                has_header=read_kwargs.get("header", 0) == 0,
-            )
-            if frame is not None:
-                return frame
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return pd.read_csv(f, **_pandas_kwargs(read_kwargs))
 
-    def _drop_trailing_empty_columns(frame: pd.DataFrame) -> pd.DataFrame:
-        if frame.empty or frame.shape[1] == 0:
-            return frame
-        working = frame
-        while working.shape[1] > 0:
-            last_col_name = working.columns[-1]
-            col = working[last_col_name]
-            all_nan = col.isna().all()
-            all_blank = False
-            if not all_nan and (pd.api.types.is_object_dtype(col) or pd.api.types.is_string_dtype(col)):
-                non_null = col.dropna()
-                if non_null.empty:
-                    all_blank = True
-                else:
-                    all_blank = non_null.astype(str).str.strip().eq("").all()
-            if all_nan or all_blank:
-                logging.debug("[read] Dropping trailing empty column '%s'", last_col_name)
-                working = working.iloc[:, :-1]
-                continue
-            break
-        return working
-
-    def _update_cache(new_kwargs: Dict) -> None:
-        if cached_kwargs is not None:
-            cached_kwargs.clear()
-            cached_kwargs.update(new_kwargs)
+    layout = dict(cached_format) if cached_format is not None else _detect_format(path)
 
     t0 = _time.perf_counter()
     while True:
         try:
-            df = _load_with_kwargs(kwargs)
+            store = _read_text_store(path, layout)
             break
         except Exception as exc:
-            if cached_kwargs is not None:
+            if cached_format is not None:
                 logging.warning("[read] Cached format failed for %s (%s). Re-detecting format.",
                                 path.name, exc)
-                kwargs = _detect_format(path)
-                _update_cache(kwargs)
-                t0 = _time.perf_counter()
+                layout = _detect_format(path, use_cache=False)
+                cached_format.clear()
+                cached_format.update(layout)
+                cached_format = None
                 continue
             raise
     t1 = _time.perf_counter()
 
-    before_drop_cols = df.shape[1]
-    df = _drop_trailing_empty_columns(df)
-    if df.shape[1] != before_drop_cols:
-        logging.debug("[read] Width reduced from %d to %d after dropping empty column(s)",
-                     before_drop_cols, df.shape[1])
+    tables.drop_trailing_empty_columns(store)
+    tables.as_numeric(store, keep_text=tables.is_filename_column)
 
-    object_cols = df.select_dtypes(include=['object']).columns
-    has_object_cols = len(object_cols) > 0
-    
-    t2_start = _time.perf_counter()
-    if has_object_cols:
-        # Skip filename columns from post-processing too
-        filename_cols = [col for col in object_cols
-                       if any(keyword in str(col).lower() for keyword in ['file', 'path', 'name', 'directory'])]
-        if filename_cols:
-            logging.debug("[read] Skipping filename columns in post-processing: %s", filename_cols)
-        
-        # Only process non-filename columns
-        cols_to_process = [col for col in object_cols if col not in filename_cols]
-        if cols_to_process:
-            logging.debug("[read] Running post-processing on %d object columns", len(cols_to_process))
-            df = _normalize_msvc_tokens(df)
-            df = _best_effort_numeric(df)
-        else:
-            logging.debug("[read] Skipping post-processing - only filename columns remain")
-    else:
-        logging.debug("[read] Skipping post-processing - no object columns")
-    t2 = _time.perf_counter()
-    
-    logging.debug("[read] %d rows, parse=%.2fs, post_process=%.2fs, object_cols=%d",
-                 len(df), t1 - t0, t2 - t2_start,
-                 len(df.select_dtypes(include=['object']).columns))
-    
-    return df
+    logging.debug("[read] %d rows, parse+convert=%.2fs", store.n_rows(), t1 - t0)
+    return store
 
 
-def _detect_format(path: pathlib.Path) -> Dict:
+def _detect_format(path: pathlib.Path, use_cache: bool = True) -> Dict:
     """
-    Detect file format and return kwargs for pd.read_csv.
-    Uses cache to avoid re-detection on subsequent loads.
+    Detect the text layout of `path` (see :func:`_detect_table_format`).
+    Uses the file metadata cache to avoid re-detection on subsequent loads.
     """
-    # Try to get cached format first
     cache = get_metadata_cache()
-    cached_format = cache.get_cached_format(path)
-    if cached_format is not None:
-        return cached_format
-    
-    # Detect format and cache it
+    if use_cache:
+        cached_format = cache.get_cached_format(path)
+        if cached_format is not None and all(k in cached_format for k in _FORMAT_KEYS):
+            return cached_format
+
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         head = _read_head_lines(f)
-        format_kwargs = _detect_and_build_kwargs(head)
-    
-    # Cache the detected format
-    cache.cache_format(path, format_kwargs)
-    return format_kwargs
+    layout = _detect_table_format(head)
 
+    if use_cache:
+        cache.cache_format(path, layout)
+    return layout
 
-def _normalize_msvc_tokens(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Replace MSVC weird tokens with NaN/±Inf (full-cell matches).
-    Optimized: only processes columns that actually contain MSVC tokens.
-    """
-    if df.empty:
-        return df
-    
-    str_cols = df.select_dtypes(include=['object']).columns
-    if len(str_cols) == 0:
-        return df
-    
-    # Quick check: sample first 100 rows to see if any MSVC tokens exist
-    # This avoids expensive regex on files that don't have MSVC tokens
-    sample_size = min(100, len(df))
-    has_msvc = False
-    for col in str_cols:
-        sample = df[col].head(sample_size).astype(str)
-        if sample.str.contains(r'#(?:INF|IND|QNAN|SNAN)', case=False, na=False).any():
-            has_msvc = True
-            break
-    
-    if not has_msvc:
-        return df
-    
-    # Only copy if we actually need to modify
-    result = df.copy()
-    
-    for col in str_cols:
-        # Use vectorized replace with regex - much faster than .apply()
-        series = result[col].astype(str)
-        
-        # Single pass replacements using pd.Series.replace with regex
-        result[col] = series.replace({
-            _WIN_NAN_RE: np.nan,
-            _WIN_PINF_RE: np.inf,
-            _WIN_NINF_RE: -np.inf,
-        }, regex=True)
-    
-    return result
-
-
-def _best_effort_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert columns to numeric. Fast path: just convert, don't validate.
-    """
-    if df.empty:
-        return df
-
-    str_cols = df.select_dtypes(include=['object']).columns
-    if len(str_cols) == 0:
-        return df
-    
-    # Fast path: convert all object columns to numeric in one go
-    # Use errors='coerce' - non-numeric strings become NaN
-    for col in str_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
 
 def _find_first_member(zf: zipfile.ZipFile, exts: Tuple[str, ...]) -> Optional[str]:
     for name in zf.namelist():
@@ -1456,10 +1227,17 @@ def _has_alpha(tokens: List[str]) -> bool:
     return any(any(c.isalpha() for c in t) for t in tokens)
 
 
-def _detect_and_build_kwargs(lines: List[str]) -> Dict:
+def _detect_table_format(lines: List[str]) -> Dict:
     """
     Detect delimiter and header row from a sample of lines.
-    Returns kwargs for pandas.read_csv.
+
+    Returns
+    -------
+    dict
+        ``delimiter`` (a character, or None for whitespace alignment),
+        ``header_line`` (index of the header line, or None), ``data_start``
+        (index of the first data line), ``decimal_comma`` and ``width``
+        (the number of columns).
     """
     N = min(len(lines), 5000)
     candidates = [",", "\t", ";"]
@@ -1539,40 +1317,23 @@ def _detect_and_build_kwargs(lines: List[str]) -> Dict:
         if len(prev_toks) == complete_cols and _has_alpha(prev_toks):
             use_header_idx = header_prev_idx
 
-    kwargs: Dict = dict(skipinitialspace=True)
     if use_header_idx is not None:
-        kwargs["header"] = 0
-        kwargs["skiprows"] = use_header_idx
         data_start = use_header_idx + 1
         header_where = f"line {use_header_idx}"
     else:
-        kwargs["header"] = None
-        kwargs["skiprows"] = first_idx
         data_start = first_idx
         header_where = "none"
 
-    if delim is None:
-        kwargs["delim_whitespace"] = True
-        kwargs["engine"] = "python"
-        sep_show = "<whitespace>"
-    else:
-        kwargs["sep"] = delim
-        kwargs["engine"] = "c"
-        # tttrlib's threaded reader handles a plain delimited file with its
-        # header on the first line. Not a decimal comma, not a skipped preamble,
-        # not whitespace alignment -- those go to pandas, which is the general
-        # reader, and the flag is what says which one a file got.
-        kwargs["_tttrlib"] = (
-            not dec_comma
-            and first_idx == 0
-            and use_header_idx in (None, 0)
-        )
-        sep_show = repr(delim)
-
-    if dec_comma:
-        kwargs["decimal"] = ","
+    layout: Dict = dict(
+        delimiter=delim,
+        header_line=use_header_idx,
+        data_start=data_start,
+        decimal_comma=bool(dec_comma),
+        width=int(complete_cols),
+    )
+    sep_show = "<whitespace>" if delim is None else repr(delim)
 
     # debug log (compact) - only shown once per file type due to caching
-    logging.info("[detect] sep=%s, width=%d, engine=%s, header=%s, data_start=%d",
-                 sep_show, complete_cols, kwargs.get("engine", "c"), header_where, data_start)
-    return kwargs
+    logging.info("[detect] sep=%s, width=%d, plain=%s, header=%s, data_start=%d",
+                 sep_show, complete_cols, _is_plain_layout(layout), header_where, data_start)
+    return layout

@@ -13,10 +13,22 @@ identity thrown away cannot answer it.
 """
 
 import numpy as np
-import pandas as pd
 import pytest
+import tttrlib
 
+from ndxplorer.core.data_source import store_from_columns
 from ndxplorer.io import reader
+
+
+def _column(source, name):
+    return source.column_values(name)
+
+
+def _chains(source):
+    """``{chain: draws of that chain in table order}``."""
+    chain = source.column_values("chain")
+    draw = source.column_values("draw")
+    return {int(c): draw[chain == c].tolist() for c in np.unique(chain)}
 
 HEADER = "# chi2r\tlnprior\tc\ta"
 
@@ -50,8 +62,8 @@ def make_run(root, timestamp, n_chains=3, n_draws=20, offset=0.0):
 def test_the_folder_the_run_was_started_in_opens(tmp_path):
     """The user picks the folder they gave ChiSurf, not the one it created."""
     make_run(tmp_path, "2026-07-28_10-00-00", n_chains=3, n_draws=20)
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert data is not None and len(data) == 60
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 60
 
 
 @pytest.mark.parametrize("level", ["run", "chains"])
@@ -59,27 +71,27 @@ def test_the_inner_folders_open_too(tmp_path, level):
     """Whichever level is pointed at, the same chains come back."""
     run = make_run(tmp_path, "2026-07-28_10-00-00", n_chains=2, n_draws=15)
     target = run if level == "run" else run / "chains"
-    data = reader.read_sampling_folder(str(target)).data
-    assert data is not None and len(data) == 30
+    data = reader.read_sampling_folder(str(target))
+    assert data.size == 30
 
 
 def test_a_draw_knows_which_chain_it_came_from(tmp_path):
     """Stacked runs must stay separable, or they cannot be compared."""
     make_run(tmp_path, "2026-07-28_10-00-00", n_chains=3, n_draws=25)
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert sorted(data["chain"].unique()) == [0, 1, 2]
-    assert data.groupby("chain").size().tolist() == [25, 25, 25]
+    data = reader.read_sampling_folder(str(tmp_path))
+    chains = _chains(data)
+    assert sorted(chains) == [0, 1, 2]
     # ...and in which order, so a trace can be plotted at all.
-    for _, chain in data.groupby("chain"):
-        assert chain["draw"].tolist() == list(range(25))
+    for draws in chains.values():
+        assert draws == list(range(25))
 
 
 def test_the_parameter_columns_survive_the_header(tmp_path):
     """The header is commented; its ``#`` must not end up in a column name."""
     make_run(tmp_path, "2026-07-28_10-00-00", n_chains=1, n_draws=10)
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert list(data.columns)[:4] == ["chi2r", "lnprior", "c", "a"]
-    assert np.isclose(data["a"].mean(), 0.5, atol=0.05)
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.parameter_names[:4] == ["chi2r", "lnprior", "c", "a"]
+    assert np.isclose(_column(data, "a").mean(), 0.5, atol=0.05)
 
 
 def test_separate_runs_are_not_pooled_into_one_posterior(tmp_path):
@@ -92,31 +104,28 @@ def test_separate_runs_are_not_pooled_into_one_posterior(tmp_path):
     make_run(tmp_path, "2026-07-28_10-00-00", n_chains=2, n_draws=30, offset=0.0)
     make_run(tmp_path, "2026-07-28_18-30-00", n_chains=2, n_draws=30, offset=5.0)
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 60
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 60
     # The most recent run is the one opened; timestamps sort chronologically.
-    assert np.isclose(data["c"].mean(), 7.0, atol=0.5)
+    assert np.isclose(_column(data, "c").mean(), 7.0, atol=0.5)
 
 
 def test_a_folder_without_chains_returns_nothing_rather_than_raising(tmp_path):
     """An empty result is a normal outcome of pointing at the wrong place."""
     (tmp_path / "not-a-run").mkdir()
-    assert reader.read_sampling_folder(str(tmp_path)).data is None or \
-        reader.read_sampling_folder(str(tmp_path)).data.empty
+    assert reader.read_sampling_folder(str(tmp_path)).empty
 
 
 def test_chain_and_draw_are_not_invented_when_the_file_has_them(tmp_path):
     """A file that already carries the columns keeps its own values."""
     path = tmp_path / "chains" / "run_0.er4"
     path.parent.mkdir(parents=True)
-    frame = pd.DataFrame({
-        "chi2r": [1.0, 1.1], "lnprior": [0.0, 0.0],
-        "c": [2.0, 2.1], "chain": [7, 7], "draw": [100, 101],
-    })
-    frame.to_csv(path, sep="\t", index=False)
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert data["chain"].tolist() == [7, 7]
-    assert data["draw"].tolist() == [100, 101]
+    path.write_text("chi2r\tlnprior\tc\tchain\tdraw\n"
+                    "1.0\t0.0\t2.0\t7\t100\n"
+                    "1.1\t0.0\t2.1\t7\t101\n")
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert _column(data, "chain").tolist() == [7, 7]
+    assert _column(data, "draw").tolist() == [100, 101]
 
 
 def test_a_partial_chain_is_not_counted_twice(tmp_path):
@@ -131,9 +140,9 @@ def test_a_partial_chain_is_not_counted_twice(tmp_path):
     write_chain(run / "chains" / "Fit_0.er4", n_draws=25, seed=1)
     write_chain(run / "chains" / "Fit_0.partial.er4", n_draws=12, seed=1)
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 25
-    assert sorted(data["chain"].unique()) == [0]
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 25
+    assert sorted(_chains(data)) == [0]
 
 
 def test_a_cancelled_run_is_still_read(tmp_path):
@@ -142,9 +151,9 @@ def test_a_cancelled_run_is_still_read(tmp_path):
     write_chain(run / "chains" / "Fit_0.er4", n_draws=25, seed=1)
     write_chain(run / "chains" / "Fit_1.partial.er4", n_draws=10, seed=2)
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 35
-    assert sorted(data["chain"].unique()) == [0, 1]
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 35
+    assert sorted(_chains(data)) == [0, 1]
 
 
 def test_a_file_that_is_not_a_chain_is_skipped_and_said_so(tmp_path, caplog):
@@ -159,9 +168,9 @@ def test_a_file_that_is_not_a_chain_is_skipped_and_said_so(tmp_path, caplog):
     (run / "chains" / "Fit_1.er4").write_text("this is not a chain\n")
 
     with caplog.at_level("WARNING"):
-        data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 20
-    assert list(data.columns) == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
+        data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 20
+    assert data.parameter_names == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
     assert "read 1 of 2 sampling chains" in caplog.text
 
 
@@ -178,25 +187,25 @@ def test_chains_of_different_parameters_are_not_merged(tmp_path):
         for _ in range(20):
             f.write("1.0\t0.0\t1.0\t2.0\t3.0\n")
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 20
-    assert "z" not in data.columns
-    assert not data.isna().any().any()
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 20
+    assert "z" not in data.parameter_names
+    assert np.isfinite(data.values).all()
 
 
 def write_hdf5_chain(path, n_draws=20, offset=0.0, seed=0):
-    """Write one chain as the HDF5 table ChiSurf's ``hdf5`` format produces."""
-    pytest.importorskip("tables")
+    """Write one chain as the columnar HDF5 table ChiSurf's ``hdf5`` format produces."""
+    if not tttrlib.hdf5_table_available():
+        pytest.skip("tttrlib built without HDF5")
     rng = np.random.default_rng(seed)
-    frame = pd.DataFrame({
+    store = store_from_columns({
         "chi2r": rng.normal(1.0, 0.01, n_draws),
         "lnprior": np.zeros(n_draws),
         "c": rng.normal(2.0 + offset, 0.1, n_draws),
         "a": rng.normal(0.5, 0.01, n_draws),
     })
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_hdf(path, key="results", mode="w", format="table",
-                 complib="zlib", complevel=5)
+    assert tttrlib.write_hdf5(str(path), store, compression=5)
 
 
 def test_chains_stored_as_hdf5_open_like_text_ones(tmp_path):
@@ -205,11 +214,11 @@ def test_chains_stored_as_hdf5_open_like_text_ones(tmp_path):
     for i in range(3):
         write_hdf5_chain(run / "chains" / f"Fit_{i}.h5", n_draws=20, seed=i)
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 60
-    assert list(data.columns) == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
-    assert sorted(data["chain"].unique()) == [0, 1, 2]
-    assert np.isclose(data["a"].mean(), 0.5, atol=0.05)
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 60
+    assert data.parameter_names == ["chi2r", "lnprior", "c", "a", "chain", "draw"]
+    assert sorted(_chains(data)) == [0, 1, 2]
+    assert np.isclose(_column(data, "a").mean(), 0.5, atol=0.05)
 
 
 def test_a_partial_hdf5_chain_is_not_counted_twice(tmp_path):
@@ -218,9 +227,9 @@ def test_a_partial_hdf5_chain_is_not_counted_twice(tmp_path):
     write_hdf5_chain(run / "chains" / "Fit_0.h5", n_draws=25, seed=1)
     write_hdf5_chain(run / "chains" / "Fit_0.partial.h5", n_draws=12, seed=1)
 
-    data = reader.read_sampling_folder(str(tmp_path)).data
-    assert len(data) == 25
-    assert sorted(data["chain"].unique()) == [0]
+    data = reader.read_sampling_folder(str(tmp_path))
+    assert data.size == 25
+    assert sorted(_chains(data)) == [0]
 
 
 # --- ensemble-sampler chains stored in HDF5 --------------------------------
@@ -268,23 +277,24 @@ def test_every_draw_becomes_a_row_that_knows_its_walker_and_step(tmp_path):
     """Walkers are the chains of an ensemble sampler."""
     path = tmp_path / "run.hdf"
     write_sampling_hdf5(path, n_steps=4, n_walkers=6, names=("a", "b", "c"))
-    data = reader.read_ensemble_sampling_hdf5(str(path)).data
+    data = reader.read_ensemble_sampling_hdf5(str(path))
 
-    assert len(data) == 4 * 6
-    assert list(data.columns) == ["a", "b", "c", "log_prob", "chain", "draw"]
-    assert sorted(data["chain"].unique()) == list(range(6))
-    assert sorted(data["draw"].unique()) == list(range(4))
+    assert data.size == 4 * 6
+    assert data.parameter_names == ["a", "b", "c", "log_prob", "chain", "draw"]
+    assert sorted(np.unique(_column(data, "chain"))) == list(range(6))
+    assert sorted(np.unique(_column(data, "draw"))) == list(range(4))
     # Every (walker, step) pair appears exactly once.
-    assert len(data.groupby(["chain", "draw"])) == 24
+    pairs = set(zip(_column(data, "chain").tolist(), _column(data, "draw").tolist()))
+    assert len(pairs) == 24
 
 
 def test_the_unwritten_tail_of_a_thinned_run_is_not_returned(tmp_path):
     """Storage is grown in whole chunks; a zero row is not a draw."""
     path = tmp_path / "run.hdf"
     write_sampling_hdf5(path, n_steps=3, n_walkers=4, allocated=10)
-    data = reader.read_ensemble_sampling_hdf5(str(path)).data
-    assert len(data) == 3 * 4
-    assert (data["log_prob"] != 0.0).all()
+    data = reader.read_ensemble_sampling_hdf5(str(path))
+    assert data.size == 3 * 4
+    assert (_column(data, "log_prob") != 0.0).all()
 
 
 def test_opening_a_file_never_runs_what_the_file_asks_for(tmp_path):
@@ -304,9 +314,9 @@ def test_opening_a_file_never_runs_what_the_file_asks_for(tmp_path):
     path = tmp_path / "hostile.hdf"
     write_sampling_hdf5(path, n_steps=2, n_walkers=4, names=("a", "b"),
                         names_payload=pickle.dumps(_Reaching()))
-    data = reader.read_ensemble_sampling_hdf5(str(path)).data
-    assert list(data.columns)[:2] == ["p0", "p1"]
-    assert len(data) == 8
+    data = reader.read_ensemble_sampling_hdf5(str(path))
+    assert data.parameter_names[:2] == ["p0", "p1"]
+    assert data.size == 8
 
 
 def test_several_sampling_files_keep_their_chains_apart(tmp_path):
@@ -315,15 +325,15 @@ def test_several_sampling_files_keep_their_chains_apart(tmp_path):
         write_sampling_hdf5(tmp_path / f"run{i}.hdf", n_steps=3, n_walkers=5)
     data = reader.read_ensemble_sampling_hdf5(
         [str(tmp_path / "run0.hdf"), str(tmp_path / "run1.hdf")]
-    ).data
-    assert len(data) == 2 * 3 * 5
-    assert sorted(data["chain"].unique()) == list(range(10))
+    )
+    assert data.size == 2 * 3 * 5
+    assert sorted(np.unique(_column(data, "chain"))) == list(range(10))
 
 
 def test_the_hdf5_entry_point_routes_a_chain_to_the_sampling_reader(tmp_path):
     """The user opens an HDF5; which kind it is, is the reader's problem."""
     path = tmp_path / "run.hdf"
     write_sampling_hdf5(path, n_steps=3, n_walkers=4, names=("a", "b"))
-    data = reader.read_mfd_hdf5([str(path)]).data
-    assert len(data) == 12
-    assert {"chain", "draw", "log_prob"} <= set(data.columns)
+    data = reader.read_mfd_hdf5([str(path)])
+    assert data.size == 12
+    assert {"chain", "draw", "log_prob"} <= set(data.parameter_names)

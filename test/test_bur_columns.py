@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import pathlib
 
-import pandas as pd
+import numpy as np
 import pytest
+from ndxplorer.core.data_source import store_from_columns
 from ndxplorer.io.reader import (
-    _drop_trailing_empty_columns,
     _process_burst_analysis_dir,
     read_burst_analysis,
 )
+from ndxplorer.io.tables import drop_trailing_empty_columns
 
 HERE = pathlib.Path(__file__).parent
 MFD_DIR = HERE / "mfd" / "burstwise_All 0.1500#30"
@@ -32,13 +33,12 @@ MFD_DIR = HERE / "mfd" / "burstwise_All 0.1500#30"
 
 def test_drop_trailing_empty_columns_keeps_real_data() -> None:
     """Only empty/``Unnamed`` trailing columns go; a named one stays."""
-    df = pd.DataFrame({"a": [1], "b": [2], "Red Count Rate (KHz)": [3.0]})
-    assert list(_drop_trailing_empty_columns(df).columns) == list(df.columns)
+    names = ["a", "b", "Red Count Rate (KHz)"]
+    columns = {"a": [1], "b": [2], "Red Count Rate (KHz)": [3.0]}
+    assert list(drop_trailing_empty_columns(store_from_columns(columns)).column_names()) == names
 
-    padded = df.copy()
-    padded[""] = [None]
-    padded["Unnamed: 4"] = [None]
-    assert list(_drop_trailing_empty_columns(padded).columns) == list(df.columns)
+    padded = store_from_columns({**columns, "": [np.nan], "Unnamed: 4": [np.nan]})
+    assert list(drop_trailing_empty_columns(padded).column_names()) == names
 
 
 def test_bur_trailing_tab_does_not_cost_a_column(tmp_path: pathlib.Path) -> None:
@@ -51,15 +51,15 @@ def test_bur_trailing_tab_does_not_cost_a_column(tmp_path: pathlib.Path) -> None
 
     ds = _process_burst_analysis_dir(tmp_path, skip_nth_row=1)
 
-    assert "Red Count Rate (KHz)" in ds.data.columns
-    assert ds.data["Red Count Rate (KHz)"].max() == pytest.approx(1.25)
+    assert "Red Count Rate (KHz)" in ds.parameter_names
+    assert np.nanmax(ds.column_values("Red Count Rate (KHz)")) == pytest.approx(1.25)
 
 
 @pytest.mark.skipif(not MFD_DIR.is_dir(), reason="MFD burst test data not present")
 def test_mfd_burst_folder_keeps_the_red_count_rate() -> None:
-    """The shipped MFD folder carries all 16 ``.bur`` columns into the frame."""
-    data = read_burst_analysis(MFD_DIR).data
+    """The shipped MFD folder carries all 16 ``.bur`` columns into the table."""
+    source = read_burst_analysis(MFD_DIR)
 
-    assert "Red Count Rate (KHz)" in data.columns
+    assert "Red Count Rate (KHz)" in source.parameter_names
     # A dropped column would read as all-zero/NaN rather than a real rate.
-    assert float(data["Red Count Rate (KHz)"].max()) > 0.0
+    assert float(np.nanmax(source.column_values("Red Count Rate (KHz)"))) > 0.0
