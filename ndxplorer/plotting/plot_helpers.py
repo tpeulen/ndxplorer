@@ -194,9 +194,13 @@ def configure_dynamic_selection_controls(ndxplorer: "NDXplorer") -> None:
 
     ndxplorer._last_z_range = None
 
-    ndxplorer.groupBox_3 = plot_control.groupBox_3
-    ndxplorer.groupBox_3.setToolTip("When checked, the Z-axis plot is displayed")
-    ndxplorer.groupBox_3.toggled.connect(ndxplorer.on_enable_z_changed)
+    ndxplorer.checkBoxEnableZ = plot_control.checkBoxEnableZ
+    ndxplorer.checkBoxEnableZ.setToolTip(
+        "Gate the plots by the z range below.\n\nThe z marginal is shown "
+        "either way — this is what decides whether its range *filters* the "
+        "other plots, not whether you can see it."
+    )
+    ndxplorer.checkBoxEnableZ.toggled.connect(ndxplorer.on_enable_z_changed)
 
     ndxplorer.checkBoxWeight = plot_control.checkBoxWeight
     ndxplorer.checkBoxWeight.setToolTip(
@@ -211,15 +215,11 @@ def configure_dynamic_selection_controls(ndxplorer: "NDXplorer") -> None:
         ndxplorer.on_weight_param_changed
     )
 
-    ndxplorer.z_range_check_timer = QtCore.QTimer(ndxplorer)
-    ndxplorer.z_range_check_timer.setInterval(500)
-    ndxplorer._z_timer_connected = False
-    ndxplorer.checkBoxDynamicSelection.toggled.connect(
-        ndxplorer.on_dynamic_selection_toggled
-    )
-    ndxplorer.on_dynamic_selection_toggled(
-        ndxplorer.checkBoxDynamicSelection.isChecked()
-    )
+    # A 500 ms QTimer polling ``selection_z.get_range()`` stood here. The region
+    # emits when it moves; nothing listened, so the plot followed a drag at two
+    # frames a second while a redraw costs about forty milliseconds. It is
+    # connected at the point the selection is created, in
+    # :func:`setup_histogram_plots`.
 
 
 def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
@@ -230,12 +230,23 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     ndxplorer.g_zplot = PGHistogramPlot(parent=ndxplorer)
     ndxplorer.g_zhist_m = ndxplorer.g_zplot.add_histogram(color="#ff00ff", fill=0.5)
     ndxplorer.selection_z = ndxplorer.g_zplot.add_range_selection(0.25, 0.5)
+    # Live, while the region is dragged. ``request_plot_update`` is debounced,
+    # so a burst of mouse moves coalesces into one redraw per frame rather than
+    # one per move -- which is what makes listening cheaper than polling, not
+    # more expensive.
+    ndxplorer.selection_z.changed.connect(ndxplorer.on_z_selection_changed)
     _replace_placeholder(
         ndxplorer.plot_control.verticalLayout_4,
         getattr(ndxplorer, "_placeholder_z", None),
         ndxplorer.g_zplot,
     )
-    ndxplorer.g_zplot.setVisible(ndxplorer.groupBox_3.isChecked())
+    # Visible like the x and y marginals are, once a third parameter is chosen.
+    # It is the *gate* that the "dynamic z-selection" box arms, not the picture:
+    # hiding the distribution until the gate is armed means choosing a range
+    # before seeing what is in it.
+    from ..utils.histogram_helpers import z_axis_available
+
+    ndxplorer.g_zplot.setVisible(z_axis_available(ndxplorer))
 
     ndxplorer.g_xplot = PGHistogramPlot(parent=ndxplorer)
     ndxplorer.g_xplot.enableAxis("bottom", False)

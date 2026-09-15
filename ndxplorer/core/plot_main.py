@@ -90,6 +90,7 @@ from ..io.file_open_helpers import (
     open_csv,
     open_files,
     open_mfd_hdf5,
+    open_pto,
     open_smfret,
     show_merge_dialog,
 )
@@ -258,9 +259,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         # slider keeps its last range when the group box is unchecked, and
         # honouring it then would silently delete points along an axis the user
         # cannot see.
-        z_enabled = hasattr(self, "groupBox_3") and self.groupBox_3.isChecked()
+        z_enabled = hasattr(self, "checkBoxEnableZ") and self.checkBoxEnableZ.isChecked()
         z_range = None
         if self._dynamic_selection and z_enabled and hasattr(self, "selection_z"):
+            # Here, at the point of use, because this is the one place the
+            # region is read and it can be stale from any number of routes: a
+            # new z parameter chosen without pressing update, a restored
+            # session, a reloaded file with different units.
+            self.fit_z_selection_to_axis()
             z_range = tuple(self.selection_z.get_range())
             self._last_z_range = z_range
 
@@ -269,19 +275,12 @@ class NDXplorer(QtWidgets.QMainWindow):
             selected_cluster if self._use_clustering and selected_cluster >= 0 else None
         )
 
-        # Single-frame mode: the frame column is chosen in the control, so the
-        # mask has to be built there and travels as a plain array.
-        frame_mask = None
-        frame_number = None
-        single_frame = (
-            hasattr(control, "checkBoxStackFrames")
-            and not control.checkBoxStackFrames.isChecked()
-            and getattr(control, "_frame_param", None) is not None
-        )
-        if single_frame:
-            frame_mask = control.get_frame_filter_mask(self.data_source)
-            if hasattr(control, "spinBoxFrameNumber"):
-                frame_number = control.spinBoxFrameNumber.value()
+        # The playback slice: which column and which step are chosen in the
+        # control, so the mask is built there and travels as a plain array
+        # alongside the scalars it was built from.
+        playback = getattr(control, "playback", None)
+        slice_mask = playback.mask(self.data_source) if playback is not None else None
+        slice_key = playback.slice_key() if playback is not None else None
 
         return MaskState(
             selections=control.get_selections(),
@@ -290,8 +289,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             mask_nan=self._mask_nan,
             z_range=z_range,
             cluster_label=cluster_label,
-            frame_mask=frame_mask,
-            frame_number=frame_number,
+            slice_mask=slice_mask,
+            slice_key=slice_key,
         )
 
     @property
@@ -386,7 +385,7 @@ class NDXplorer(QtWidgets.QMainWindow):
     def vmin(self):
         logging.debug("Getting vmin")
         result = self.doubleSpinBox_vmin.value()
-        logging.debug(f"vmin = {result}")
+        logging.debug("vmin = %s", result)
         return result
 
     @vmin.setter
@@ -400,7 +399,7 @@ class NDXplorer(QtWidgets.QMainWindow):
     def vmax(self):
         logging.debug("Getting vmax")
         result = self.doubleSpinBox_vmax.value()
-        logging.debug(f"vmax = {result}")
+        logging.debug("vmax = %s", result)
         return result
 
     @vmax.setter
@@ -605,10 +604,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             logging.debug(f"Could not add publication export button: {e}")
 
-        # Make Fit action checkable and wire it to the Fit dock visibility
-        self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
-        self.dockWidget_Fit.visibilityChanged.connect(self._on_fit_dock_visibility_changed)
-        self.dockWidget_Fit.setVisible(False)
+        # Make Fit action checkable and wire it to the Fit panel's visibility.
+        # A dock-area tab is shown and hidden through the area, not by the
+        # widget's own ``setVisible`` -- hiding the widget of a tab that is still
+        # in the bar leaves the tab there with nothing behind it.
+        self.actionFit_Gaussians.toggled.connect(self._set_fit_panel_visible)
 
         # Report tool
         self.actionMake_Report.triggered.connect(self.onShowReportWizard)
@@ -672,8 +672,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._plot_update_requires_clustering = False
         self._initialize_plot_update_timer()
 
-        # Arrange docks immediately so the UI looks right even before deferred init finishes
-        ui_helpers.arrange_docks_preserving_geometry(self)
+        # The panels move out of Qt's dock widgets and into ChiSurf's dock area
+        # here, once they have been put into the dock contents -- earlier would
+        # move empty containers. Immediately rather than deferred, so the window
+        # is never briefly drawn in the arrangement it is about to leave.
+        from ..utils.dock_conversion import convert_docks
+
+        convert_docks(self)
 
         # Schedule deferred initialization after window is shown
         # This makes the window appear faster
@@ -818,6 +823,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         # -----------------------------------------------------------------
         from ..analysis.gaussian_fit import GaussianFit
         self.gaussian_fit = GaussianFit(self)
+
+        # Point mode has to follow the TAB, not only the menu action: a user
+        # who switches to the Gaussian Fit tab is "in the fit dock" and a click
+        # on the 2D histogram should add a local Gaussian there, not start a
+        # rubber-band selection. The action path already routes through
+        # _on_fit_dock_visibility_changed; this makes tab switches do the same.
+        area = getattr(self, "dock_area", None)
+        if area is not None and hasattr(area, "currentChanged"):
+            area.currentChanged.connect(self._on_dock_tab_changed)
 
         self.g_xplot.setMinimumHeight(40)
         self.g_yplot.setMinimumWidth(40)
@@ -1039,19 +1053,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             if hasattr(self, 'mask_drawing'):
                 self.mask_drawing.update_mask_overlay(mask)
             
-            # Invalidate histogram cache when mask changes
-            # This ensures background worker recomputes histograms with new mask
-            if (hasattr(self.plot_control, '_histogram_cache') and 
-                self.plot_control._histogram_cache is not None):
-                self.plot_control.clear_histogram_cache()
-                logging.debug("Cleared histogram cache due to mask change")
-            
-            # Clear frame histogram cache when mask changes
-            # This is critical for movies/stacks - otherwise cached frame histograms persist
-            if hasattr(self.plot_control, 'clear_frame_histogram_cache'):
-                self.plot_control.clear_frame_histogram_cache()
-                logging.debug("Cleared frame histogram cache due to mask change")
-            
+            # No histogram cache to invalidate: the redraw below recomputes.
             # Request plot update to recompute histograms with new mask
             # Use skip_clustering=True for faster response (mask changes don't affect clustering)
             self.request_plot_update(skip_clustering=True)
@@ -1473,7 +1475,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._mask_inf = self.checkBoxMaskInf.isChecked()
         self._mask_nan = self.checkBoxMaskNaN.isChecked()
         self.invalidate_values_cache()
-        self.update_plots()
+        self.request_plot_update()
 
     def onShowAxisControl(self) -> None:
         """
@@ -1639,6 +1641,15 @@ class NDXplorer(QtWidgets.QMainWindow):
     def onOpenSmFRET(self, merge_mode: str = "columns"):
         open_smfret(self, merge_mode=merge_mode)
 
+    def onOpenPto(
+        self,
+        event=None,
+        filenames=None,
+        append: bool = False,
+        merge_mode: str = "columns",
+    ):
+        open_pto(self, filenames, append, merge_mode)
+
     def update_ui_data(self, *args, **kwargs):
         """
         Refresh UI elements based on current data source, constants, and equations.
@@ -1721,7 +1732,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             "toolButton_parameter_save",
             "comboBoxWeight",
             "checkBoxWeight",
-            "groupBox_3",
+            "checkBoxEnableZ",
         ]:
             try:
                 w = getattr(self, w_name, None)
@@ -1778,12 +1789,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Return True if data and axes are ready for histogram computation."""
         return histogram_helpers.is_data_ready(self)
 
-    def are_bins_valid(self, bins) -> bool:
-        return histogram_helpers.are_bins_valid(bins)
-
-    def sanitize_bins(self, bins, data: np.ndarray, default_count: int = 50, scale: str = "linear") -> np.ndarray:
-        return histogram_helpers.sanitize_bins(bins, data, default_count, scale)
-
     def update_histograms(self):
         """Update histograms using new histograms module."""
         plot_histograms.update_histogram_display(self)
@@ -1802,9 +1807,24 @@ class NDXplorer(QtWidgets.QMainWindow):
         plot_update_helpers.update_plots(self, skip_clustering=skip_clustering, skip_cache_invalidation=skip_cache_invalidation)
 
     def request_plot_update(self, skip_clustering=False):
-        """
-        Schedule a plot update so rapid UI changes can be batched together.
-        Falls back to immediate update when deferred init is not complete.
+        """Ask for a redraw. **This is how a control says "something changed".**
+
+        Requests inside one 40 ms window are *grouped* and *dispatched* once, so
+        a control that fires continuously -- a dragged region, a spun value, a
+        toggled check box -- costs one redraw per frame rather than one per
+        signal. ``skip_clustering`` is OR-ed across the batch: if any request in
+        it needed clustering, the dispatched update does it.
+
+        Call :meth:`update_plots` directly only when the redraw must have
+        happened before the next line runs: a load that has just replaced the
+        data, an explicit "Update plot" action, or the parameter throttle, which
+        times its own redraw to size its next window. Every *interactive* path
+        belongs here. Handlers that called ``update_histograms()`` and then
+        ``update_plots()`` computed every histogram twice, because
+        ``update_plots`` fills them itself.
+
+        Falls back to an immediate update before deferred init, when there is no
+        event loop to batch with.
         """
         if not getattr(self, "_deferred_init_done", False):
             # Before full init we can't rely on timers—update immediately.
@@ -1936,6 +1956,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         _index : int, optional
             The combo box index Qt sends along; unused.
         """
+        # A new third parameter needs its own range. ``fit_z_selection_to_axis``
+        # was reached only from the gate's toggle, so choosing a different z
+        # parameter left the region — and the axis it is drawn on — fitted to
+        # the *previous* one: a marginal with 0 to 0 for its range under limits
+        # belonging to a column that is no longer selected. It remembers which
+        # axis it last fitted, so this is a no-op when z has not changed and it
+        # never moves a region the user dragged.
+        self.fit_z_selection_to_axis()
         self.update_spinbox_limits()
 
     def update_spinbox_limits(self, *, low_pct=0.1, high_pct=99, recompute=True):
@@ -2219,10 +2247,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         Clean up resources before closing.
         """
         logging.debug("closeEvent()")
-        # Stop the Z range check timer
-        if hasattr(self, 'z_range_check_timer'):
-            self.z_range_check_timer.stop()
-
         # Clean up any existing worker thread
         if hasattr(self, 'clustering_worker') and self.clustering_worker is not None:
             # Disconnect any existing connections
@@ -2255,31 +2279,65 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Call the base class implementation
         super(NDXplorer, self).closeEvent(event)
 
-    def check_z_range_changes(self):
-        """
-        Check if the Z selection range has changed and update the histograms if necessary.
-        This method is called periodically by a timer.
-        """
-        logging.debug("check_z_range_changes()")
-        # Only apply Z-range filtering when Z axis is enabled
-        z_enabled = hasattr(self, 'groupBox_3') and self.groupBox_3.isChecked()
-        if not self._dynamic_selection or not hasattr(self, 'selection_z'):
-            return
-        
-        # If Z axis is disabled, don't apply Z-range filtering
-        if not z_enabled:
-            return
+    def fit_z_selection_to_axis(self) -> None:
+        """Put the dynamic-z region over the whole axis when the axis changes.
 
-        # Get the current Z selection range
-        current_range = self.selection_z.get_range()
+        The region is created at a hardcoded 0.25 to 0.5 and nothing moved it
+        afterwards, so choosing a third axis whose values live anywhere else --
+        a lifetime in nanoseconds, a photon count -- gated the plot to a window
+        containing no data. Everything went empty, with nothing on screen to say
+        that a selection was responsible.
 
-        # If the range has changed, update the histograms
-        if self._last_z_range != current_range:
-            logging.info( f"Z selection range changed from {self._last_z_range} to {current_range}")
-            self._last_z_range = current_range
-            # Update histograms and plots
-            self.update_histograms()
-            self.update_plots(skip_clustering=True)
+        The test is whether the region has been positioned for THIS axis, not
+        whether it happens to lie inside it: 0.25 to 0.5 is inside an axis
+        running to 6, and still selects nothing. So the axis it was last fitted
+        to is remembered, and a different one -- a different parameter, or the
+        same parameter rescaled -- puts it back over the full range, which is
+        what "no selection yet" means. A region the user has dragged on the
+        axis it belongs to is never touched.
+        """
+        if not hasattr(self, "selection_z"):
+            return
+        try:
+            control = self.plot_control
+            lo, hi = float(control.zmin), float(control.zmax)
+            if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+                return
+            # The scale is part of the axis's identity, not a detail of how it
+            # is drawn: the region item stores *view* coordinates, so switching
+            # between linear and log leaves it holding numbers that mean
+            # something else entirely (60 becomes 10**60). Without the scale in
+            # this key the refit is skipped exactly when it is needed most.
+            axis = (control.p3[0], lo, hi, getattr(control, "scale_z", "lin"))
+            if getattr(self, "_z_selection_axis", None) == axis:
+                return
+            self._z_selection_axis = axis
+            self.selection_z.set_range(lo, hi)
+            self._last_z_range = (lo, hi)
+            logging.info("Z axis is now %s over %g..%g; the selection spans it",
+                         control.p3[1], lo, hi)
+        except Exception as exc:            # pragma: no cover - GUI defensive
+            logging.debug("Could not fit the z selection to the axis: %s", exc)
+
+    def on_z_selection_changed(self):
+        """Redraw for the range the user is dragging.
+
+        Connected to the region's own change signal. It used to be a 500 ms
+        timer comparing ``get_range()`` against the last value it saw, which
+        made the plot follow a drag at two frames a second and lag up to half a
+        second behind the mouse -- on data where the redraw itself costs about
+        forty milliseconds.
+
+        ``request_plot_update`` is debounced, so this can be connected to the
+        *live* signal: a burst of mouse moves coalesces into one redraw per
+        frame instead of one per move. Clustering is skipped, as it was: the
+        labels do not depend on the z range.
+        """
+        if not self._dynamic_selection:
+            return
+        if not (hasattr(self, "checkBoxEnableZ") and self.checkBoxEnableZ.isChecked()):
+            return
+        self.request_plot_update(skip_clustering=True)
 
     def on_enable_z_changed(self, state):
         """
@@ -2289,18 +2347,19 @@ class NDXplorer(QtWidgets.QMainWindow):
             state: The new state of the groupbox (True for checked, False for unchecked)
         """
         logging.debug(f"on_enable_z_changed(state={state})")
-        # Show or hide the z-axis plot based on the checkbox state
-        self.g_zplot.setVisible(bool(state))
+        # The plot stays visible: this box arms the *gate*, not the picture.
+        # Its range still has to be put somewhere sensible the first time the
+        # gate is armed, which is what fit_z_selection_to_axis does below.
+        # Turning the axis on is the other moment the region can be off it.
+        if state:
+            self.fit_z_selection_to_axis()
         
         # Enable/disable the Z axis update button based on the checkbox state
         if hasattr(self, 'plot_control') and hasattr(self.plot_control, 'toolButtonSetZAxis'):
             self.plot_control.toolButtonSetZAxis.setEnabled(bool(state))
             logging.debug(f"Z axis update button enabled: {bool(state)}")
 
-        # Update histograms and plots to reflect the new state
-        # This will skip z-axis histogram computation if disabled
-        self.update_histograms()
-        self.update_plots(skip_clustering=True)
+        self.request_plot_update(skip_clustering=True)
 
     def on_weight_param_changed(self, index):
         """
@@ -2312,9 +2371,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.debug(f"on_weight_param_changed(index={index})")
         # Only update if weight is enabled
         if self.checkBoxWeight.isChecked():
-            # Update histograms and plots to reflect the new weight parameter
-            self.update_histograms()
-            self.update_plots(skip_clustering=True)
+            self.request_plot_update(skip_clustering=True)
 
     def on_weight_changed(self, state):
         """
@@ -2353,9 +2410,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                     if index >= 0:
                         self.comboBoxWeight.setCurrentIndex(index)
 
-        # Update histograms and plots to reflect the new state
-        self.update_histograms()
-        self.update_plots(skip_clustering=True)
+        self.request_plot_update(skip_clustering=True)
 
     def on_dynamic_selection_changed(self, state):
         """
@@ -2369,54 +2424,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.debug(f"on_dynamic_selection_changed(state={state})")
         
         self._dynamic_selection = bool(state)
-        # Update histograms to reflect the new selection state
-        # Z-range filtering will be handled in the histogram computation logic
-        self.update_histograms()
-        # Update plots to display the new histograms
-        self.update_plots(skip_clustering=True)
-
-    def on_dynamic_selection_toggled(self, checked: bool):
-        """
-        Enable/disable periodic Z-range change checks based on the dynamic selection toggle.
-        Only connects the timer to check_z_range_changes when enabled and Z axis is enabled.
-
-        Args:
-            checked: True if dynamic selection is enabled, False otherwise.
-        """
-        logging.debug(f"on_dynamic_selection_toggled(checked={checked})")
-        
-        # Only enable timer if both dynamic selection is checked AND Z axis is enabled
-        z_enabled = hasattr(self, 'groupBox_3') and self.groupBox_3.isChecked()
-        effective_checked = checked and z_enabled
-        
-        logging.debug(f"Effective timer state: {effective_checked} (dynamic: {checked}, z_enabled: {z_enabled})")
-        
-        try:
-            if effective_checked:
-                # Ensure the timer is connected once
-                if not getattr(self, '_z_timer_connected', False):
-                    try:
-                        # In case there is a stale connection
-                        self.z_range_check_timer.timeout.disconnect(self.check_z_range_changes)
-                    except (TypeError, RuntimeError):
-                        pass
-                    self.z_range_check_timer.timeout.connect(self.check_z_range_changes)
-                    self._z_timer_connected = True
-                if not self.z_range_check_timer.isActive():
-                    self.z_range_check_timer.start()
-            else:
-                # Stop timer and disconnect the slot
-                if self.z_range_check_timer.isActive():
-                    self.z_range_check_timer.stop()
-                if getattr(self, '_z_timer_connected', False):
-                    try:
-                        self.z_range_check_timer.timeout.disconnect(self.check_z_range_changes)
-                    except (TypeError, RuntimeError):
-                        pass
-                    self._z_timer_connected = False
-        except AttributeError:
-            # In case called early during construction
-            pass
+        self.request_plot_update(skip_clustering=True)
 
     def add_umap_columns_to_dataframe(self, columns, params):
         """
@@ -3275,26 +3283,13 @@ class NDXplorer(QtWidgets.QMainWindow):
             pass
         # Nothing may be left pending that would recompute over this again.
         self._pending_changed_constants = set()
-        self._invalidate_histogram_cache()
-        self.update_plots()   # redraws the overlays with the moved population
-
-    def _invalidate_histogram_cache(self) -> None:
-        """Drop cached values and histograms so the redraw re-bins the new data.
-
-        The fit changed the numbers in the plotted columns without touching the
-        axis choice, the gate or the bins — every key the caches are keyed on —
-        so without this the plots would redraw the population the fit started
-        from.
-        """
+        # The fit changed the numbers in the plotted columns without touching
+        # the axis choice, the gate or the bins -- every key the value cache is
+        # keyed on -- so without this the plots would redraw the population the
+        # fit started from. (The histograms need no such nudge: they are refilled
+        # from the store on every redraw.)
         self.invalidate_values_cache()
-        control = getattr(self, "plot_control", None)
-        for method in ("clear_histogram_cache", "clear_frame_histogram_cache"):
-            clear = getattr(control, method, None)
-            if callable(clear):
-                try:
-                    clear()
-                except Exception as exc:
-                    logging.debug("Could not clear %s: %s", method, exc)
+        self.update_plots()   # redraws the overlays with the moved population
 
     def _apply_fitted_params_to_constants(self, params: "dict") -> None:
         """Push any fitted *curve* parameter that names an ndX constant into the table.
@@ -3496,10 +3491,50 @@ class NDXplorer(QtWidgets.QMainWindow):
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
             return self.gaussian_fit._delete_selected_gaussian_rows(rows)
 
+    def _set_fit_panel_visible(self, visible: bool):
+        """Show or hide the Gaussian-Fit panel's dock tab.
+
+        Parameters
+        ----------
+        visible : bool
+            Whether the panel should be on screen.
+        """
+        logging.debug(f"_set_fit_panel_visible(visible={visible})")
+        panel = getattr(self, "dockWidget_Fit", None)
+        area = getattr(self, "dock_area", None)
+        if panel is not None and area is not None:
+            index = area.indexOf(panel)
+            if index >= 0:
+                area.showTab(index) if visible else area.hideTab(index)
+                if visible:
+                    area.setCurrentWidget(panel)
+        elif panel is not None:  # pragma: no cover - no dock area available
+            panel.setVisible(visible)
+        return self._on_fit_dock_visibility_changed(visible)
+
     def _on_fit_dock_visibility_changed(self, visible: bool):
         """Delegate to GaussianFit."""
         logging.debug(f"_on_fit_dock_visibility_changed(visible={visible})")
         return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
+
+    def _on_dock_tab_changed(self, _index: int) -> None:
+        """Keep point-selection mode in step with the ACTIVATED tab.
+
+        The Gaussian Fit panel is a dock-area tab, and switching tabs emits no
+        visibility signal of its own -- only the menu action used to arm point
+        mode. Armed exactly while the Fit tab is the dock area's current one:
+        merely being on screen beside the plot is not being worked in, and a
+        click on the histogram then still means a selection.
+        """
+        panel = getattr(self, "dockWidget_Fit", None)
+        area = getattr(self, "dock_area", None)
+        if panel is None or area is None or getattr(self, "gaussian_fit", None) is None:
+            return
+        try:
+            active = area.currentWidget() is panel
+        except Exception:
+            active = bool(panel.isVisible())
+        self._on_fit_dock_visibility_changed(active)
 
     def resizeEvent(self, event):
         """
