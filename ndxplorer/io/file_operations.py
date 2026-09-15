@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 import numpy as np
 from qtpy import QtWidgets
@@ -34,6 +35,32 @@ def _update_working_path(ndxplorer: "NDXplorer", first_selection: Optional[str])
         logging.debug("Could not derive working path: %s", exc)
         return
     ndxplorer.working_path = dir_path
+
+
+def _update_window_title(
+    ndxplorer: "NDXplorer", selections: Sequence[str], append: bool
+) -> None:
+    """Title the window by WHAT was opened, not where it lives.
+
+    A title is identification, not navigation: the filename is what a user
+    scans window lists and tab bars by, and the full path of a deep data
+    folder pushes it off screen. The full paths stay reachable as the header
+    Path field's tooltip. Appending keeps the current title -- the window
+    still shows the first thing it was opened for.
+    """
+    if append or not selections:
+        return
+    try:
+        first = Path(str(selections[0]))
+        title = f"ndX - {first.name}"
+        if len(selections) > 1:
+            title += f" (+{len(selections) - 1})"
+        ndxplorer.setWindowTitle(title)
+        edit = getattr(ndxplorer, "lineEditWorkingPath", None)
+        if edit is not None:
+            edit.setToolTip("\n".join(str(s) for s in selections))
+    except Exception:  # pragma: no cover - defensive
+        logging.debug("Could not update the window title", exc_info=True)
 
 
 def _handle_append(ndxplorer: "NDXplorer", new_source, merge_mode: str) -> None:
@@ -134,47 +161,18 @@ def open_files(
         if not file_handles_seq:
             return
 
-        combined_data_source = None
-        for file_path in file_handles_seq:
-            path_str = str(file_path)
-            is_zip = path_str.lower().endswith(".zip")
-
-            if is_zip:
-                try:
-                    import zipfile as _zip
-
-                    with _zip.ZipFile(path_str, "r") as zf:
-                        names = zf.namelist()
-                    has_h5 = any(
-                        name.lower().endswith((".h5", ".hdf5")) for name in names
-                    )
-                    logging.debug("ZIP '%s' contains HDF5: %s", path_str, has_h5)
-                except Exception as exc:
-                    logging.debug("Could not inspect zip '%s': %s", path_str, exc)
-                    has_h5 = False
-
-                temp_ds = (
-                    reader.read_mfd_hdf5([path_str])
-                    if has_h5
-                    else reader.read_burst_analysis(path_str)
-                )
-            else:
-                temp_ds = reader.read_mfd_hdf5([path_str])
-
-            if combined_data_source is None:
-                combined_data_source = temp_ds
-            else:
-                combined_data_source.merge(temp_ds, mode=merge_mode)
-
-        if append:
-            _handle_append(ndxplorer, combined_data_source, merge_mode)
-        else:
-            ndxplorer.data_source = combined_data_source
-            ndxplorer.update()
-
-        _apply_axes_and_refresh(ndxplorer)
-        logging.debug("Handled mfd_hdf5; returning before generic loader.")
-        return
+        # Through the shared path, like every other format. This branch used to
+        # load inline instead -- synchronously on the GUI thread, duplicating
+        # what read_mfd_hdf5 already does with zips and multiple files, and then
+        # calling _apply_axes_and_refresh with the wrong number of arguments, so
+        # opening an MFD HDF5 raised a TypeError after the data had loaded.
+        #
+        # Falling through is not only shorter: it is what runs the image-axis
+        # detection, populates the parameter combo boxes and puts the load on
+        # the background runner. An imaging HDF5 opened here never got any of
+        # those.
+        data_reader = functools.partial(reader.read_mfd_hdf5, merge_mode=merge_mode)
+        reader_input = [str(f) for f in file_handles_seq]
 
     # --- Burst analysis folder (bi4_bur/*.bur) -----------------------------
     elif file_type == "burst_dir":
@@ -193,6 +191,22 @@ def open_files(
         # tried to read the directory itself ("Is a directory") and loaded zero
         # bursts, leaving the bundled example data on screen.
         data_reader = reader.read_burst_analysis
+        reader_input = str(file_handles_seq[0])
+
+    # --- PTO Measurement Container (.pto) -----------------------------------
+    elif file_type == "pto" or (file_handles_seq and any(str(f).lower().endswith(".pto") for f in file_handles_seq)):
+        if not file_handles_seq:
+            file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
+                ndxplorer,
+                "PTO Measurement Containers",
+                working_path,
+                "PTO files (*.pto);;All Files (*.*)",
+            )
+        if not file_handles_seq:
+            return
+        _update_working_path(ndxplorer, file_handles_seq[0])
+        from .pto_reader import read_container
+        data_reader = read_container
         reader_input = str(file_handles_seq[0])
 
     # --- Generic CSV loader ------------------------------------------------
@@ -215,6 +229,7 @@ def open_files(
 
     if reader_input:
         logging.info("Opening files (%s): %s", file_type or "csv", file_handles_seq)
+        _update_window_title(ndxplorer, file_handles_seq, append)
 
         # Capture equations and constants to use in worker thread
         # Important: do this BEFORE launching the thread to avoid main-thread access issues
@@ -374,15 +389,37 @@ def _finalize_loaded_data(
                 combo.clear()
                 combo.addItems(all_param_names)
                 combo.blockSignals(False)
+            # The weight combo is a parameter chooser like the other three and
+            # has to be filled like one. It used to get blockSignals(True) and
+            # nothing else -- never cleared, never populated, and left with its
+            # signals still blocked -- so it stayed empty, weighting could not
+            # be chosen at all, and the automatic "weight by photon count" for
+            # image data silently failed to find its parameter.
             if hasattr(ndxplorer.plot_control, 'comboBoxWeight'):
-                ndxplorer.plot_control.comboBoxWeight.blockSignals(True)
+                weight_combo = ndxplorer.plot_control.comboBoxWeight
+                previous = weight_combo.currentText()
+                weight_combo.blockSignals(True)
+                weight_combo.clear()
+                weight_combo.addItems(all_param_names)
+                if previous in all_param_names:
+                    weight_combo.setCurrentIndex(all_param_names.index(previous))
+                weight_combo.blockSignals(False)
         else:
             logging.warning("No parameters found to populate combo boxes.")
     _apply_axes_and_refresh(ndxplorer, all_param_names)
 
 
-def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) -> None:
-    """Shared tail for open operations: apply axes + refresh plots."""
+def _apply_axes_and_refresh(ndxplorer: "NDXplorer",
+                            all_param_names: Optional[List[str]] = None) -> None:
+    """Shared tail for open operations: apply axes + refresh plots.
+
+    The names default to whatever the data source now holds, which is where they
+    come from in every case anyway. They were a required argument, and a caller
+    that forgot them raised a TypeError only once the data had already loaded --
+    at the point where the failure looks like a problem with the file.
+    """
+    if all_param_names is None:
+        all_param_names = list(getattr(ndxplorer.data_source, "parameter_names", []))
     # Defer axis detection until AFTER comboboxes are fully populated
     # (plot_control.update() may take time to restore selections)
     from qtpy.QtCore import QTimer
@@ -407,70 +444,24 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) 
         
         if detected_dims:
             x_pixels, y_pixels, x_pixel_param, y_pixel_param = detected_dims
-            logging.info(f"Using pre-detected image dimensions: {x_pixels}x{y_pixels}")
-            
-            # Set bins
-            if hasattr(ndxplorer, 'plot_control'):
-                ndxplorer.plot_control.n_xhist_1d = x_pixels
-                ndxplorer.plot_control.n_yhist_1d = y_pixels
-                ndxplorer.plot_control.n_xhist_2d = x_pixels
-                ndxplorer.plot_control.n_yhist_2d = y_pixels
-                
-                # Update UI spinboxes
-                if hasattr(ndxplorer.plot_control, 'spinBoxNXHist2D'):
-                    ndxplorer.plot_control.spinBoxNXHist2D.setValue(x_pixels)
-                if hasattr(ndxplorer.plot_control, 'spinBoxNYHist2D'):
-                    ndxplorer.plot_control.spinBoxNYHist2D.setValue(y_pixels)
-                
-                # Set axes to X pixel and Y pixel
-                logging.info(f"Setting axes to image parameters: X={x_pixel_param}, Y={y_pixel_param}")
-                x_set = ndxplorer.plot_control.set_axis_by_name("x", x_pixel_param, match_contains=False, block_signals=False)
-                y_set = ndxplorer.plot_control.set_axis_by_name("y", y_pixel_param, match_contains=False, block_signals=False)
-                if x_set and y_set:
-                    image_axes_already_set = True
-                # Check for frame parameters in the raw data and setup frame selection
-                try:
-                    param_names = list(ndxplorer.data_source.parameter_names)
-                    t_pixel_param = next((name for name in param_names if "t pixel" in name.lower()), None)
-                    z_pixel_param = next((name for name in param_names if "z pixel" in name.lower()), None)
-                    
-                    frame_param = t_pixel_param or z_pixel_param
-                    if frame_param:
-                        frame_values = ndxplorer.data_source.values[param_names.index(frame_param), :]
-                        n_frames = int(np.max(frame_values)) + 1
-                        logging.info("Frame stack detected in image data (%s): %d frames", frame_param, n_frames)
-                        ndxplorer.plot_control.setup_frame_selection(frame_param, n_frames)
-                    else:
-                        ndxplorer.plot_control.hide_frame_selection()
-                        
-                    # Setup weight parameter for image data
-                    photon_param = next((name for name in param_names if "number of photons" in name.lower() or "Number of Photons" in name), None)
-                    logging.info("Weight parameter for image data: %s", photon_param)
-                    if photon_param:
-                        weight_success = ndxplorer.plot_control.set_axis_by_name(
-                            "weight", photon_param, match_contains=True, block_signals=True
-                        )
-                        if weight_success:
-                            logging.info("Set weighting to %s for image data", photon_param)
-                            try:
-                                ndxplorer.weight_param = photon_param
-                                ndxplorer.weight_enabled = True
-                                # Automatically check the weight checkbox when weight parameter is detected
-                                ndxplorer.checkBoxWeight.setChecked(True)
-                                logging.info("Automatically enabled weight checkbox for %s", photon_param)
-                            except Exception as exc:
-                                logging.debug("Failed to enable weight parameter for image data: %s", exc)
-                        else:
-                            logging.debug("Failed to set weight axis for image data")
-                    else:
-                        logging.debug("No number of photons parameter found in image data")
-                        
-                except Exception as e:
-                    logging.error(f"Error detecting frames/weights in image data: {e}")
-                    ndxplorer.plot_control.hide_frame_selection()
-            
-            # Disable NaN/Inf masking for image data: pixel coordinates are
-            # always valid, so the masks can only remove real pixels.
+            logging.info(f"Image data: {x_pixels}x{y_pixels} on {x_pixel_param}, "
+                         f"{y_pixel_param}")
+
+            # One function does this, and it is check_and_set_image_axes: axes,
+            # bins, RANGES, the frame selector and the photon weighting, all
+            # derived from the data. This branch used to do about half of it
+            # inline -- axes and bins but not ranges -- and then skip the real
+            # one as "redundant". The result was an image binned 256 across an
+            # x range of 0 to 1: every pixel in the first bin, one flat colour.
+            #
+            # The dims are detected before this only because detection has to
+            # happen before compute_columns could replace the pixel columns.
+            # They say WHETHER this is an image; what it looks like comes from
+            # the data, here.
+            image_axes_already_set = bool(ndxplorer.check_and_set_image_axes())
+
+            # Pixel coordinates are always valid, so a NaN/Inf mask on them can
+            # only remove real pixels.
             #
             # This used to write to a pair of flags on the data manager that
             # nothing read -- the checkboxes below are what actually decide the
@@ -480,7 +471,7 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) 
             ndxplorer.checkBoxMaskInf.setChecked(False)
             ndxplorer.onMaskChanged()
             logging.info("Disabled NaN/Inf masking for image data")
-            
+
             # Clear the stored dims
             delattr(ndxplorer, '_detected_image_dims')
         
@@ -497,34 +488,33 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) 
         
         # Skip redundant image detection if we already set the axes from raw data
         if not image_axes_already_set:
-            # Cancel any in-progress background computations with wrong bins
-            if hasattr(ndxplorer.plot_control, '_histogram_worker') and ndxplorer.plot_control._histogram_worker:
-                logging.info("Canceling any in-progress histogram computations")
-                ndxplorer.plot_control._histogram_worker.cancel()
-            
-            # Block new histogram requests during axis detection
-            old_pending = getattr(ndxplorer.plot_control, '_background_computation_pending', False)
-            ndxplorer.plot_control._background_computation_pending = True
-            
-            try:
-                img_applied = ndxplorer.check_and_set_image_axes()
-                logging.info(f"Image axis detection result: {img_applied}")
-                if not img_applied:
-                    try:
-                        ndxplorer.apply_default_axes_from_settings()
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logging.debug("Could not apply default axes: %s", exc)
-                
-                # Invalidate cache to ensure fresh computation with new bins
-                ndxplorer.invalidate_values_cache()
-            finally:
-                # Restore pending flag
-                ndxplorer.plot_control._background_computation_pending = old_pending
+            # Cancelling an in-flight worker and holding off new requests used
+            # to happen here. Histograms are computed synchronously now, so
+            # there is nothing in flight to cancel while the axes are chosen.
+            img_applied = ndxplorer.check_and_set_image_axes()
+            logging.info(f"Image axis detection result: {img_applied}")
+            if not img_applied:
+                try:
+                    ndxplorer.apply_default_axes_from_settings()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("Could not apply default axes: %s", exc)
+
+            # Invalidate cache to ensure fresh computation with new bins
+            ndxplorer.invalidate_values_cache()
         else:
             logging.info("Skipping redundant image detection - axes already set from raw data")
             # Still invalidate cache
             ndxplorer.invalidate_values_cache()
         
+        # Every data set can be played back along one of its own columns, so
+        # this runs for all of them and not only for the images the branches
+        # above are about: a frame index if there is one, otherwise the macro
+        # time, which is what gives a burst measurement its time axis.
+        try:
+            ndxplorer.plot_control.setup_playback(ndxplorer.data_source)
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("Could not set up playback: %s", exc, exc_info=True)
+
         # Clear loading flag IMMEDIATELY to allow histogram computation
         # This must happen before any histogram trigger to prevent blocking
         if hasattr(ndxplorer, 'plot_control'):
