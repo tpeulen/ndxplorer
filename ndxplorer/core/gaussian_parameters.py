@@ -440,10 +440,13 @@ class GaussianMixtureView:
             sections=(
                 PanelSection(
                     title=self.title,
-                    # The panel's header carries the shared "bounds" button, which
-                    # is what keeps the Lo/Hi/Bounds columns out of a narrow dock
-                    # while leaving them one click (or one details popup) away.
-                    bounds_toggle=True,
+                    # This asked for the panel header's shared "bounds" button,
+                    # which kept the Lo/Hi/Bounds columns out of a narrow dock
+                    # while leaving them one click away. ChiSurf has withdrawn
+                    # both the ``bounds_toggle`` field and the renderer behind
+                    # it, and a keyword a frozen dataclass does not have is a
+                    # TypeError -- raised here, on every ndX start-up, from
+                    # inside the Gaussian-fit panel's construction.
                     sections=(
                         DynamicGroupSection(
                             target="group",

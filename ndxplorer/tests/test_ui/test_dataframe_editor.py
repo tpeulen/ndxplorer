@@ -99,7 +99,7 @@ def test_extension_dtypes_do_not_raise(qapp: QtWidgets.QApplication):
     """Regression: nullable pandas dtypes must render, not crash.
 
     Numeric-ness used to be tested with ``np.issubdtype``, which raises
-    ``TypeError`` on ``Float64``/``Int64`` — the dtypes the pyarrow burst reader
+    ``TypeError`` on ``Float64``/``Int64`` — the nullable dtypes a burst reader
     produces.
     """
     df = pd.DataFrame(
@@ -213,3 +213,34 @@ def test_module_exposes_the_expected_surface():
     assert hasattr(module, "DataFrameEditor")
     assert hasattr(module, "edit_dataframe")
     assert hasattr(module.DataFrameEditor, "edit_dataframe")
+
+
+def test_chisurf_branch_is_alive_when_chisurf_is_importable():
+    """The chitable import must not rot silently.
+
+    The chisurf-backed branch once imported a class chitable had retired
+    (``DataFrameSource``); the ImportError was swallowed by the fallback
+    machinery and every ChiSurf user silently got the per-cell QTableWidget
+    editor -- the "takes several seconds to open a burst table" one. If
+    chisurf is importable, the fast branch must be the live one.
+    """
+    pytest.importorskip("chisurf.gui.widgets.chitable")
+    assert HAS_CHISURF, (
+        "chisurf.gui.widgets.chitable imports, but dataframe_editor fell back "
+        "to the slow standalone editor -- its chitable import is broken"
+    )
+
+
+def test_chitable_branch_edits_write_back(qapp, sample_df):
+    """An edit through the chitable source lands in the caller's frame."""
+    if not HAS_CHISURF:
+        pytest.skip("standalone branch has its own edit tests")
+    dlg = DataFrameEditor(sample_df, None)
+    try:
+        src = dlg.table.table_model.source
+        int_col = list(sample_df.columns).index("int_col")
+        assert src.set_value(2, int_col, 99)
+        assert sample_df["int_col"].iloc[2] == 99
+        assert dlg.dataframe is sample_df
+    finally:
+        dlg.close()

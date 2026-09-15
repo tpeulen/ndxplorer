@@ -23,7 +23,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from .glyphs import Glyphs, label as glyph_label
 
 try:
-    from chisurf.gui.widgets.chitable import ChiTableDialog, DataFrameSource
+    from chisurf.gui.widgets.chitable import ArraySource, ChiTableDialog
 
     HAS_CHISURF = True
 except ImportError:  # pragma: no cover - exercised only without ChiSurf
@@ -35,23 +35,49 @@ if HAS_CHISURF:
     class DataFrameEditor(ChiTableDialog):
         """Modal editor backed by ChiSurf's chitable dialog.
 
-        Edits are staged and written to ``df`` in place when the user accepts,
-        which is the contract the previous implementation had.
+        chitable is deliberately pandas-free (its ``DataFrameSource`` was
+        retired), so the frame is adapted through ``ArraySource``: one array
+        per column, edits written back into ``df`` as they happen. Importing
+        the retired name made this whole branch an ImportError, and ndX then
+        fell back silently to the per-cell ``QTableWidget`` editor -- the
+        "several seconds to open a burst table" one.
+
+        Both call sites hand in a *copy* and commit it on accept, so the
+        immediate write-back keeps the staged-edit contract they rely on.
 
         Parameters
         ----------
         df : pandas.DataFrame
-            The frame to edit. Mutated in place on accept.
+            The frame to edit. Mutated in place as cells are changed.
         parent : qtpy.QtWidgets.QWidget, optional
             Parent widget.
         """
 
         def __init__(self, df: pd.DataFrame, parent=None):
+            self._df = df
+            columns = {str(c): df[c].to_numpy() for c in df.columns}
+
+            def _write_back(key: str, row: int, value: Any) -> bool:
+                try:
+                    df.iloc[row, df.columns.get_loc(key)] = value
+                    return True
+                except Exception:
+                    return False
+
             super().__init__(
-                source=DataFrameSource(df, editable=True),
+                source=ArraySource(
+                    columns,
+                    on_set=_write_back,
+                    editable_keys=list(columns),
+                ),
                 title="DataFrame Editor",
                 parent=parent,
             )
+
+        @property
+        def dataframe(self) -> pd.DataFrame:
+            """The edited frame, same object that was passed in."""
+            return self._df
 
         @staticmethod
         def edit_dataframe(
@@ -176,7 +202,7 @@ else:
             """Return whether a column dtype holds numbers.
 
             ``pandas.api.types.is_numeric_dtype`` understands extension dtypes
-            (the nullable ``Float64`` the pyarrow reader produces);
+            (the nullable ``Float64`` a nullable-dtype reader produces);
             ``numpy.issubdtype`` raises ``TypeError`` on them.
 
             Parameters
@@ -219,24 +245,31 @@ else:
 
             self._col_dtypes = [df.iloc[:, j].dtype for j in range(ncols)]
 
+            # Per COLUMN, not per cell: scalar ``df.iloc[i, j]`` costs a frame
+            # lookup each call, and at bursts-table size (5k rows x 20 columns)
+            # that alone was seconds of the "editor takes forever to open".
+            na_color = QtGui.QColor("#999999")
+            right = QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
             for j in range(ncols):
                 is_numeric = self._is_numeric(self._col_dtypes[j])
+                vals = df.iloc[:, j].to_numpy()
+                nas = pd.isna(vals)
                 for i in range(nrows):
-                    val = df.iloc[i, j]
+                    val = vals[i]
                     item = QtWidgets.QTableWidgetItem()
                     # The source row travels with the item, so an edit stays
                     # correct after the table has been filtered *or* sorted.
                     item.setData(QtCore.Qt.UserRole, int(self._source_rows[i]))
-                    if pd.isna(val):
+                    if nas[i]:
                         item.setText("")
-                        item.setForeground(QtGui.QColor("#999999"))
+                        item.setForeground(na_color)
                         item.setToolTip("NaN")
                     elif is_numeric:
                         if isinstance(val, (float, np.floating)):
                             item.setText(f"{val:.6g}")
                         else:
                             item.setText(str(val))
-                        item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                        item.setTextAlignment(right)
                     else:
                         item.setText(str(val))
                     item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
@@ -250,6 +283,9 @@ else:
         def _resize_columns(self):
             """Size columns to their content, clamped to sane bounds."""
             header = self._table.horizontalHeader()
+            # Measure a sample, not every row: ResizeToContents otherwise
+            # lays out all 100k+ cells a burst table brings.
+            header.setResizeContentsPrecision(100)
             header.resizeSections(QtWidgets.QHeaderView.ResizeToContents)
             for j in range(self._table.columnCount()):
                 w = self._table.columnWidth(j)

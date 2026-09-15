@@ -752,7 +752,7 @@ class CurveFit(_DataParameterHost):
             if scan and free:
                 self._run_scanned(free)
             else:
-                self._model.update_model()
+                self._model.update()
                 self._fit.run()
         except Exception as exc:
             return CurveFitResult(False, message=f"fit failed: {exc}")
@@ -790,7 +790,7 @@ class CurveFit(_DataParameterHost):
         def cost(values: np.ndarray) -> float:
             _apply(free, values)
             self._note_step()
-            self._model.update_model()
+            self._model.update()
             model = np.asarray(self._model.y, dtype=float)
             return float(np.sum(_weighted_residual(y, model, ey) ** 2))
 
@@ -805,20 +805,20 @@ class CurveFit(_DataParameterHost):
         cost = self._model_cost(free)
         start = np.array([float(p.value) for p in free], dtype=float)
         if not _coarse_scan(free, cost):
-            self._model.update_model()
+            self._model.update()
             self._fit.run()
             return
-        self._model.update_model()
+        self._model.update()
         self._fit.run()
         scanned = np.array([float(p.value) for p in free], dtype=float)
         scanned_cost = cost(scanned)
 
         _apply(free, start)
-        self._model.update_model()
+        self._model.update()
         self._fit.run()
         if cost(np.array([float(p.value) for p in free], dtype=float)) > scanned_cost:
             _apply(free, scanned)
-            self._model.update_model()
+            self._model.update()
 
     def _run_joint(self, free: List[Any], free_data: List[Any],
                    scan: bool = True) -> CurveFitResult:
@@ -833,7 +833,7 @@ class CurveFit(_DataParameterHost):
                 param.value = float(value)
             self._note_step()
             x, y, ey = self._refresh_data(names)
-            self._model.update_model()
+            self._model.update()
             return _weighted_residual(y, np.asarray(self._model.y, dtype=float), ey)
 
         try:
@@ -860,7 +860,7 @@ class CurveFit(_DataParameterHost):
             param.value = float(value)
         x, y, ey = self._refresh_data(names)
         self._set_data(y, ey)
-        self._model.update_model()
+        self._model.update()
         model = np.asarray(self._model.y, dtype=float)
         dof = max(1, int(np.isfinite(model).sum()) - len(variables))
         return CurveFitResult(
