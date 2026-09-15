@@ -12,13 +12,9 @@
     "weight": "Number of Photons"
   },
   "playback": {
-    "frame_duration_ms": 25,
-    "enable_background_computation": true,
-    "cache_size_mb": 100,
-    "cache_max_entries": 500
+    "fps": 10
   },
   "environment": {
-    "NDXPLORER_ENABLE_BACKGROUND_WORKER": null,
     "NDXPLORER_USE_BOOST_HISTOGRAM": null,
     "NDXPLORER_USE_BITFIELD": null,
     "NDXPLORER_USE_HISTOGRAM_CACHE": null,

@@ -2,9 +2,61 @@
 
 from __future__ import annotations
 
+from typing import Optional, Sequence
+
 import numpy as np
 
 from ..logging_config import logging
+
+
+#: What a frame axis can be called. "T pixel" and "Z pixel" are what the older
+#: burst exporters wrote; "Frame" is what a stack of images is actually called,
+#: and what the CLI and the image writer here use. Recognising only the first
+#: two meant a frame stack opened with no frame selector and every frame drawn
+#: on top of the others -- which looks like one noisy image rather than like a
+#: missing control.
+_FRAME_COLUMN_NAMES = ("t pixel", "z pixel", "frame")
+
+
+#: Words that turn a frame-ish column name into something else entirely. A
+#: "Frame Time (s)" is a timestamp: taking it for the frame index builds a
+#: selector with one entry per second of acquisition and shows one frame's worth
+#: of bursts as if it were the whole stack.
+_NOT_A_FRAME_INDEX = ("time", "duration", "rate", "period", "interval")
+
+
+def frame_column(param_names: Sequence[str]) -> Optional[str]:
+    """The column that indexes the frames, or None.
+
+    In the order above, so a file carrying both a "T pixel" and a "Frame"
+    resolves the way it always did.
+
+    Two passes over the whole name list, not two passes per candidate name: an
+    exact match on a *later* candidate beats a loose match on an earlier one,
+    because "Frame" naming a frame index is a better answer than "T pixel (µs)"
+    happening to contain "t pixel".
+    """
+    def _rejected(text: str) -> bool:
+        return any(word in text for word in _NOT_A_FRAME_INDEX)
+
+    # Exact, or exact followed by a unit -- "Frame (index)" is still a frame.
+    for wanted in _FRAME_COLUMN_NAMES:
+        for name in param_names:
+            text = str(name).lower()
+            if text == wanted or text.startswith(wanted + " ("):
+                if not _rejected(text):
+                    return name
+
+    # Loose: the candidate appears somewhere in the name. This is what finds a
+    # "Frame Nbr" or an "img T pixel", and it is also what used to re-admit the
+    # "Frame Time (s)" the exact pass had just rejected -- so it applies the
+    # same rejection.
+    for wanted in _FRAME_COLUMN_NAMES:
+        for name in param_names:
+            text = str(name).lower()
+            if wanted in text and not _rejected(text):
+                return name
+    return None
 
 
 def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
@@ -30,18 +82,13 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
 
     if not (has_x_pixel and has_y_pixel):
         logging.info("Image detection failed: X pixel or Y pixel columns not found")
-        try:
-            ndxplorer.plot_control.hide_frame_selection()
-        except Exception:
-            pass
         return False
 
     logging.info("Image data detected (X pixel and Y pixel columns found)")
     x_pixel_param = next((name for name in param_names if "x pixel" in name.lower()), None)
     y_pixel_param = next((name for name in param_names if "y pixel" in name.lower()), None)
     
-    t_pixel_param = next((name for name in param_names if "t pixel" in name.lower()), None)
-    z_pixel_param = next((name for name in param_names if "z pixel" in name.lower()), None)
+    frame_param = frame_column(param_names)
 
     # Set X and Y axes to the pixel parameters
     # Use match_contains=False for exact matching to avoid matching "T pixel" 
@@ -74,8 +121,8 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
     else:
         logging.debug("No matching weight parameter found, using default")
 
-    x_values = data_source.values[param_names.index(x_pixel_param), :]
-    y_values = data_source.values[param_names.index(y_pixel_param), :]
+    x_values = data_source.column_view(param_names.index(x_pixel_param))
+    y_values = data_source.column_view(param_names.index(y_pixel_param))
     logging.debug("x_pixel_param: %s, x_values: %s", x_pixel_param, x_values)
     logging.debug("y_pixel_param: %s, y_values: %s", y_pixel_param, y_values)
 
@@ -107,29 +154,23 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
         ndxplorer.plot_control.spinBoxNYHist2D.setValue(y_pixels)
     
     logging.info(f"Bins set: n_xhist_2d={ndxplorer.plot_control.n_xhist_2d}, n_yhist_2d={ndxplorer.plot_control.n_yhist_2d}")
+    # The range spans the PIXELS, not the largest pixel INDEX. With n bins over
+    # [0, n) each bin is exactly one pixel: bin k covers [k, k+1) and holds
+    # pixel k. Over [0, n-1] -- the largest index -- each bin is (n-1)/n of a
+    # pixel wide, so pixel and bin drift apart across the image and the picture
+    # picks up a moire that is not in the data.
     ndxplorer.plot_control.xmin = 0
     ndxplorer.plot_control.ymin = 0
-    
-    # Set max values with error handling for empty arrays
-    try:
-        ndxplorer.plot_control.xmax = np.max(x_values) if len(x_values) > 0 else x_pixels
-    except (ValueError, IndexError):
-        ndxplorer.plot_control.xmax = x_pixels
-    
-    try:
-        ndxplorer.plot_control.ymax = np.max(y_values) if len(y_values) > 0 else y_pixels
-    except (ValueError, IndexError):
-        ndxplorer.plot_control.ymax = y_pixels
+    ndxplorer.plot_control.xmax = x_pixels
+    ndxplorer.plot_control.ymax = y_pixels
 
-    frame_param = t_pixel_param or z_pixel_param
     if frame_param:
-        frame_values = data_source.values[param_names.index(frame_param), :]
-        n_frames = int(np.max(frame_values)) + 1
-        logging.info("Frame stack detected (%s): %d frames", frame_param, n_frames)
-        
-        ndxplorer.plot_control.setup_frame_selection(frame_param, n_frames)
-    else:
-        ndxplorer.plot_control.hide_frame_selection()
+        logging.info("Frame stack detected (%s)", frame_param)
+    # The frame selector itself is not set up here any more. It is one case of
+    # playing a data set back along one of its columns, which every data set can
+    # do -- a burst table has a macro time -- so it is set up for every load, by
+    # ``plot_control.setup_playback``, and not only for the images that happen to
+    # come through this function.
 
     logging.debug("Set binning and ranges to match pixel dimensions")
     # Don't call update_plots here - it will be called by _apply_axes_and_refresh

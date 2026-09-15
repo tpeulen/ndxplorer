@@ -1,11 +1,8 @@
 from __future__ import print_function
-from typing import List, Dict, Optional
+from typing import Dict
 import json
-import os
 import pathlib
 import math
-
-import numpy as np
 
 from qtpy import QtGui, uic, QtCore, QtWidgets
 
@@ -18,27 +15,8 @@ except ImportError:
 
 from ..core.data_source import RectangularDataSelection, Gaussian2DSelection, MaskDataSelection
 from ..logging_config import logging
-from .background_histograms import HistogramComputationManager, EnhancedHistogramCache
 from ..widgets.mask_drawing_widget import MaskDrawingWidget
 from .controls import ScaleControlMixin, AxisControlMixin, HistogramControlMixin
-
-
-def is_background_computation_enabled():
-    """Check if background computation is enabled via environment variable or settings."""
-    # First check if there's a settings file override
-    try:
-        from .utils.performance_config import _get_environment_overrides
-        settings_env = _get_environment_overrides()
-        if "NDXPLORER_ENABLE_BACKGROUND_WORKER" in settings_env and settings_env["NDXPLORER_ENABLE_BACKGROUND_WORKER"] is not None:
-            value = str(settings_env["NDXPLORER_ENABLE_BACKGROUND_WORKER"]).lower()
-            enabled = value not in ('0', 'false', 'no', 'off')
-            logging.debug(f"Background worker enabled via settings: {enabled}")
-            return enabled
-    except Exception as e:
-        logging.debug(f"Failed to check settings for background worker: {e}")
-    
-    # Fall back to environment variable (default to enabled unless explicitly disabled)
-    return os.environ.get('NDXPLORER_ENABLE_BACKGROUND_WORKER', '').lower() not in ('0', 'false', 'no', 'off')
 
 
 class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMixin, QtWidgets.QWidget):
@@ -339,13 +317,21 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             z_grid_layout.replaceWidget(z_min_widget, self.spinBoxZmin)
             z_grid_layout.replaceWidget(z_max_widget, self.spinBoxZmax)
             
-            # Delete old widgets
-            x_min_widget.deleteLater()
-            x_max_widget.deleteLater()
-            y_min_widget.deleteLater()
-            y_max_widget.deleteLater()
-            z_min_widget.deleteLater()
-            z_max_widget.deleteLater()
+            # Reparented out FIRST, then deleted. ``replaceWidget`` takes the
+            # old widget out of the layout but leaves it a child of the panel,
+            # and a child that no layout positions draws at (0, 0) -- so all
+            # four of these sat stacked in the top-left corner, over the x-axis
+            # row, as one spin box reading 0 that belonged to nothing.
+            # ``deleteLater`` alone does not clear that: the deferred-delete
+            # event is only processed when the event loop unwinds past the level
+            # the widget was created at, which never happens for a panel built
+            # headlessly, and had not happened yet whenever the panel was
+            # painted early.
+            for old_widget in (x_min_widget, x_max_widget,
+                               y_min_widget, y_max_widget,
+                               z_min_widget, z_max_widget):
+                old_widget.setParent(None)
+                old_widget.deleteLater()
         else:
             # Use QSpinBox widgets from UI file
             logging.log(0, "Using QSpinBox widgets from UI file")
@@ -363,7 +349,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.saveMaskBtn.clicked.connect(self.mask_widget.save_mask)
         self.clearMaskBtn.clicked.connect(self.mask_widget.clear_mask)
         self.applyMaskBtn.clicked.connect(self.mask_widget._on_apply_mask)
-        self.groupBoxMaskDrawing.toggled.connect(self.mask_widget._on_drawing_enabled_changed)
+        self.checkBoxEnableDrawing.toggled.connect(self.mask_widget._on_drawing_enabled_changed)
         
         # Set up references to UI elements for the mask widget
         self.mask_widget.category_spinbox = self.categorySpinBox
@@ -374,7 +360,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.mask_widget.save_mask_btn = self.saveMaskBtn
         self.mask_widget.clear_mask_btn = self.clearMaskBtn
         self.mask_widget.apply_mask_btn = self.applyMaskBtn
-        self.mask_widget.enable_drawing_checkbox = self.groupBoxMaskDrawing
+        self.mask_widget.enable_drawing_checkbox = self.checkBoxEnableDrawing
         # maskStatsLabel has been removed from UI - set to None
         self.mask_widget.stats_label = None
         
@@ -538,31 +524,8 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.spinBoxBin1DY.valueChanged.connect(self.on_bin_count_changed)
         self.spinBoxBin1DZ.valueChanged.connect(self.on_bin_count_changed)
         
-        # Initialize frame/time series related attributes
-        self._frame_param = None
-        self._n_frames = 0
-        self._frame_histogram_cache = {}
-        self._playback_direction = 0
-        
-        # Initialize background computation (no caching)
-        self._histogram_worker = None
-        self._background_computation_enabled = is_background_computation_enabled()
-        self._background_computation_pending = False
-        self._frame_duration_ms = 200  # Default value
-        
-        # Log background computation status
-        if self._background_computation_enabled:
-            logging.info("Background histogram computation enabled (use NDXPLORER_ENABLE_BACKGROUND_WORKER=0 to disable)")
-        else:
-            logging.info("Background histogram computation disabled (NDXPLORER_ENABLE_BACKGROUND_WORKER=0 or false/no/off)")
-        
-        self._load_playback_settings()
-        
-        # Setup playback controls (hidden by default)
-        self._setup_playback_controls()
-
-        # Initialize frame selection widgets as hidden
-        self.hide_frame_selection()
+        self._build_playback_panel()
+        self._build_panels()
 
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {
@@ -771,6 +734,13 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             # Note: Existing bitmap selections are kept - they will be automatically
             # updated when the histogram is recomputed with new axis/bin settings
 
+        if axis == 'z':
+            # The dynamic-z region is in axis units, so a new axis or a new
+            # range leaves it pointing at values that no longer exist.
+            fit = getattr(self.parent, "fit_z_selection_to_axis", None)
+            if callable(fit):
+                fit()
+
         self.parent.request_plot_update()
 
     def on_x_axis_changed(self):
@@ -809,19 +779,9 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             self.mask_widget.set_drawing_enabled(False)
             self.mask_widget.clear_mask()
         
-        # Force immediate recomputation by bypassing background system entirely
-        # This is critical for bin count changes - no cache should be used
-        old_pending = getattr(self, '_background_computation_pending', False)
-        self._background_computation_pending = False  # Clear any pending flag
-        
-        # Clear all histogram caches
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
-        
-        # Force immediate histogram computation (no background, no cache)
         try:
-            from .plot_update_helpers import _update_histograms_immediate
-            _update_histograms_immediate(self.parent)
+            from .plot_update_helpers import update_histograms
+            update_histograms(self.parent)
             logging.log(0, "Bin count change - immediate histogram computation completed")
         except Exception as e:
             logging.error(f"Failed to compute histograms immediately after bin count change: {e}")
@@ -835,11 +795,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         logging.log(0, "Normalization changed - clearing all caches and triggering full plot update")
         
         # Clear all caches to force fresh computation with new normalization settings
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
-        
-        # Clear any pending background computation to ensure immediate update
-        self._background_computation_pending = False
         
         # Trigger full update like the main update button
         self.parent.update_plots()
@@ -864,11 +819,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         logging.log(0, "Axis scales updated - clearing all caches and triggering full plot update for log scale changes")
         
         # Clear all caches to force fresh computation with new scale settings
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
-        
-        # Clear any pending background computation to ensure immediate update
-        self._background_computation_pending = False
         
         # Trigger full update like the main update button
         self.parent.update_plots()
@@ -980,8 +930,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.tableWidget.setRowCount(0)
         self._selections.clear()  # Clear instance-level selections
         # Clear frame histogram cache when selections change
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.request_plot_update(skip_clustering=True)
@@ -1102,8 +1050,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             return
         self.tableWidget.removeRow(row)
         # Clear frame histogram cache when selections change
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
         # Redraw immediately (matching the selection-edit path) so removing a
         # selection updates the plot right away. The debounced request_plot_update
         # could leave the plot showing the removed selection until the next event.
@@ -1115,8 +1061,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
         # Clear frame histogram cache when selections change
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
         
         # Ensure xmin < xmax
         if xmin > xmax:
@@ -1415,8 +1359,8 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.addSelection(idx, xmin, xmax, False, True, name)
         logging.log(0, f"onAddSelection: Added selection for {name} with range ({xmin}, {xmax})")
         
-        # If in single frame mode, also add frame selection
-        self._add_frame_selection_if_needed()
+        # A selection drawn during playback describes the slice it was drawn on.
+        self._add_playback_selection_if_needed()
         
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
@@ -1775,8 +1719,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             if 0 <= r < table.rowCount():
                 table.removeRow(r)
         # Invalidate cached histograms so the redraw reflects the removed selection.
-        self.clear_frame_histogram_cache()
-        self.clear_histogram_cache()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.update_plots()
@@ -1892,547 +1834,295 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         # Otherwise, do nothing (non-editable)
         return
 
-    def setup_frame_selection(self, frame_param: str, n_frames: int):
-        """
-        Setup frame selection UI for time series or z-stack images.
-        
-        Args:
-            frame_param: Name of the frame parameter (T pixel or Z pixel)
-            n_frames: Total number of frames in the stack
-        """
-        self._frame_param = frame_param
-        self._n_frames = n_frames
-        
-        # Initialize per-frame histogram cache for time series playback
-        self._frame_histogram_cache = {}
-        
-        self.labelFrameInfo.setText(f"{frame_param}: ")
-        self.spinBoxFrameNumber.setMaximum(n_frames - 1)
-        self.spinBoxFrameNumber.setValue(0)
-        
-        # Update frame count label
-        if hasattr(self, 'label_frame_nbr'):
-            self.label_frame_nbr.setText(f"/{n_frames}")
-        
+    # ==================== Playback ====================
+    #
+    # The transport, the mode and the speed live in ``playback.view.json`` and
+    # are rendered by chisurf's AutoForm; what is left here is the wiring
+    # between that panel, the :class:`~ndxplorer.core.playback.PlaybackController`
+    # that owns the state, and the plot that has to redraw.
+
+    def _build_playback_panel(self):
+        """Create the playback controller, its view model and its panel."""
+        from ..core.playback import PlaybackController
+
+        self.playback = PlaybackController(fps=self._load_playback_fps())
+        self.playback_form = None
+        self.playback_model = None
+
         try:
-            self.checkBoxStackFrames.toggled.disconnect()
-        except Exception:
-            pass
-        try:
-            self.spinBoxFrameNumber.valueChanged.disconnect()
-        except Exception:
-            pass
-            
-        self.checkBoxStackFrames.toggled.connect(self.on_frame_selection_changed)
-        self.spinBoxFrameNumber.valueChanged.connect(self.on_frame_selection_changed)
-        
-        # Show image/frame controls as a single group for image datasets
-        if hasattr(self, 'groupBoxImage'):
-            self.groupBoxImage.setVisible(True)
-        
-        logging.info(f"Frame selection setup: {frame_param} with {n_frames} frames")
-
-    def hide_frame_selection(self):
-        """Hide frame selection UI when no frame stack is detected."""
-        self._frame_param = None
-        self._n_frames = 0
-        self._frame_histogram_cache = {}
-        self._stop_playback()
-
-        if hasattr(self, 'checkBoxStackFrames'):
-            self.checkBoxStackFrames.setChecked(True)
-        if hasattr(self, 'spinBoxFrameNumber'):
-            self.spinBoxFrameNumber.setValue(0)
-
-        # Hide image/frame controls as a single group for non-image datasets
-        if hasattr(self, 'groupBoxImage'):
-            self.groupBoxImage.setVisible(False)
-
-    def on_frame_selection_changed(self):
-        """Handle frame selection changes and trigger plot update."""
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            from .playback_view_model import PlaybackViewModel
+            from chisurf.gui.autoform import AutoForm
+        except ImportError as exc:
+            # chisurf is a declared dependency, so this is a broken environment
+            # rather than a supported one -- but a missing panel must not take
+            # the whole plot control down with it.
+            logging.error("Playback panel unavailable (chisurf missing?): %s", exc)
             return
-            
-        if self.checkBoxStackFrames.isChecked():
-            logging.debug("Stack frames enabled (showing all frames)")
-            # Clear cache when switching to stacked mode
-            self._frame_histogram_cache = {}
-            self._stop_playback()
-        else:
-            frame_num = self.spinBoxFrameNumber.value()
-            logging.debug(f"Single frame mode: showing frame {frame_num}")
-            # Always compute live histograms (no caching)
-            
-        self.parent.request_plot_update()
 
-    def _add_frame_selection_if_needed(self):
+        self.playback_model = PlaybackViewModel(
+            self.playback,
+            on_change=self._on_playback_changed,
+            on_axis_change=self._on_playback_axis_changed,
+            on_rebuild=self._rebuild_playback_panel,
+            parent=self,
+        )
+        self.playback_form = AutoForm(self.playback_model, parent=self)
+        # Maximum, not the default Preferred: an AutoForm ends its layout with a
+        # stretch, so given spare vertical space it keeps it -- and folding the
+        # panel then leaves a panel-sized hole instead of giving the space back
+        # to the group boxes below. The group box this replaces was Fixed for
+        # the same reason.
+        self.playback_form.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                                         QtWidgets.QSizePolicy.Maximum)
+        # First in the dock, where the Image group box was: it is what the user
+        # scrubs while watching the plot, and a control you drive continuously
+        # does not belong below four panels of settings.
+        self.verticalLayout_3.insertWidget(0, self.playback_form)
+        self.playback_form.setVisible(False)
+        self.playback_form.rebuilt.connect(self._wire_playback_fold)
+        self._wire_playback_fold()
+
+    def _wire_playback_fold(self):
+        """Remember whether the user left the panel open, across rebuilds.
+
+        The step slider's range is the step count, which is itself editable, so
+        changing it rebuilds the form. Without this the panel would fold itself
+        every time -- the spec's ``collapsed`` is the *opening* state, not a
+        standing instruction.
         """
-        Add frame selection to the selection table when in single frame mode.
-        This ensures that when users make selections, the current frame is included.
-        """
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
-            return
-            
-        if self.checkBoxStackFrames.isChecked():
-            return
-            
         try:
-            # Check if frame selection already exists
-            param_names = self.parent.data_source.parameter_names
-            if self._frame_param not in param_names:
-                return
-                
-            frame_idx = param_names.index(self._frame_param)
-            frame_num = self.spinBoxFrameNumber.value()
-            
-            # Check if this selection already exists
-            for sel in self.get_selections():
-                if hasattr(sel, 'idx') and sel.idx == frame_idx:
-                    # Frame selection already exists, update it
-                    if hasattr(sel, 'lower') and hasattr(sel, 'upper'):
-                        if sel.lower == frame_num and sel.upper == frame_num:
-                            return
-            
-            # Add frame selection
-            self.addSelection(frame_idx, frame_num, frame_num, False, True, self._frame_param)
-            logging.info(f"Added frame selection: {self._frame_param} = {frame_num}")
-        except Exception as e:
-            logging.warning(f"Failed to add frame selection: {e}")
+            from chisurf.gui.widgets.collapsible_box import CollapsibleBox
+        except ImportError:  # pragma: no cover - chisurf is a hard dependency
+            return
+        for box in self.playback_form.findChildren(CollapsibleBox):
+            box.toggled.connect(self._on_playback_fold)
+        # A rebuild makes fresh widgets, which start without the hover status.
+        self._update_playback_tooltip()
 
-    def get_frame_filter_mask(self, data_source):
+    def _on_playback_fold(self, expanded: bool):
+        if self.playback_model is not None:
+            self.playback_model.collapsed = not expanded
+
+    def _build_panels(self):
+        """Wrap the dock's blocks in foldable AutoForm panels.
+
+        The widgets are the ones ``uic`` built; the form supplies the headers,
+        the folds and the order. Each is re-parented into the form, so it has to
+        come out of the dock's layout first -- leaving it there gives the layout
+        an item pointing at a widget that now lives somewhere else, and the space
+        it used to occupy stays reserved.
+
+        The panels take the position of the *first* block they replace, so
+        Playback (inserted before this runs) stays on top.
         """
-        Get a boolean mask for filtering data by selected frame.
-        
-        Args:
-            data_source: The data source containing parameter values
-            
-        Returns:
-            numpy array of boolean values or None if frame filtering is disabled
-        """
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
-            return None
-            
-        if self.checkBoxStackFrames.isChecked():
-            return None
-            
+        self.panels_form = None
+        self.panels_model = None
+
         try:
-            param_names = data_source.parameter_names
-            if self._frame_param not in param_names:
-                return None
-                
-            frame_idx = param_names.index(self._frame_param)
-            frame_values = data_source.values[frame_idx, :]
-            selected_frame = self.spinBoxFrameNumber.value()
-            
-            import numpy as np
-            mask = frame_values == selected_frame
-            logging.debug(f"Frame filter mask: {mask.sum()} events in frame {selected_frame}")
-            return mask
-        except Exception as e:
-            logging.warning(f"Failed to create frame filter mask: {e}")
-            return None
+            from .plot_panels_view_model import PlotPanelsViewModel
+            from chisurf.gui.autoform import AutoForm
+        except ImportError as exc:
+            logging.error("Plot-control panels unavailable (chisurf missing?): %s", exc)
+            return
 
-    # ==================== Settings and Configuration ====================
-    
-    def _load_playback_settings(self):
-        """Load playback settings from settings file."""
+        self.panels_model = PlotPanelsViewModel(self, parent=self)
+        widgets = [self.panels_model.widget_for(attr)
+                   for attr in PlotPanelsViewModel.WIDGETS]
+        widgets = [w for w in widgets if w is not None]
+        if not widgets:
+            return
+
+        index = min((self.verticalLayout_3.indexOf(w) for w in widgets
+                     if self.verticalLayout_3.indexOf(w) >= 0), default=-1)
+        for widget in widgets:
+            self.verticalLayout_3.removeWidget(widget)
+
+        self.panels_form = AutoForm(self.panels_model, parent=self)
+        self.verticalLayout_3.insertWidget(
+            index if index >= 0 else self.verticalLayout_3.count(), self.panels_form)
+        self.panels_form.rebuilt.connect(self._wire_panel_folds)
+        self._wire_panel_folds()
+
+    def _wire_panel_folds(self):
+        """Remember which blocks the user left open, across rebuilds."""
+        try:
+            from chisurf.gui.widgets.collapsible_box import CollapsibleBox
+        except ImportError:  # pragma: no cover - chisurf is a hard dependency
+            return
+        for box in self.panels_form.findChildren(CollapsibleBox):
+            box.toggled.connect(
+                lambda expanded, b=box: self.panels_model.collapsed.__setitem__(
+                    b.title(), not expanded))
+
+    def _load_playback_fps(self) -> int:
+        """Playback rate from the settings file, in steps per second."""
+        default_fps = 10
         try:
             settings_path = pathlib.Path(__file__).parent.parent / 'settings' / 'mfd.settings.json'
-            if settings_path.exists():
-                with open(settings_path, 'r') as f:
-                    settings = json.load(f)
-                
-                playback_settings = settings.get('playback', {})
-                self._frame_duration_ms = playback_settings.get('frame_duration_ms', 200)
-                # Only enable background computation if both env var and settings allow it
-                env_enabled = is_background_computation_enabled()
-                settings_enabled = playback_settings.get('enable_background_computation', True)
-                self._background_computation_enabled = env_enabled and settings_enabled
-                
-                # Configure cache based on settings
-                cache_size_mb = playback_settings.get('cache_size_mb', 100)
-                cache_max_entries = playback_settings.get('cache_max_entries', 50)
-                self._histogram_cache = EnhancedHistogramCache(
-                    max_size=cache_max_entries,
-                    max_memory_mb=cache_size_mb
-                )
-                
-                logging.info(f"Loaded playback settings: duration={self._frame_duration_ms}ms, "
-                           f"background={self._background_computation_enabled}, "
-                           f"cache={cache_size_mb}MB")
-            else:
-                # Default settings
-                self._frame_duration_ms = 200
-                self._background_computation_enabled = is_background_computation_enabled()
-                logging.warning("Playback settings file not found, using defaults")
-        except Exception as e:
-            logging.warning(f"Failed to load playback settings: {e}")
-            # Fallback to defaults
-            self._frame_duration_ms = 200
-            self._background_computation_enabled = is_background_computation_enabled()
-    
-    def update_playback_settings(self, frame_duration_ms: int = None, 
-                                enable_background: bool = None,
-                                cache_size_mb: int = None,
-                                cache_max_entries: int = None):
-        """Update playback settings and reconfigure components."""
-        if frame_duration_ms is not None:
-            self._frame_duration_ms = frame_duration_ms
-            if hasattr(self, '_playback_timer'):
-                self._playback_timer.setInterval(self._frame_duration_ms)
-        
-        if enable_background is not None:
-            # Only enable if both env var and parameter allow it
-            env_enabled = is_background_computation_enabled()
-            self._background_computation_enabled = enable_background and env_enabled
-        
-        if cache_size_mb is not None or cache_max_entries is not None:
-            # Recreate cache with new settings
-            old_cache = self._histogram_cache
-            self._histogram_cache = EnhancedHistogramCache(
-                max_size=cache_max_entries or old_cache.max_size,
-                max_memory_mb=cache_size_mb or (old_cache.max_memory_bytes / 1024 / 1024)
-            )
-        
-        logging.info(f"Updated playback settings: duration={self._frame_duration_ms}ms, "
-                   f"background={self._background_computation_enabled}")
-    
-    # ==================== Time Series Playback Controls ====================
-    
-    def _setup_playback_controls(self):
-        """Setup playback control buttons - connect signals and create timer."""
-        self.toolButtonStepBackward.clicked.connect(self._on_step_backward)
-        self.toolButtonPlayBackward.clicked.connect(self._on_play_backward)
-        self.toolButtonPause.clicked.connect(self._on_pause)
-        self.toolButtonPlayForward.clicked.connect(self._on_play_forward)
-        self.toolButtonStepForward.clicked.connect(self._on_step_forward)
-        
-        self._playback_timer = QtCore.QTimer(self)
-        self._playback_timer.setInterval(self._frame_duration_ms)  # Use settings value
-        self._playback_timer.timeout.connect(self._on_playback_tick)
-        self._playback_direction = 0
-        
-    def _on_play_backward(self):
-        """Start playing backward through frames."""
-        if self.toolButtonPlayBackward.isChecked():
-            self._playback_direction = -1
-            self.toolButtonPlayForward.setChecked(False)
-            self._playback_timer.start()
-            logging.debug("Started backward playback")
-        else:
-            self._stop_playback()
-            
-    def _on_play_forward(self):
-        """Start playing forward through frames."""
-        if self.toolButtonPlayForward.isChecked():
-            self._playback_direction = 1
-            self.toolButtonPlayBackward.setChecked(False)
-            self._playback_timer.start()
-            logging.debug("Started forward playback")
-        else:
-            self._stop_playback()
-            
-    def _on_pause(self):
-        """Pause playback."""
-        self._stop_playback()
-        
-    def _on_step_backward(self):
-        """Step one frame backward."""
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
-            return
-            
-        if self.checkBoxStackFrames.isChecked():
-            return
-            
-        current = self.spinBoxFrameNumber.value()
-        n_frames = getattr(self, '_n_frames', 0)
-        
-        # Step backward with loop
-        new_frame = current - 1
-        if new_frame < 0:
-            new_frame = n_frames - 1
-            
-        self.spinBoxFrameNumber.setValue(new_frame)
-        logging.debug(f"Stepped backward to frame {new_frame}")
-        
-    def _on_step_forward(self):
-        """Step one frame forward."""
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
-            return
-            
-        if self.checkBoxStackFrames.isChecked():
-            return
-            
-        current = self.spinBoxFrameNumber.value()
-        n_frames = getattr(self, '_n_frames', 0)
-        
-        # Step forward with loop
-        new_frame = current + 1
-        if new_frame >= n_frames:
-            new_frame = 0
-            
-        self.spinBoxFrameNumber.setValue(new_frame)
-        logging.debug(f"Stepped forward to frame {new_frame}")
-        
-    def _stop_playback(self):
-        """Stop any active playback."""
-        if hasattr(self, '_playback_timer'):
-            self._playback_timer.stop()
-        self._playback_direction = 0
-        self.toolButtonPlayBackward.setChecked(False)
-        self.toolButtonPlayForward.setChecked(False)
-        
-    def _on_playback_tick(self):
-        """Handle playback timer tick - advance to next/previous frame."""
-        if not hasattr(self, '_frame_param') or self._frame_param is None:
-            self._stop_playback()
-            return
-            
-        if self.checkBoxStackFrames.isChecked():
-            self._stop_playback()
-            return
-            
-        current = self.spinBoxFrameNumber.value()
-        n_frames = getattr(self, '_n_frames', 0)
-        
-        if self._playback_direction > 0:
-            # Forward
-            new_frame = current + 1
-            if new_frame >= n_frames:
-                new_frame = 0  # Loop
-        elif self._playback_direction < 0:
-            # Backward
-            new_frame = current - 1
-            if new_frame < 0:
-                new_frame = n_frames - 1  # Loop
-        else:
-            return
-            
-        self.spinBoxFrameNumber.setValue(new_frame)
-        
-    # ==================== Background Histogram Computation ====================
-    
-    def _initialize_histogram_worker(self):
-        """Initialize the background histogram computation worker."""
-        if self._histogram_worker is None:
-            self._histogram_worker = HistogramComputationManager(self)
-            self._histogram_worker.computation_complete.connect(self._on_histograms_computed)
-            self._histogram_worker.computation_failed.connect(self._on_histogram_computation_failed)
-            self._histogram_worker.computation_started.connect(self._on_computation_started)
-            self._histogram_worker.progress_update.connect(self._on_computation_progress)
-    
-    #: Point count below which histograms are computed synchronously on the GUI
-    #: thread instead of via the background worker. The boost/fast synchronous
-    #: compute is well under a frame at these sizes (~10 ms at 2M, ~30 ms at 5M),
-    #: whereas the per-event QThread create/teardown + blocking ``wait()`` adds
-    #: ~150-500 ms of latency for the *same* result (measured headlessly). The
-    #: worker only pays off for genuinely heavy computes above this threshold.
-    SYNC_HISTOGRAM_THRESHOLD = 6_000_000
+            if not settings_path.exists():
+                return default_fps
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
+            playback = settings.get('playback', {})
+            if 'fps' in playback:
+                return max(1, int(playback['fps']))
+            # The rate used to be written as a frame duration. Reading both
+            # keeps a settings file from before this change working, and there
+            # is no migration to run.
+            duration = playback.get('frame_duration_ms')
+            if duration:
+                return max(1, int(round(1000.0 / float(duration))))
+        except Exception as exc:
+            logging.warning("Failed to read playback settings: %s", exc)
+        return default_fps
 
-    def compute_histograms_background(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
-        """Compute histograms in background thread if enabled, otherwise compute immediately."""
-        logging.debug(f"compute_histograms_background called, enabled={self._background_computation_enabled}")
-        if not self._background_computation_enabled:
-            logging.debug("Background computation disabled, using immediate computation")
-            return self._compute_histograms_immediate(histogram_params, weights)
+    def setup_playback(self, data_source):
+        """Point the playback at whatever the loaded data can be played back along.
 
-        if not hasattr(self.parent, 'data_source'):
-            logging.warning("No data source available, cannot compute histograms")
+        Called after every load. An image stack is played back along its frame
+        index and a burst table along its macro time; anything else leaves the
+        panel present but idle, with every numeric column offered in the combo
+        so the user can pick one.
+
+        Parameters
+        ----------
+        data_source : ndxplorer.core.data_source.DataSource
+            The freshly loaded table.
+        """
+        from ..core.playback import macro_time_column
+        from ..utils.axis_helpers import frame_column
+
+        if self.playback_model is None:
+            return
+        if data_source is None or getattr(data_source, "empty", True):
+            self.playback.set_axis(None)
+            self._rebuild_playback_panel(immediate=True)
+            self.playback_form.setVisible(False)
             return
 
-        # Fast path: for datasets the synchronous boost/fast compute handles in
-        # well under a frame, skip the background worker entirely — its per-event
-        # thread setup/teardown costs far more latency than the compute itself and
-        # blocks the GUI thread on wait() anyway.
-        n_points = histogram_params.get('valid_idx_count')
-        if n_points is None:
+        names = list(data_source.parameter_names)
+        # "" first, so the combo can express "play nothing back".
+        self.playback_model.set_axis_options([""] + names)
+
+        axis = frame_column(names) or macro_time_column(names)
+        self._set_playback_axis(axis, data_source)
+        self.playback_form.setVisible(True)
+        self._rebuild_playback_panel(immediate=True)
+        logging.info("Playback axis after load: %r", axis)
+
+    def _set_playback_axis(self, name, data_source=None):
+        """Bind the controller to `name`, taking its bounds from the data."""
+        if data_source is None:
+            data_source = getattr(self.parent, "data_source", None)
+        values = None
+        if name and data_source is not None:
             try:
-                n_points = self.parent.data_source.size
-            except Exception:
-                n_points = 0
-        if n_points <= self.SYNC_HISTOGRAM_THRESHOLD:
-            logging.debug("Synchronous histogram path (%s pts <= %s)", n_points, self.SYNC_HISTOGRAM_THRESHOLD)
-            return self._compute_histograms_immediate(histogram_params, weights)
-
-        # Check if computation is already pending
-        if self._background_computation_pending:
-            logging.debug("Background computation already pending, skipping duplicate request")
-            return
-        
-        # Initialize worker if needed
-        self._initialize_histogram_worker()
-        
-        # Always do live computation (no caching)
-        # Schedule background computation
-        try:
-            logging.debug("Starting background histogram computation")
-            # NOTE: keep these at DEBUG — they run on every (re)compute and the
-            # data_source repr stringifies the entire burst table, which is a
-            # major slowdown at INFO level during interactive use.
-            if logging.getLogger().isEnabledFor(logging.DEBUG):
-                logging.debug(f"  data_source: {self.parent.data_source}")
-                logging.debug(f"  histogram_params keys: {list(histogram_params.keys())}")
-                logging.debug(f"  weights shape: {weights.shape if weights is not None else None}")
-                logging.debug(f"  BIN SETTINGS: x_bins_2d={histogram_params.get('x_bins_2d')}, y_bins_2d={histogram_params.get('y_bins_2d')}")
-                logging.debug(f"  BIN ARRAYS: x_bins_2d_arr length={len(histogram_params.get('x_bins_2d_arr', []))}, y_bins_2d_arr length={len(histogram_params.get('y_bins_2d_arr', []))}")
-            # Set flag to prevent immediate computation fallback
-            self._background_computation_pending = True
-            self._histogram_worker.compute_histograms(
-                self.parent.data_source,
-                histogram_params,
-                weights
-            )
-            logging.debug("Background computation scheduled successfully")
-        except Exception as e:
-            logging.error(f"Failed to schedule background histogram computation: {e}")
-            logging.info("Falling back to immediate computation")
-            self._background_computation_pending = False
-            self._compute_histograms_immediate(histogram_params, weights)
-    
-    def _compute_histograms_immediate(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
-        """Compute histograms immediately in the main thread."""
-        try:
-            # Import here to avoid circular imports
-            from ..utils.histogram_computation import compute_histograms_sync
-            
-            result = compute_histograms_sync(
-                self.parent.data_source,
-                histogram_params,
-                weights
-            )
-            self._on_histograms_computed(result)
-        except Exception as e:
-            logging.error(f"Immediate histogram computation failed: {e}")
-            self._on_histogram_computation_failed(str(e))
-    
-    def _on_histograms_computed(self, histogram_data: dict):
-        """Handle completion of histogram computation (background or immediate)."""
-        try:
-            logging.debug(f"[UI HANDLER] _on_histograms_computed called with {len(histogram_data)} items")
-            
-            # Clear background computation pending flag
-            self._background_computation_pending = False
-            
-            # Update the parent's histogram data
-            self.parent._histogram = histogram_data
-            
-            # Update the UI
-            if '_count' in histogram_data:
-                self.parent.lineEditCountCurrent.setText(str(histogram_data['_count']))
-            
-            # Clear progress indicator
-            if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
-                self.parent.statusBar().showMessage("Ready", 2000)
-
-            # Ensure plots repaint immediately (background path otherwise may only refresh on resize)
-            try:
-                from . import plot_update_helpers
-
-                if 'x' in histogram_data and hasattr(self.parent, 'g_xplot'):
-                    x_edges, x_counts = histogram_data['x']
-                    plot_update_helpers._autoscale_horizontal_hist(self.parent.g_xplot, x_edges, x_counts)
-                if 'y' in histogram_data and hasattr(self.parent, 'g_yplot'):
-                    y_edges, y_counts = histogram_data['y']
-                    plot_update_helpers._autoscale_vertical_hist(self.parent.g_yplot, y_edges, y_counts)
-                if 'z' in histogram_data and hasattr(self.parent, 'g_zplot'):
-                    z_edges, z_counts = histogram_data['z']
-                    plot_update_helpers._autoscale_horizontal_hist(self.parent.g_zplot, z_edges, z_counts)
-
-                # Refresh 2D image and replot all
-                if hasattr(self.parent, 'update_2d_plot'):
-                    self.parent.update_2d_plot()
-                self.parent.g_xplot.replot()
-                self.parent.g_yplot.replot()
-                if hasattr(self.parent, 'g_zplot'):
-                    self.parent.g_zplot.replot()
-                self.parent.g_2dplot.replot()
+                values = data_source.column_values(name)
             except Exception as exc:
-                logging.debug("Could not force replot after histogram computation: %s", exc)
+                logging.warning("Playback column %r unreadable: %s", name, exc)
+                name = None
+        self.playback.set_axis(name, values)
 
-            if hasattr(self.parent, 'on_auto_contrast'):
-                self.parent.on_auto_contrast()
-            
-            # No frame caching - always compute live
-            
-            logging.debug(f"Updated histogram displays (computation time: {histogram_data.get('_computation_time', 'N/A'):.3f}s)")
-            
-        except Exception as e:
-            logging.error(f"Failed to update histogram displays: {e}")
-    
-    def _on_histogram_computation_failed(self, error_message: str):
-        """Handle failure of histogram computation."""
-        logging.error(f"Histogram computation failed: {error_message}")
-        # Clear progress indicator
-        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
-            self.parent.statusBar().clearMessage()
-    
-    def _on_computation_started(self):
-        """Handle start of background computation."""
-        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
-            self.parent.statusBar().showMessage("Computing histograms...")
-    
-    def _on_computation_progress(self, message: str):
-        """Handle progress update from background computation."""
-        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
-            self.parent.statusBar().showMessage(message)
-    
-    def _update_histogram_displays_from_data(self, histogram_data: dict):
-        """Update histogram plot widgets from computed data."""
+    def _on_playback_axis_changed(self, name):
+        """The user picked a different column in the panel."""
+        self._set_playback_axis(name)
+
+    def _on_playback_changed(self):
+        """Anything that changes what is on screen: redraw, then re-read the panel."""
+        if self.parent is not None:
+            self.parent.request_plot_update()
+        if self.playback_form is not None:
+            self.playback_form.sync_fields()
+        self._update_playback_tooltip()
+
+    def _update_playback_tooltip(self):
+        """The old always-on status line, folded into hover.
+
+        The slice on screen and how many points survive it used to be a
+        persistent info row under the transport -- always visible, rarely
+        needed. It now lives on the Step row: the slider, its value box and
+        the row itself all answer on hover.
+        """
+        model, form = self.playback_model, self.playback_form
+        if model is None or form is None:
+            return
         try:
-            # Update 2D histogram
-            if '2d' in histogram_data:
-                logging.debug("[UI] Updating 2D histogram display from background computation")
-                # The 2D histogram is already stored in parent._histogram by _on_histograms_computed
-                # Call update_2d_plot to properly render it
-                if hasattr(self.parent, 'update_2d_plot'):
-                    try:
-                        self.parent.update_2d_plot()
-                        logging.debug("[UI] Called update_2d_plot to render 2D histogram")
-                    except Exception as e:
-                        logging.debug(f"Could not update 2D plot: {e}")
-                
-                # Also replot the 2D plot to ensure it's displayed
-                if hasattr(self.parent, 'g_2dplot'):
-                    try:
-                        self.parent.g_2dplot.replot()
-                        logging.debug("[UI] Replotted 2D histogram")
-                    except Exception as e:
-                        logging.debug(f"Could not replot 2D histogram: {e}")
-            
-            # Update X histogram
-            if 'x' in histogram_data and hasattr(self.parent, 'g_xhist_m'):
-                x_bin_edges, x_counts = histogram_data['x']
-                self.parent.g_xhist_m.set_data(x_bin_edges, x_counts)
-                if hasattr(self.parent, 'g_xplot'):
-                    self.parent.g_xplot.replot()
-            
-            # Update Y histogram
-            if 'y' in histogram_data and hasattr(self.parent, 'g_yhist_m'):
-                y_bin_edges, y_counts = histogram_data['y']
-                # For Y marginal: counts on X-axis (horizontal), edges on Y-axis (vertical)
-                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges)
-                if hasattr(self.parent, 'g_yplot'):
-                    self.parent.g_yplot.replot()
-            
-            # Update Z histogram
-            if ('z' in histogram_data and hasattr(self.parent, 'g_zhist_m') and 
-                hasattr(self.parent, 'groupBox_3') and self.parent.groupBox_3.isChecked()):
-                z_bin_edges, z_counts = histogram_data['z']
-                self.parent.g_zhist_m.set_data(z_bin_edges, z_counts)
-                if hasattr(self.parent, 'g_zplot'):
-                    self.parent.g_zplot.replot()
-                
+            text = model.status_text()
+            for section, w in getattr(form, "_section_widgets", []):
+                if getattr(section, "attr", "") != "position":
+                    continue
+                w.setToolTip(text)
+                for part in (getattr(w, "slider", None), getattr(w, "editor", None)):
+                    if part is not None:
+                        part.setToolTip(text)
+                break
+        except Exception:  # pragma: no cover - defensive
+            logging.debug("could not update the playback tooltip", exc_info=True)
+
+    def _rebuild_playback_panel(self, immediate: bool = False):
+        """Re-read the view spec, because the step slider's range moved.
+
+        Deferred by default: the request arrives from inside the signal of a
+        widget that the rebuild destroys.
+        """
+        if self.playback_form is None:
+            return
+        if immediate:
+            self.playback_form.rebuild()
+        else:
+            QtCore.QTimer.singleShot(0, self.playback_form.rebuild)
+
+    def update_playback_settings(self, fps: int = None):
+        """Set the playback rate, in steps per second.
+
+        Parameters
+        ----------
+        fps : int, optional
+            New rate; ``None`` leaves it alone.
+        """
+        if fps is not None and self.playback_model is not None:
+            self.playback_model.fps = int(fps)
+            if self.playback_form is not None:
+                self.playback_form.sync_fields()
+        logging.info("Playback rate: %s fps", self.playback.fps)
+
+    def _add_playback_selection_if_needed(self):
+        """Add the slice on screen to the selection table.
+
+        A selection drawn while one slice is shown describes points in *that*
+        slice, so the gate has to say so as well -- otherwise it silently means
+        something wider as soon as the playback moves on. Reached from the
+        add-selection path only, never from a playback step.
+        """
+        playback = getattr(self, "playback", None)
+        if playback is None or not playback.gating:
+            return
+        try:
+            param_names = self.parent.data_source.parameter_names
+            if playback.axis_name not in param_names:
+                return
+            idx = param_names.index(playback.axis_name)
+            lower, upper = playback.bounds
+            for sel in self.get_selections():
+                if getattr(sel, "idx", None) == idx:
+                    if getattr(sel, "lower", None) == lower and getattr(sel, "upper", None) == upper:
+                        return
+            self.addSelection(idx, lower, upper, False, True, playback.axis_name)
+            logging.info("Added playback selection: %s in [%g, %g]",
+                         playback.axis_name, lower, upper)
         except Exception as e:
-            logging.error(f"Failed to update histogram displays: {e}")
+            logging.warning(f"Failed to add playback selection: {e}")
 
-    def clear_frame_histogram_cache(self):
-        """Clear the frame-specific histogram cache."""
-        if hasattr(self, '_frame_histogram_cache'):
-            self._frame_histogram_cache.clear()
-            logging.debug("Cleared frame histogram cache")
+    # The background histogram worker stood here: a QThread, a manager, four
+    # progress signals, and a 6,000,000-point threshold below which none of it
+    # ran. A full redraw is about twenty milliseconds, so nothing reached the
+    # threshold, and the two paths could return differently shaped results for
+    # the same data. ``plot_update_helpers.update_histograms`` is the one path.
 
-    def clear_histogram_cache(self):
-        """Clear the main histogram cache."""
-        if hasattr(self, '_histogram_cache') and self._histogram_cache is not None:
-            self._histogram_cache.clear()
-            logging.debug("Cleared main histogram cache")
+    # clear_histogram_cache and clear_frame_histogram_cache used to live here,
+    # and eight places called them in pairs. Neither cache was ever written to:
+    # they were constructed, cleared and reconfigured, and nothing ever put a
+    # histogram in either one. A fill costs a few milliseconds now, less than
+    # deciding whether a cached one is still valid -- and a stale histogram is
+    # the one bug that shows a wrong picture with every number under it
+    # agreeing, because they came from the same stale object.

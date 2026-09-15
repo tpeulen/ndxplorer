@@ -1,0 +1,72 @@
+{
+  "_comment": "The Playback panel of the ndX plot controls. Replaces the hand-written 'Image' group box, which was a frame selector bolted to image stacks; the same transport now plays any column back, which is what gives burst data a time axis. Rendered by chisurf's AutoForm as a foldable panel.",
+  "sections": [
+    {
+      "type": "panel",
+      "title": "Playback",
+      "collapsible": true,
+      "collapsed": true,
+      "n_col": 1,
+      "description": "Play the data back along one of its own columns: macro time for bursts, frame index for image stacks.",
+      "sections": [
+        {
+          "type": "choice",
+          "attr": "axis_name",
+          "label": "Axis",
+          "style": "combo",
+          "options_source": "axis_options",
+          "description": "Column the playback runs along. Picked from the data on load — the frame index of an image stack, otherwise the per-burst macro time — but any numeric column can be played back."
+        },
+        {
+          "type": "value",
+          "attr": "n_steps",
+          "label": "Steps",
+          "kind": "int",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "How many slices the range is cut into. The width of one slice is the range divided by this, so a longer measurement gets wider slices and the playback lasts the same time either way. An index column (frames) starts at one step per value."
+        },
+        {
+          "type": "value",
+          "attr": "position",
+          "label": "Step",
+          "kind": "int",
+          "style": "slider",
+          "minimum": 0,
+          "maximum": 99,
+          "description": "Which slice is on screen. Drag to scrub through the measurement. Hovering shows the slice and how many points survive it."
+        },
+        {
+          "type": "button_row",
+          "buttons": [
+            {"label": "◀◀", "action": "step_backward", "description": "One step back"},
+            {"label": "◀", "action": "play_backward", "description": "Play backward"},
+            {"label": "⏸", "action": "pause", "description": "Stop"},
+            {"label": "▶", "action": "play_forward", "description": "Play forward"},
+            {"label": "▶▶", "action": "step_forward", "description": "One step forward"}
+          ]
+        },
+        {
+          "type": "choice",
+          "attr": "mode",
+          "label": "Mode",
+          "style": "radio",
+          "options": ["window", "integrate", "stack"],
+          "labels": ["Window", "Integrate", "Stack"],
+          "description": "Window: one slice at a time — what the sample looked like then. Integrate: everything up to the current step, accumulating, so a population that only appears late is visible as it arrives. Stack: no gating, the whole measurement at once."
+        },
+        {
+          "type": "value",
+          "attr": "fps",
+          "label": "Speed",
+          "kind": "int",
+          "style": "slider",
+          "minimum": 1,
+          "maximum": 60,
+          "suffix": " fps",
+          "description": "Steps per second while playing. A redraw takes a few tens of milliseconds, so above roughly 30 the plot cannot keep up and steps are dropped rather than shown faster."
+        }
+      ]
+    }
+  ]
+}

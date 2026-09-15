@@ -205,8 +205,8 @@ class DataManager:
         Which points are excluded, over the **full, uncompressed** data.
 
         Every gating term is applied here and only here: Inf/NaN on the plotted
-        axes, drawn selections, the dynamic z-range, cluster isolation, and
-        single-frame mode. Consumers that need to map a result back onto original
+        axes, drawn selections, the dynamic z-range, cluster isolation, and the
+        playback slice. Consumers that need to map a result back onto original
         rows (the background histogram path builds ``valid_indices`` from this)
         depend on the length matching the raw data, so the mask is never
         computed over already-compressed values.
@@ -238,7 +238,7 @@ class DataManager:
         )
 
         if state.z_range is not None:
-            z_values = source.values[state.axis_indices[2]]
+            z_values = source.column_view(state.axis_indices[2])
             z_min, z_max = min(state.z_range), max(state.z_range)
             mask = mask | ~((z_values >= z_min) & (z_values <= z_max))
 
@@ -254,8 +254,8 @@ class DataManager:
                     "showing all points", state.cluster_label
                 )
 
-        if state.frame_mask is not None:
-            mask = mask | ~state.frame_mask
+        if state.slice_mask is not None:
+            mask = mask | ~state.slice_mask
 
         self.cache.set_cache_value('value_mask', mask)
         self.cache.set_cache_value('value_mask_version', data_version)
