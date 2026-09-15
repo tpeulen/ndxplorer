@@ -394,8 +394,8 @@ class AxisControlDialog(QtWidgets.QDialog):
             self.y_plot_right.setChecked(self.parent.g_yplot.axisEnabled("right"))
 
             # Z Plot
-            if hasattr(self.parent, 'groupBox_3'):
-                self.z_plot_enable.setChecked(self.parent.groupBox_3.isChecked())
+            if hasattr(self.parent, 'checkBoxEnableZ'):
+                self.z_plot_enable.setChecked(self.parent.checkBoxEnableZ.isChecked())
 
             if hasattr(self.parent, 'g_zplot'):
                 self.z_plot_bottom.setChecked(self.parent.g_zplot.axisEnabled("bottom"))
@@ -538,8 +538,8 @@ class AxisControlDialog(QtWidgets.QDialog):
             self.parent.g_yplot.enableAxis("left", self.y_plot_left.isChecked())
             self.parent.g_yplot.enableAxis("right", self.y_plot_right.isChecked())
 
-            if hasattr(self.parent, 'groupBox_3'):
-                self.parent.groupBox_3.setChecked(self.z_plot_enable.isChecked())
+            if hasattr(self.parent, 'checkBoxEnableZ'):
+                self.parent.checkBoxEnableZ.setChecked(self.z_plot_enable.isChecked())
 
             if hasattr(self.parent, 'g_zplot'):
                 self.parent.g_zplot.enableAxis("bottom", self.z_plot_bottom.isChecked())

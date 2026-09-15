@@ -69,37 +69,12 @@ def _set_axis_title(plot, axis: str, title: str) -> None:
             pass
 
 
-def arrange_docks_preserving_geometry(ndxplorer: "NDXplorer") -> None:
-    """Tabify the primary docks while ensuring the window size stays unchanged."""
-    try:
-        size_before = ndxplorer.size()
-    except Exception:  # pragma: no cover - defensive guard
-        logging.debug("arrange_docks_preserving_geometry: main window has no size yet")
-        size_before = None
+# ``arrange_docks_preserving_geometry`` stood here: it tabified three of the
+# five ``QDockWidget``s by hand and hid the other two, then asserted the
+# window had not resized. The panels live in a ChiSurf dock area now
+# (``utils/dock_conversion``), which tabs and hides them by construction, so
+# there is nothing left to arrange.
 
-    docks = [
-        getattr(ndxplorer, "dockWidget_PlotControl", None),
-        getattr(ndxplorer, "dockWidget_Parameters", None),
-        getattr(ndxplorer, "dockWidget_Overlays", None),
-    ]
-    docks = [dock for dock in docks if dock is not None]
-    if len(docks) < 2:
-        logging.debug("arrange_docks_preserving_geometry: not enough docks to tabify")
-        return
-
-    for i, dock in enumerate(docks[:-1]):
-        ndxplorer.tabifyDockWidget(dock, docks[i + 1])
-    docks[0].raise_()
-
-    equations_dock = getattr(ndxplorer, "dockWidget_Equations", None)
-    if equations_dock is not None:
-        equations_dock.setVisible(False)
-
-    if size_before is not None:
-        size_after = ndxplorer.size()
-        assert size_before == size_after, (
-            "Arranging docks altered the NDxplorer window size before initialization."
-        )
 
 def update_parameter_names(ndxplorer: "NDXplorer") -> None:
     """Update axis labels/titles per current parameter selection and settings."""

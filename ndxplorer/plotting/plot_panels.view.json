@@ -1,0 +1,49 @@
+{
+  "_comment": "The blocks of the ndX plot-control dock, below Playback. Each was a QGroupBox: a title, a frame, and no way to put it away. They are foldable AutoForm panels now, and their order and fold defaults are this file rather than the .ui. The controls inside are NOT redeclared -- they are the widgets `plot_control.ui` builds, which the axis/scale/histogram mixins reach by objectName and a dozen tests read as `control.comboBoxSelX`, `control.n_xhist_2d`, `control.xmin` -- so each panel adopts one through the `embed` section's `attr` option. Two of them were *checkable* group boxes whose check state gated real behaviour (the z plot, mask drawing); that state is now an explicit check box inside the panel, named `checkBoxEnableZ` / `checkBoxEnableDrawing`.",
+  "sections": [
+    {
+      "type": "panel",
+      "title": "Histogram",
+      "collapsible": true,
+      "collapsed": false,
+      "description": "Axes, bin counts, ranges and weighting for the marginal and 2-D histograms.",
+      "sections": [
+        {"type": "custom", "key": "embed",
+         "options": {"attr": "histogram_widget", "expanding": false}}
+      ]
+    },
+    {
+      "type": "panel",
+      "title": "z axis",
+      "collapsible": true,
+      "collapsed": true,
+      "description": "The third axis: its own marginal, and a range slider that gates the plot.",
+      "sections": [
+        {"type": "custom", "key": "embed",
+         "options": {"attr": "z_widget", "expanding": false}}
+      ]
+    },
+    {
+      "type": "panel",
+      "title": "Draw Mask",
+      "collapsible": true,
+      "collapsed": true,
+      "description": "Paint a region on the 2-D plot and apply it as a gate.",
+      "sections": [
+        {"type": "custom", "key": "embed",
+         "options": {"attr": "mask_panel_widget", "expanding": false}}
+      ]
+    },
+    {
+      "type": "panel",
+      "title": "Selection",
+      "collapsible": true,
+      "collapsed": false,
+      "description": "The gates in force. Edit a bound in place; the Delete key removes a row.",
+      "sections": [
+        {"type": "custom", "key": "embed",
+         "options": {"attr": "selection_widget", "expanding": true}}
+      ]
+    }
+  ]
+}

@@ -39,242 +39,12 @@
     <number>0</number>
    </property>
    <item>
-    <widget class="QGroupBox" name="groupBoxImage">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="title">
-      <string>Image</string>
-     </property>
-     <layout class="QVBoxLayout" name="verticalLayoutImage">
-      <property name="spacing">
-       <number>0</number>
-      </property>
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
-      <item>
-       <layout class="QGridLayout" name="gridLayoutImage">
-        <property name="spacing">
-         <number>0</number>
-        </property>
-        <item row="2" column="1">
-         <widget class="QCheckBox" name="checkBoxWeight">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>If checked histogram as are weighted by selected axis</string>
-          </property>
-          <property name="text">
-           <string>weight</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="3">
-         <widget class="QLabel" name="labelFrameInfo">
-          <property name="text">
-           <string/>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="2" colspan="4">
-         <widget class="QComboBox" name="comboBoxWeight">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="editable">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="0">
-         <widget class="QLabel" name="label_4">
-          <property name="text">
-           <string>Frame</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="0">
-         <widget class="QCheckBox" name="checkBoxStackFrames">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>Show all frames stacked together. Uncheck to display a single frame.</string>
-          </property>
-          <property name="text">
-           <string>Stack</string>
-          </property>
-          <property name="checked">
-           <bool>false</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="5">
-         <layout class="QHBoxLayout" name="horizontalLayout_6">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <item>
-           <widget class="QToolButton" name="toolButtonStepBackward">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="toolTip">
-             <string>Step one frame backward</string>
-            </property>
-            <property name="text">
-             <string>◀◀</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QToolButton" name="toolButtonPlayBackward">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="toolTip">
-             <string>Play backward through frames</string>
-            </property>
-            <property name="text">
-             <string>◀</string>
-            </property>
-            <property name="checkable">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QToolButton" name="toolButtonPause">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="toolTip">
-             <string>Pause playback</string>
-            </property>
-            <property name="text">
-             <string>⏸</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QToolButton" name="toolButtonPlayForward">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="toolTip">
-             <string>Play forward through frames</string>
-            </property>
-            <property name="text">
-             <string>▶</string>
-            </property>
-            <property name="checkable">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QToolButton" name="toolButtonStepForward">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="toolTip">
-             <string>Step one frame forward</string>
-            </property>
-            <property name="text">
-             <string>▶▶</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item row="1" column="2">
-         <widget class="QLabel" name="label_frame_nbr">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="text">
-           <string>/XX</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="1">
-         <widget class="QSpinBox" name="spinBoxFrameNumber">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>Select current frame number</string>
-          </property>
-          <property name="minimum">
-           <number>0</number>
-          </property>
-          <property name="maximum">
-           <number>0</number>
-          </property>
-          <property name="value">
-           <number>0</number>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QGroupBox" name="groupBox_2">
+    <widget class="QWidget" name="widgetHistogram" native="true">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
-     </property>
-     <property name="title">
-      <string>Histogram</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_2">
       <property name="spacing">
@@ -297,6 +67,38 @@
         <property name="spacing">
          <number>0</number>
         </property>
+        <item row="9" column="0">
+         <widget class="QCheckBox" name="checkBoxWeight">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>If checked histogram as are weighted by selected axis</string>
+          </property>
+          <property name="text">
+           <string>weight</string>
+          </property>
+         </widget>
+        </item>
+        <item row="9" column="2" colspan="8">
+         <widget class="QComboBox" name="comboBoxWeight">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Column each point is weighted by when the histograms are filled</string>
+          </property>
+          <property name="editable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
         <item row="3" column="4">
          <widget class="QSpinBox" name="spinBoxBin1DX">
           <property name="sizePolicy">
@@ -441,7 +243,7 @@
            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Update default axis range.&lt;/p&gt;&lt;p&gt;To save current default axis settings use the Settings-&amp;gt;Save Menu.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
-           <string>u</string>
+           <string>Set</string>
           </property>
          </widget>
         </item>
@@ -460,6 +262,9 @@
         </item>
         <item row="6" column="9">
          <widget class="QToolButton" name="toolButtonAutoX">
+          <property name="toolTip">
+           <string>Auto-range the x axis to the data</string>
+          </property>
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -467,7 +272,7 @@
            </sizepolicy>
           </property>
           <property name="text">
-           <string>r</string>
+           <string>Auto</string>
           </property>
          </widget>
         </item>
@@ -480,6 +285,9 @@
         </item>
         <item row="8" column="9">
          <widget class="QToolButton" name="toolButtonAutoY">
+          <property name="toolTip">
+           <string>Auto-range the y axis to the data</string>
+          </property>
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -487,7 +295,7 @@
            </sizepolicy>
           </property>
           <property name="text">
-           <string>r</string>
+           <string>Auto</string>
           </property>
          </widget>
         </item>
@@ -506,7 +314,7 @@
            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Update default axis range.&lt;/p&gt;&lt;p&gt;To save current default axis settings use the Settings-&amp;gt;Save Menu.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
-           <string>u</string>
+           <string>Set</string>
           </property>
          </widget>
         </item>
@@ -735,23 +543,24 @@
     </widget>
    </item>
    <item>
-    <widget class="QGroupBox" name="groupBox_3">
+    <widget class="QWidget" name="widgetZ" native="true">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
      </property>
-     <property name="title">
-      <string>z</string>
-     </property>
-     <property name="checkable">
-      <bool>true</bool>
-     </property>
-     <property name="checked">
-      <bool>false</bool>
-     </property>
      <layout class="QVBoxLayout" name="verticalLayout_5">
+      <item>
+       <widget class="QCheckBox" name="checkBoxEnableZ">
+        <property name="toolTip">
+         <string>Gate the plot on the z-range slider</string>
+        </property>
+        <property name="text">
+         <string>dynamic z-selection</string>
+        </property>
+       </widget>
+      </item>
       <property name="spacing">
        <number>0</number>
       </property>
@@ -796,7 +605,7 @@
            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Update default axis range.&lt;/p&gt;&lt;p&gt;To save current default axis settings use the Settings-&amp;gt;Save Menu.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
-           <string>u</string>
+           <string>Set</string>
           </property>
          </widget>
         </item>
@@ -983,6 +792,9 @@
         </item>
         <item row="2" column="9">
          <widget class="QToolButton" name="toolButtonAutoZ">
+          <property name="toolTip">
+           <string>Auto-range the z axis to the data</string>
+          </property>
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -990,7 +802,7 @@
            </sizepolicy>
           </property>
           <property name="text">
-           <string>r</string>
+           <string>Auto</string>
           </property>
          </widget>
         </item>
@@ -1027,26 +839,24 @@
     </widget>
    </item>
    <item>
-    <widget class="QGroupBox" name="groupBoxMaskDrawing">
+    <widget class="QWidget" name="widgetMaskDrawing" native="true">
      <property name="sizePolicy">
-      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+      <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
      </property>
-     <property name="toolTip">
-      <string>Enable/disable drawing on 2D plot</string>
-     </property>
-     <property name="title">
-      <string>Draw Mask</string>
-     </property>
-     <property name="checkable">
-      <bool>true</bool>
-     </property>
-     <property name="checked">
-      <bool>false</bool>
-     </property>
      <layout class="QVBoxLayout" name="verticalLayoutMask">
+      <item>
+       <widget class="QCheckBox" name="checkBoxEnableDrawing">
+        <property name="toolTip">
+         <string>Enable/disable drawing on 2D plot</string>
+        </property>
+        <property name="text">
+         <string>Enable drawing</string>
+        </property>
+       </widget>
+      </item>
       <property name="spacing">
        <number>0</number>
       </property>
@@ -1206,27 +1016,12 @@
     </widget>
    </item>
    <item>
-    <widget class="QGroupBox" name="groupBox">
+    <widget class="QWidget" name="widgetSelection" native="true">
      <property name="sizePolicy">
-      <sizepolicy hsizetype="Expanding" vsizetype="MinimumExpanding">
+      <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
-     </property>
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>0</height>
-      </size>
-     </property>
-     <property name="maximumSize">
-      <size>
-       <width>16777215</width>
-       <height>16777215</height>
-      </size>
-     </property>
-     <property name="title">
-      <string>Selection (Edit values; Delete key removes item)</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
       <property name="spacing">
