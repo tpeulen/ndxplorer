@@ -69,3 +69,52 @@ def run_task_inline(task: DataLoadTask) -> None:
         return
 
     task.on_success(data_source)
+
+
+def _in_gui_thread() -> bool:
+    """Whether this is the thread a Qt application runs its event loop on."""
+    app = QtCore.QCoreApplication.instance()
+    if app is None:
+        return False
+    try:
+        return app.thread() == QtCore.QThread.currentThread()
+    except Exception:
+        return False
+
+
+#: Live (thread, worker) pairs. A QThread that goes out of scope while running
+#: takes the worker with it, so the loader holds each one until it finishes.
+_RUNNING: list = []
+
+
+def run_task(task: DataLoadTask) -> None:
+    """Run *task* off the UI thread, or inline when there is no UI.
+
+    This is the only place that needs to know whether Qt is running: readers
+    call it and stay free of Qt. The worker is a ``QObject``, so it is moved
+    onto a real ``QThread`` -- callers used to call ``start()`` on the worker
+    itself, which a QObject does not have.
+    """
+    if not _in_gui_thread():
+        run_task_inline(task)
+        return
+
+    thread = QtCore.QThread()
+    worker = DataLoadWorker(task)
+    worker.moveToThread(thread)
+    entry = (thread, worker)
+    _RUNNING.append(entry)
+
+    def _done() -> None:
+        thread.quit()
+        thread.wait()
+        if entry in _RUNNING:
+            _RUNNING.remove(entry)
+
+    thread.started.connect(worker.run)
+    worker.finished.connect(lambda result: task.on_success(result.data_source))
+    worker.finished.connect(lambda _result: _done())
+    if task.on_error is not None:
+        worker.error.connect(task.on_error)
+    worker.error.connect(lambda _message: _done())
+    thread.start()

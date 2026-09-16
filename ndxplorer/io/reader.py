@@ -25,21 +25,15 @@ from . import tables
 
 import tttrlib
 
-try:
-    from qtpy.QtWidgets import QApplication, QMessageBox
-    from qtpy.QtCore import QCoreApplication, QThread
-    from ..ui.progress_window import ProgressWindow
-    _HAS_QT = True
-except Exception:
-    _HAS_QT = False
-    QApplication = None
-    QMessageBox = None
-    QCoreApplication = None
-    QThread = None
-    ProgressWindow = None
+# No Qt here. Reading is library work: this module used to raise modal
+# message boxes, build its own QApplication and pump the event loop from
+# inside a read, which wedges any headless run the moment one of those
+# dialogs appears and has nowhere to be clicked. Problems are logged, and
+# the GUI reports progress through ``start_read_burst_analysis_async``,
+# which already hands it ``on_success`` / ``on_error``.
 
 # Import async loading components
-from .async_loader import DataLoadTask, DataLoadWorker, DataLoadResult, run_task_inline
+from .async_loader import DataLoadTask, DataLoadResult, run_task
 from .file_metadata_cache import get_metadata_cache
 
 
@@ -90,26 +84,6 @@ def _discover_burst_extra_endings(base_path: pathlib.Path) -> List[str]:
     return endings
 
 # ----------------------------- utils -----------------------------------------
-
-def _in_gui_thread() -> bool:
-    """Return True if we're running in the main GUI thread."""
-    if not _HAS_QT or QApplication is None:
-        return False
-    app = QApplication.instance()
-    if app is None:
-        return False
-    try:
-        return app.thread() == QThread.currentThread()
-    except Exception:
-        return False
-
-
-def _safe_warning(title: str, message: str) -> None:
-    """Show a QMessageBox when in GUI thread, otherwise fall back to logging."""
-    if _HAS_QT and QApplication is not None and _in_gui_thread():
-        QMessageBox.warning(None, title, message)
-    else:
-        logging.warning("%s: %s", title, message)
 
 def _zip_contains_any(zip_path: str, exts: tuple[str, ...]) -> bool:
     try:
@@ -194,10 +168,6 @@ def read_burst_analysis(
     - Auto-detects delimiters for .bur and extras (no hardcoded tab).
     - Concatenates macro time across files → seconds; column renamed to "Mean Macro Time (s)".
     """
-    # ensure a QApplication (skip when headless)
-    if QApplication is not None:
-        app = QApplication.instance() or QApplication([])
-
     base_path = pathlib.Path(base_path)
 
     # A measurement container holds the bursts *and* the photons they were found
@@ -333,13 +303,7 @@ def start_read_burst_analysis_async(
         on_error=on_error,
     )
     
-    if _in_gui_thread():
-        worker = DataLoadWorker(task)
-        worker.finished.connect(lambda result: on_success(result.data_source))
-        worker.error.connect(on_error)
-        worker.start()
-    else:
-        run_task_inline(task)
+    run_task(task)
 
 
 def _process_burst_analysis_dir(
@@ -379,16 +343,6 @@ def _process_burst_analysis_dir(
     n_files = len(bur_files)
     logging.info("Processing %d .bur files from %s", n_files, base_path)
 
-    progress = None
-    if _in_gui_thread():
-        progress = ProgressWindow(
-            title="File Processing",
-            message=f"Processing {n_files} burst files...",
-            max_value=n_files,
-            cancelable=True,
-        )
-        progress.show()
-
     pieces: List["tttrlib.DataStore"] = []
     macro_time_offset_ms = 0.0
     macro_col_ms = "Mean Macro Time (ms)"
@@ -399,12 +353,6 @@ def _process_burst_analysis_dir(
     extra_format_cache: Dict[str, Dict] = {}  # ending -> layout
 
     for i, bur in enumerate(bur_files, start=1):
-        # Check for cancellation
-        if progress is not None and progress.was_cancelled():
-            logging.info("Data loading cancelled by user")
-            if progress is not None:
-                progress.close()
-            return DataSource()  # Return empty data source
         # Detect format from first file, reuse for rest
         if bur_format_cache is None:
             bur_format_cache = _detect_format(bur)
@@ -472,14 +420,6 @@ def _process_burst_analysis_dir(
             macro_time_offset_ms += 0.0 if last_ms is None else last_ms
 
         pieces.append(combined)
-
-        if progress is not None:
-            progress.set_value(i)
-            QCoreApplication.processEvents()
-
-    if progress is not None:
-        progress.set_value(n_files)
-        progress.close()
 
     t1 = _time.perf_counter()
     logging.info("Read %d files in %.2fs, concatenating...", n_files, t1 - t0)
@@ -892,17 +832,17 @@ def read_mfd_hdf5(filenames: List[str], merge_mode: str = "columns") -> DataSour
         if merge_mode == "rows":
             common = sorted(set(own).intersection(other))
             if not common:
-                _safe_warning("No Common Columns",
-                              f"{fn} shares no columns with the first file. Skipping.")
+                logging.warning(
+                    "%s shares no columns with the first file. Skipping.", fn)
                 continue
             combined = tables.concat_rows([store_with_columns(combined, common),
                                            store_with_columns(store, common)],
                                           join="inner")
             continue
         if int(store.n_rows()) != row_count:
-            _safe_warning(
-                "Row Count Mismatch",
-                f"File {fn} has {store.n_rows()} rows, expected {row_count}. Skipping."
+            logging.warning(
+                "File %s has %d rows, expected %d. Skipping.",
+                fn, store.n_rows(), row_count,
             )
             continue
         combined = tables.concat_columns([combined, store])
@@ -962,7 +902,7 @@ def read_csv(filenames: List[str]) -> DataSource:
         try:
             stores.append(read_csv_file(fn))
         except Exception as e:
-            _safe_warning("Open CSV", f"Could not read file {fn}: {e}")
+            logging.warning("Could not read file %s: %s", fn, e)
 
     if not stores:
         return DataSource()
@@ -978,10 +918,9 @@ def read_csv(filenames: List[str]) -> DataSource:
         combined = tables.concat_rows([tables.rename_columns(s, base_cols) for s in stores])
     else:
         if len(set(nrows)) != 1:
-            _safe_warning(
-                "Auto-merge CSV",
-                "Files share neither column count nor row count. Merging column-wise "
-                "the files with the first file's row count."
+            logging.warning(
+                "Files share neither column count nor row count; merging "
+                "column-wise the files with the first file's row count."
             )
         combined = tables.concat_columns(stores)
 
@@ -1022,13 +961,7 @@ def start_read_csv_async(
         on_error=on_error,
     )
     
-    if _in_gui_thread():
-        worker = DataLoadWorker(task)
-        worker.finished.connect(lambda result: on_success(result.data_source))
-        worker.error.connect(on_error)
-        worker.start()
-    else:
-        run_task_inline(task)
+    run_task(task)
 
 
 # ----------------------------- helpers ---------------------------------------
