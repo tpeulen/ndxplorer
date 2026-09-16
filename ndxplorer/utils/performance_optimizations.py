@@ -301,8 +301,7 @@ def create_memory_efficient_mask(data_shape: Tuple[int, int]) -> np.ndarray:
     np.ndarray
         Boolean mask with optimized dtype
     """
-    # Use np.bool8 instead of np.bool for memory efficiency
-    return np.zeros(data_shape, dtype=np.bool8)
+    return np.zeros(data_shape, dtype=np.bool_)
 
 
 # ---------------------------
