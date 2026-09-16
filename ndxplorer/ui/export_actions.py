@@ -1,4 +1,10 @@
-"""Helpers for exporting/saving burst IDs and clustering data."""
+"""Save actions the user triggers: burst IDs and clustering data.
+
+These take the main window and raise file dialogs, so they are UI, not I/O --
+they lived under ``ndxplorer.io`` and were re-exported from it, which put a
+modal dialog one star-import away from any headless caller. The writing itself
+is :mod:`ndxplorer.io.writer`, which is what the CLI uses.
+"""
 
 from __future__ import annotations
 
