@@ -538,7 +538,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._plot_container = None
         
         # Track active background load threads to prevent premature deletion
-        self._active_load_threads = []
         
         if isinstance(data_source, DataSource):
             self.data_source = data_source
@@ -708,90 +707,17 @@ class NDXplorer(QtWidgets.QMainWindow):
                 f"Failed to load data: {msg}"
             )
         
-        # Create async task using the DataLoadTask framework
-        task = reader.DataLoadTask(
+        # The loader decides whether the read can go to a worker thread
+        # (``io.async_loader.run_task``); the callbacks arrive on this thread.
+        # This used to build its own QThread around ``reader.DataLoadWorker``,
+        # which the reader stopped re-exporting when it became Qt-free -- so
+        # every GUI load raised AttributeError before reading a byte.
+        reader.run_task(reader.DataLoadTask(
             description=description,
             load_callable=load_callable,
             on_success=on_success,
             on_error=on_error,
-        )
-        
-        # Since we're in GUI thread, use DataLoadWorker with proper threading
-        worker = reader.DataLoadWorker(task)
-        thread = QtCore.QThread()
-        worker.moveToThread(thread)
-        
-        # Store references to prevent premature deletion
-        thread_ref = {'thread': thread, 'worker': worker, 'append': append, 'merge_mode': merge_mode}
-        self._active_load_threads.append(thread_ref)
-        
-        # Connect thread and worker signals
-        thread.started.connect(worker.run)
-        
-        def on_worker_finished(result):
-            """Handle worker completion in main thread."""
-            try:
-                logging.info("Async data load completed successfully")
-                on_success(result.data_source)
-            except Exception as e:
-                logging.error(f"Error in async load success callback: {e}")
-                on_error(str(e))
-        
-        def on_worker_error(error_msg):
-            """Handle worker error in main thread."""
-            logging.error(f"Async data load failed: {error_msg}")
-            on_error(error_msg)
-        
-        # Use lambda to emit signals that will be queued to main thread
-        worker.finished.connect(lambda result: QtCore.QMetaObject.invokeMethod(
-            self, "_handle_async_load_success", 
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(object, result),
-            QtCore.Q_ARG(object, thread_ref)
         ))
-        worker.error.connect(lambda msg: QtCore.QMetaObject.invokeMethod(
-            self, "_handle_async_load_error", 
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(str, msg)
-        ))
-        
-        def cleanup_thread():
-            """Remove from active threads and delete objects."""
-            if thread_ref in self._active_load_threads:
-                self._active_load_threads.remove(thread_ref)
-            thread.deleteLater()
-            worker.deleteLater()
-        
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(cleanup_thread)
-        
-        thread.start()
-
-    @QtCore.Slot(object, object)
-    def _handle_async_load_success(self, result, thread_ref):
-        """Handle successful async data load in main thread."""
-        try:
-            logging.info("Async data load completed successfully in main thread")
-            # The result is DataLoadResult, get the data_source
-            data_source = result.data_source
-            # Get append and merge_mode from thread_ref
-            append = thread_ref.get('append', False)
-            merge_mode = thread_ref.get('merge_mode', 'columns')
-            # Call _finalize_loaded_data with correct parameters
-            from ..io import file_operations
-            file_operations._finalize_loaded_data(self, data_source, append, merge_mode)
-        except Exception as e:
-            logging.error(f"Error handling async load success: {e}")
-
-    @QtCore.Slot(str)
-    def _handle_async_load_error(self, error_msg):
-        """Handle async data load error in main thread."""
-        logging.error(f"Async data load failed in main thread: {error_msg}")
-        QtWidgets.QMessageBox.critical(
-            self, "Data Load Error", 
-            f"Failed to load data: {error_msg}"
-        )
 
     def _deferred_init(self):
         """Deferred initialization of heavy plot widgets for faster window appearance."""
@@ -931,6 +857,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.on_axis_selection_changed)
         self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.on_axis_selection_changed)
         self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.on_axis_selection_changed)
+
+        # "Find informative projections…" under the axis pickers: rank the
+        # views instead of hunting for them (ndxplorer.ui.projection_rank).
+        try:
+            from ..ui.projection_rank import install_projection_ranking
+
+            install_projection_ranking(self)
+        except Exception:
+            logging.warning("Could not install projection ranking", exc_info=True)
 
         # Connections for spin boxes are already set up above
         

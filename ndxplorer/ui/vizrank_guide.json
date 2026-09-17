@@ -1,0 +1,26 @@
+{
+  "_comment": "Guided tour for the ndX ranking panel (emtk; the steps name the invisible Qt anchors ndxplorer.ui.vizrank_panel keeps over the emtk controls). Steps point at real controls and wait for the user to press them; read by chisurf.gui.widgets.tools.guided_tour.",
+  "steps": [
+    {
+      "title": "What this panel does",
+      "text": "Every pair of parameters is a possible plot. This panel <b>scores all of them</b> and lists them best first, so you look at the few that show something instead of paging through hundreds.<br/><br/>Four steps.",
+      "target": {}
+    },
+    {
+      "title": "Choose what \"informative\" means",
+      "text": "<b>Class separation</b> needs classes — a gate, clusters or the z parameter — and finds the views where they sit apart. <b>Population structure</b> needs nothing and finds views that split into more than one population. <b>Correlation</b> finds parameters that move together.",
+      "target": {"name": "vizrank_method"}
+    },
+    {
+      "title": "Run it",
+      "text": "The table fills while it computes, best rows at the top. <b>Pause</b> stops it and <b>Start</b> continues; closing the panel pauses too.",
+      "target": {"name": "vizrank_start"},
+      "await": {"hint": "Press <b>Start</b>."}
+    },
+    {
+      "title": "Click a row to see that plot",
+      "text": "Selecting a row sets the axes of the main plot. The line under the table says what the score means in numbers. Picking axes by hand in the plot selects the matching row here.",
+      "target": {"name": "vizrank_table"}
+    }
+  ]
+}

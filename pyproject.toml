@@ -57,6 +57,9 @@ dependencies = [
     # install time is the better half of the trade against a silent one at the
     # first drawn gate.
     "chisurf",
+    # emtk draws the ranking panel ("Find informative projections"): its layout
+    # is a view.json that emtk renders, hosted in a Qt window.
+    "emtk",
 ]
 
 [project.urls]
@@ -87,6 +90,6 @@ include = ["ndxplorer*"]
     "*.txt"
 ]
 "ndxplorer.plotting" = ["*.ui", "*.json"]
-"ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg"]
+"ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg", "*.md", "*.json"]
 "ndxplorer.settings" = ["*.json", "*.yaml"]
 "ndxplorer.settings.templates" = ["*"]

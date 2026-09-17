@@ -1,0 +1,41 @@
+{
+  "_comment": "The ndX ranking panel ('Find informative projections'), drawn by emtk's view_form over ndxplorer.ui.projection_rank.ProjectionRankModel. The table is a data_table section; its columns come from the model because the score's name and range depend on the method.",
+  "sections": [
+    {
+      "type": "panel",
+      "title": "Ranking",
+      "sections": [
+        {"type": "choice", "attr": "method", "label": "Score", "options_source": "method_options",
+         "call": "settings_changed",
+         "description": "What makes a view informative. Class separation: bursts of one class sit together (needs classes). Population structure: the cloud splits into more than one population. Correlation: the two parameters co-vary."},
+        {"type": "choice", "attr": "classes", "label": "Classes", "options_source": "class_options",
+         "call": "settings_changed", "hidden_when": {"attr": "method", "not_equals": "separation"},
+         "description": "The classes a view should separate: the gate in the Selection table, each gate as its own population, the clusters, or the z parameter. Parameters a gate is defined on are left out."},
+        {"type": "value", "attr": "sample_rows", "label": "Sample", "kind": "int",
+         "minimum": 200, "maximum": 200000, "call": "settings_changed",
+         "description": "Bursts drawn at random for scoring. The same sample serves every view, so views are compared on identical bursts."},
+        {"type": "button_row", "buttons": [
+          {"label": "Start", "action": "start", "description": "Start the ranking, continue it, or restart it with new settings."},
+          {"label": "Pause", "action": "pause", "description": "Stop scoring; Start continues from here."}
+        ]},
+        {"type": "info", "source": "status_text"},
+        {"type": "info", "source": "sample_text"}
+      ]
+    },
+    {
+      "type": "custom",
+      "key": "data_table",
+      "title": "Ranked views - click one to show it",
+      "options": {
+        "source": "ranked_rows",
+        "columns_source": "ranked_columns",
+        "selected_call": "apply_row",
+        "tooltip_key": "note",
+        "row_key": "key",
+        "filter": true,
+        "expand": true,
+        "height": 320
+      }
+    }
+  ]
+}
