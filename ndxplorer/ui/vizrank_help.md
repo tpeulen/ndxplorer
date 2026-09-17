@@ -1,7 +1,9 @@
 # Find informative projections
 
 A burst table with forty parameters holds 780 two-parameter plots. This panel
-scores every one of them, in the background, and lists them best first. **Click
+(**View ▸ Find informative projections…**, directly below *UMAP*; the
+*(z axis)* entry below it ranks the third axis) scores every one of them, in the
+background, and lists them best first. **Click
 a row and ndX shows that plot.** Choosing axes by hand in the plot selects the
 matching row, so you can see where your own choice ranks.
 
@@ -56,7 +58,7 @@ a few thousand.
 
 Changing a setting pauses the ranking, and the next **Start** ranks again with
 the new settings. Changing the table, the gates or an axis range invalidates the
-rows; pressing the button under the axis pickers again starts a fresh ranking.
+rows; choosing **View ▸ Find informative projections…** again starts a fresh ranking.
 
 ## Further reading
 

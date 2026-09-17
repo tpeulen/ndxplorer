@@ -1,8 +1,9 @@
 """*Find informative projections…*: ranked x/y pairs and z parameters for ndX.
 
-ndX asks the user to pick two axes out of forty-odd burst parameters. This puts
-a button under the axis pickers that ranks every pair instead, and one in the z
-panel that ranks the third parameter; clicking a row sets the axes. What
+ndX asks the user to pick two axes out of forty-odd burst parameters. Two View
+menu entries, directly below *UMAP*, rank every pair instead (*Find informative
+projections…*) or every third parameter (*… (z axis)…*); clicking a row sets the
+axes. What
 "informative" means is chosen in the panel (:data:`~ndxplorer.analysis.projection_scores.METHODS`):
 
 * **Class separation** — how well a view separates classes ndX already has:
@@ -26,7 +27,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-from qtpy import QtWidgets
 
 from ..analysis.projection_scores import (
     DEFAULT_MAX_ROWS,
@@ -309,7 +309,7 @@ class ProjectionRankController:
 
     Orange keeps this in a widget mixin (``VizRankMixin``); ndX's window is
     built from a ``.ui`` file and a dozen mixins already, so the same duties —
-    the button, one panel per data, apply on select, select on manual change —
+    the menu entries, one panel per data, apply on select, select on manual change —
     live in a plain object instead.
     """
 
@@ -317,83 +317,30 @@ class ProjectionRankController:
         self.window = window
         #: The panel windows, by ``pairs``; each carries its ``model``.
         self.dialogs: Dict[bool, Any] = {}
-        self.buttons: Dict[bool, QtWidgets.QAbstractButton] = {}
         self._applying = False
 
-    # ---- buttons ---------------------------------------------------------------
+    # ---- menu entries --------------------------------------------------------------
+
+    #: The View-menu actions (declared in ``plotting/plot_main.ui`` directly below
+    #: *UMAP*), by ``pairs``. Their enabled state is the window's: like *UMAP*,
+    #: they are disabled while no table is loaded (``update_ui_enabled_state``).
+    ACTIONS = {True: "actionFindProjections", False: "actionFindZParameters"}
 
     def install(self) -> None:
-        """Put the buttons beside the axis pickers and connect the combos."""
+        """Connect the View-menu entries and follow hand-picked axes."""
+        for pairs, name in self.ACTIONS.items():
+            action = getattr(self.window, name, None)
+            if action is None:
+                logger.debug("projection ranking: the window has no %s", name)
+                continue
+            action.triggered.connect(lambda _checked=False, p=pairs: self.open(p))
         control = self.window.plot_control
-        pair_button = QtWidgets.QPushButton("🔎 Find informative projections…")
-        pair_button.setObjectName("buttonFindProjections")
-        pair_button.setToolTip(
-            "Rank every x/y pair by how much it shows — class separation, population "
-            "structure or correlation — and set the axes to the one you click."
-        )
-        pair_button.clicked.connect(lambda: self.open(True))
-        self._place_below(control.comboBoxSelY, pair_button)
-        self.buttons[True] = pair_button
-
-        z_button = QtWidgets.QPushButton("🔎 Find informative z parameters…")
-        z_button.setObjectName("buttonFindZParameters")
-        z_button.setToolTip(
-            "Rank every parameter as the third axis — by how well it alone separates "
-            "the classes, or whether it splits into populations — and set z to the one "
-            "you click."
-        )
-        z_button.clicked.connect(lambda: self.open(False))
-        self._place_below(control.comboBoxSelZ, z_button, span_from_zero=True)
-        self.buttons[False] = z_button
-
         for combo in (control.comboBoxSelX, control.comboBoxSelY, control.comboBoxSelZ):
             combo.currentIndexChanged.connect(self._on_axis_changed)
-            model = combo.model()
-            model.modelReset.connect(self.refresh_enabled)
-            model.rowsInserted.connect(self.refresh_enabled)
-            model.rowsRemoved.connect(self.refresh_enabled)
-        self.refresh_enabled()
 
-    @staticmethod
-    def _place_below(anchor: QtWidgets.QWidget, button: QtWidgets.QWidget,
-                     span_from_zero: bool = False) -> None:
-        """Add *button* on a new row under *anchor* in the grid that holds it."""
-        for layout in anchor.parentWidget().findChildren(QtWidgets.QGridLayout):
-            index = layout.indexOf(anchor)
-            if index < 0:
-                continue
-            row, column, _, _ = layout.getItemPosition(index)
-            column = 0 if span_from_zero else column
-            # Directly under the picker when that row is free (the histogram
-            # grid leaves one between the y picker and the x range), else at
-            # the bottom of the grid.
-            target = row + 1
-            if target >= layout.rowCount() or any(
-                layout.itemAtPosition(target, c) is not None for c in range(layout.columnCount())
-            ):
-                target = layout.rowCount()
-            layout.addWidget(button, target, column, 1, layout.columnCount() - column)
-            return
-        logger.debug("projection ranking: no grid holds %s", anchor.objectName())
-
-    def refresh_enabled(self, *_args) -> None:
-        """Enable a button only when there is something to rank; say why not."""
-        source = getattr(self.window, "data_source", None)
-        n = 0
-        if source is not None and not source.empty:
-            n = sum(1 for i in range(source.n_parameters) if not source.is_text_column(i))
-        for pairs, button in self.buttons.items():
-            needed = 2 if pairs else 1
-            enabled = n >= needed
-            button.setEnabled(enabled)
-            if not enabled:
-                reason = "Load a table first." if n == 0 else "Needs at least two numeric parameters."
-                button.setToolTip(reason)
-            else:
-                button.setToolTip(
-                    "Rank every x/y pair and set the axes to the one you click."
-                    if pairs else "Rank every parameter as z and set z to the one you click."
-                )
+    def action(self, pairs: bool = True):
+        """The View-menu action that opens the panel for *pairs*."""
+        return getattr(self.window, self.ACTIONS[pairs], None)
 
     # ---- panels ----------------------------------------------------------------
 
@@ -419,7 +366,7 @@ class ProjectionRankController:
         return model
 
     def open(self, pairs: bool = True) -> Optional[ProjectionRankModel]:
-        """Show the panel and start (or resume) its ranking, as Orange's button does."""
+        """Show the panel and start (or resume) its ranking, as Orange's VizRank button does."""
         model = self.model(pairs)
         if model is None:
             return None
@@ -494,7 +441,7 @@ class ProjectionRankController:
 
 
 def install_projection_ranking(window) -> ProjectionRankController:
-    """Give *window* its ranking buttons; returns the controller (``window.projection_rank``)."""
+    """Connect *window*'s View-menu ranking entries; returns the controller (``window.projection_rank``)."""
     controller = ProjectionRankController(window)
     controller.install()
     window.projection_rank = controller

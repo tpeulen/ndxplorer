@@ -239,13 +239,40 @@ def wait_done(qapp, model, timeout=60):
     assert model.run_state == RunState.Done, model.status_text()
 
 
-def test_the_buttons_sit_under_the_axis_pickers(window):
+def test_the_entries_sit_in_the_view_menu_right_below_umap(window):
+    """Where the user looks for a view tool, and nothing left under the axis pickers."""
+    names = [a.objectName() for a in window.menuView.actions()]
+    at = names.index("actionUMAP")
+    assert names[at + 1:at + 3] == ["actionFindProjections", "actionFindZParameters"]
+    assert window.actionFindProjections.isEnabled() and window.actionFindZParameters.isEnabled()
+    assert not window.plot_control.findChildren(QtWidgets.QPushButton, "buttonFindProjections")
+    assert not window.plot_control.findChildren(QtWidgets.QPushButton, "buttonFindZParameters")
+
+
+def test_the_entries_are_disabled_without_data_like_umap(qapp, monkeypatch):
+    from ndxplorer.core.data_source import DataSource
+    from ndxplorer.core.plot_main import NDXplorer
+
+    empty = NDXplorer()
+    try:
+        # A new window holds a placeholder table and the data manager keeps it
+        # when handed an empty one, so "no data" is what the window reports.
+        monkeypatch.setattr(NDXplorer, "data_source", property(lambda self: DataSource()))
+        empty.update_ui_enabled_state()
+        assert not empty.actionUMAP.isEnabled()
+        assert not empty.actionFindProjections.isEnabled()
+        assert not empty.actionFindZParameters.isEnabled()
+    finally:
+        empty.close()
+
+
+def test_the_menu_entry_opens_the_panel(window, qapp):
+    window.update_ui_enabled_state()
+    window.actionFindProjections.trigger()
+    qapp.processEvents()
     controller = window.projection_rank
-    assert controller.buttons[True].isEnabled() and controller.buttons[False].isEnabled()
-    grid = next(g for g in window.plot_control.findChildren(QtWidgets.QGridLayout)
-                if g.indexOf(controller.buttons[True]) >= 0)
-    y_row = grid.getItemPosition(grid.indexOf(window.plot_control.comboBoxSelY))[0]
-    assert grid.getItemPosition(grid.indexOf(controller.buttons[True]))[0] == y_row + 1
+    assert True in controller.dialogs and controller.dialogs[True].isVisible()
+    controller.dialogs[True].model.pause_computation()
 
 
 def test_ranking_finds_the_planted_view_and_clicking_a_row_applies_it(window, qapp):

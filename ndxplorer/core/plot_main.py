@@ -834,6 +834,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionMask_toggle_changed.triggered.connect(self.onMaskChanged)
         # UMAP
         self.actionUMAP.triggered.connect(self.onShowUMAP)
+        # View > "Find informative projections…" (and its z-axis entry), right
+        # below UMAP: rank the views instead of hunting for them
+        # (ndxplorer.ui.projection_rank). Disabled without data, like UMAP.
+        try:
+            from ..ui.projection_rank import install_projection_ranking
+
+            install_projection_ranking(self)
+        except Exception:
+            logging.warning("Could not install projection ranking", exc_info=True)
         self.actionAxisControl.triggered.connect(self.onShowAxisControl)
 
         # toolButton_3 opens the table editor
@@ -857,15 +866,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.on_axis_selection_changed)
         self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.on_axis_selection_changed)
         self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.on_axis_selection_changed)
-
-        # "Find informative projections…" under the axis pickers: rank the
-        # views instead of hunting for them (ndxplorer.ui.projection_rank).
-        try:
-            from ..ui.projection_rank import install_projection_ranking
-
-            install_projection_ranking(self)
-        except Exception:
-            logging.warning("Could not install projection ranking", exc_info=True)
 
         # Connections for spin boxes are already set up above
         

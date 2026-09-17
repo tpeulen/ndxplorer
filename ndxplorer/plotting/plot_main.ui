@@ -570,6 +570,8 @@
     <addaction name="actionFit_Gaussians"/>
     <addaction name="action_dock_Equations_view"/>
     <addaction name="actionUMAP"/>
+    <addaction name="actionFindProjections"/>
+    <addaction name="actionFindZParameters"/>
     <addaction name="separator"/>
     <addaction name="actionAxisControl"/>
    </widget>
@@ -974,6 +976,22 @@
   <action name="actionUMAP">
    <property name="text">
     <string>UMAP</string>
+   </property>
+  </action>
+  <action name="actionFindProjections">
+   <property name="text">
+    <string>Find informative projections…</string>
+   </property>
+   <property name="toolTip">
+    <string>Rank every x/y pair by class separation, population structure or correlation, and set the axes to the one you click</string>
+   </property>
+  </action>
+  <action name="actionFindZParameters">
+   <property name="text">
+    <string>Find informative projections (z axis)…</string>
+   </property>
+   <property name="toolTip">
+    <string>Rank every parameter as the third axis, and set z to the one you click</string>
    </property>
   </action>
   <action name="actionAxisControl">
