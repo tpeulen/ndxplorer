@@ -48,7 +48,7 @@ LEFT_MIN = 405.0
 #: The Plot window's fixed parts, in logical pixels. The path row is one
 #: field tall (emtk's frame height, passed by the app; this is its fallback),
 #: and a small gap parts it from the plots.
-ROW_H = 19.0
+ROW_H = 17.0
 ROW_GAP = 2.0
 #: The display corner (and the y marginal under it): its widest, its narrowest,
 #: and its share of a Plot window between the two.
