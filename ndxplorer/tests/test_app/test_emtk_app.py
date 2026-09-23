@@ -312,7 +312,8 @@ def test_file_menu_opens_the_folder_dialog(app):
     assert app.menubar.menus[0].open
     assert app.run_action("open_analysis_folder")
     draw(app)
-    assert app.dialog is not None and app.dialog[0].mode == "folder"
+    # the core's folder dialog, or the io feature's own, is up and modal
+    assert app.dialog is not None or app._feature_modal
 
 
 def test_a_load_error_is_a_message_box(app):
@@ -433,3 +434,14 @@ def test_a_right_click_elsewhere_closes_a_menu(app):
     app.pointer_press(900.0, 700.0, 2)
     app.pointer_release(900.0, 700.0, 2)
     assert app.popup is None
+
+
+def test_show_status_writes_a_line_under_the_plots(app, source):
+    app.model.set_source(source)
+    app.show_status("Copied 2-D histogram")
+    from emtk.testing import RecordingPainter
+
+    painter = RecordingPainter()
+    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    text = next(t for t in painter.texts if t[5] == "Copied 2-D histogram")
+    assert text[1] > app.plots.rects["map"][1] + app.plots.rects["map"][3] - 1

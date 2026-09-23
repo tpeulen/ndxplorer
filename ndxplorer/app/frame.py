@@ -107,6 +107,9 @@ class NdxApp:
         self.frames = 0
         #: ``(title, text)`` of a message box on screen, or ``None``.
         self.message = None
+        #: One line of non-modal feedback under the plots (Qt's status bar);
+        #: set it with :meth:`show_status`.
+        self.status = ""
 
     # ------------------------------------------------------------ features
     def _feature_available(self, action: str):
@@ -216,6 +219,7 @@ class NdxApp:
             "corner": (right_x + map_w, grid_top, corner_w, xm_h),
             "map": (right_x, grid_top + xm_h, map_w, grid_h - xm_h),
             "ymarginal": (right_x + map_w, grid_top + xm_h, corner_w, grid_h - xm_h),
+            "status": (right_x, grid_top + grid_h, right_w, y + h - grid_top - grid_h),
         }
 
     # ------------------------------------------------------------- drawing
@@ -250,6 +254,13 @@ class NdxApp:
             elif self.dialog is not None:
                 self._draw_dialog(x, y, w, h)
         self.plots.draw_overlays(painter)
+        if self.status:
+            from emtk import style
+            from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
+
+            bx, by, bw, bh = boxes["status"]
+            painter.text(bx + 4.0, by, bw - 8.0, bh, ALIGN_LEFT | ALIGN_VCENTER,
+                         self.status, style.TEXT)
         self._spend_edges()
         self._menu_box = (x, y, w, MENU_H)
         self.menubar.set_viewport(x + w, y + h)
@@ -416,6 +427,14 @@ class NdxApp:
             self.run_action(action)
             return True
         return bool(result.consumed)
+
+    def show_status(self, text: str) -> None:
+        """Say *text* in the status line under the plots, until the next one.
+
+        Non-modal feedback ("Copied 2-D histogram"); a box the user must
+        dismiss is :attr:`message`.
+        """
+        self.status = str(text or "")
 
     def open_menu(self, entries, x: float, y: float, on_choose, title: str = "") -> None:
         """A context menu at ``(x, y)``: *entries* are emtk menu entries
