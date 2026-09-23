@@ -1665,9 +1665,9 @@ class OverlaysFeature(Feature):
             else:
                 panel.fit()
         elif action == "show_data":
-            rects = self.app.forms["plot_corner"].rects
-            if "show_data" in rects:
-                replay.click_rect(rects["show_data"])
+            rect = self.app.control_rect("show_data")
+            if rect is not None:
+                replay.click_rect(rect)
             else:
                 self.show_data()
         else:

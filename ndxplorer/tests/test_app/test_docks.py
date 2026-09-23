@@ -137,3 +137,65 @@ def test_without_a_store_nothing_is_read_or_written(home):
     replay.draw()
     assert "Parameters" not in json.loads((folder / "ndxplorer_layout.json").read_text())["windows"]
     assert [p.name for p in pathlib.Path(folder).glob("*layout*")] == ["ndxplorer_layout.json"]
+
+
+def _drag(app, start, end):
+    from emtk.testing import RecordingPainter
+
+    def frame():
+        app.draw(RecordingPainter(), 0.0, 0.0, *SIZE)
+
+    app.pointer_move(*start)
+    frame()
+    app.pointer_press(*start, 1)
+    frame()
+    app.pointer_move(*end, 1)
+    frame()
+    app.pointer_release(*end, 1)
+    frame()
+    frame()
+
+
+def test_the_bars_beside_the_map_resize_the_marginals_and_the_size_is_kept(home):
+    """Drag the bar under the x marginal, and the one left of the y marginal:
+    the marginals follow, and the sizes are kept with the window layout."""
+    from ndxplorer.app.docks import (XMARGINAL_H, XMARGINAL_KEY, YMARGINAL_KEY, YMARGINAL_W,
+                                     layout_store)
+
+    app = make(layout_store=layout_store())
+    draw(app)
+    boxes = app.plot_boxes
+    assert boxes["xmarginal"][3] == XMARGINAL_H and boxes["ymarginal"][2] == YMARGINAL_W
+    x, y, w, h = boxes["hsplit"]
+    _drag(app, (x + w / 3, y + h / 2), (x + w / 3, y + h / 2 + 40))
+    x, y, w, h = app.plot_boxes["vsplit"]
+    _drag(app, (x + w / 2, y + h / 2), (x + w / 2 - 30, y + h / 2))
+    boxes = app.plot_boxes
+    assert abs(boxes["xmarginal"][3] - (XMARGINAL_H + 40)) <= 2.0
+    assert abs(boxes["ymarginal"][2] - (YMARGINAL_W + 30)) <= 2.0
+    assert boxes["map"][1] >= boxes["xmarginal"][1] + boxes["xmarginal"][3]
+    again = make(layout_store=layout_store())
+    draw(again)
+    assert again.docks.extra(XMARGINAL_KEY) == round(boxes["xmarginal"][3], 1)
+    assert again.plot_boxes["ymarginal"][2] == boxes["ymarginal"][2]
+    assert again.run_action("reset_layout")
+    draw(again)
+    assert again.plot_boxes["xmarginal"][3] == XMARGINAL_H
+    assert again.docks.extra(YMARGINAL_KEY) is None
+
+
+def test_marginals_too_small_for_the_corner_send_its_controls_to_the_toolbar(home):
+    from ndxplorer.app.docks import XMARGINAL_KEY
+
+    app = make()
+    draw(app)
+    assert not app.corner_in_toolbar and "screenshot" in app.forms["plot_corner"].rects
+    app.docks.set_extra(XMARGINAL_KEY, 60.0)
+    draw(app, 3)
+    assert app.corner_in_toolbar
+    assert "screenshot" in app.forms["plot_header"].rects
+    assert "screenshot" not in app.forms["plot_corner"].rects
+    assert app.control_rect("mask_nan") == app.forms["plot_header"].rects["mask_nan"]
+    header = app.plot_boxes["header"]
+    for name, rect in app.forms["plot_header"].rects.items():
+        assert rect[1] + rect[3] <= header[1] + header[3] + 0.5, name

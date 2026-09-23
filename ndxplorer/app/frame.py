@@ -10,9 +10,10 @@ imports no toolkit: the same object runs in a native window
 
 The layout starts as the Qt window's: the menu bar; on the left the *Plot
 controls* dock (its panels a ``view.json`` drawn by :mod:`emtk.view_form`) with
-the features' tabs beside it; on the right the *Plot* dock -- the working-path
-row, the x marginal over the 2-D histogram, the y marginal beside it and the
-display controls in the corner; the status line along the bottom. Every dock
+the features' tabs beside it; on the right the *Plot* dock -- a toolbar (the
+working path, the colours, the point counts and the actions), the x marginal
+over the 2-D histogram and the y marginal beside it; the status line in the
+menu bar's row. Every dock
 is a sticky window (:mod:`.docks`, :mod:`emtk.docking`): the user can float
 it, snap it, drop it back into a region, close it and reopen it from View.
 
@@ -35,9 +36,36 @@ __all__ = ["NdxApp", "make_app", "load_spec"]
 
 VIEWS = pathlib.Path(__file__).with_name("views")
 
-#: Heights of the fixed parts, in logical pixels: the menu bar and the status line.
+#: Height of the menu bar, in logical pixels. The status line shares its row,
+#: right of the menus, so it costs the plots no height.
 MENU_H = 24.0
-STATUS_H = 22.0
+#: Space between the last menu title and the status text.
+STATUS_GAP = 24.0
+
+
+#: The narrowest corner that holds its controls (two buttons side by side),
+#: and how far they keep from its left edge.
+CORNER_MIN_W = 110.0
+CORNER_INSET = 4.0
+
+
+def _toolbar_with_corner(header: dict, corner: dict) -> dict:
+    """The toolbar spec with the corner's controls appended, each group
+    starting a piece of its own where the line may wrap."""
+    import copy
+
+    spec = copy.deepcopy(header)
+    row = spec["sections"][0]
+    extra = []
+    for section in copy.deepcopy(corner["sections"]):
+        items = section.get("sections") if section.get("type") == "row" else [section]
+        for i, item in enumerate(items):
+            if i == 0:
+                item["wrap_before"] = True
+            extra.append(item)
+    row["sections"] = list(row["sections"]) + extra
+    row["n_col"] = len(row["sections"])
+    return spec
 
 
 def load_spec(name: str) -> dict:
@@ -84,6 +112,10 @@ class NdxApp:
         self.storage: Dict[Any, Any] = {}
         self.specs = {name: load_spec(name) for name in ("plot_controls", "plot_header",
                                                        "plot_corner")}
+        #: The toolbar with the corner's controls at its end: drawn when the
+        #: marginals are too small to hold the corner.
+        self.specs["plot_toolbar_full"] = _toolbar_with_corner(self.specs["plot_header"],
+                                                               self.specs["plot_corner"])
         self.forms = {name: FormState() for name in self.specs}
         self.forms["plot_controls"].custom["z_plot"] = self._draw_z_plot
         self.plots = plots.PlotArea(self.model)
@@ -97,9 +129,15 @@ class NdxApp:
             self.panel.fields[name] = self._visibility_field(title)
         #: The Plot window's parts, as last drawn (:func:`.docks.plot_boxes`).
         self.plot_boxes: Dict[str, tuple] = {}
-        #: Height the display corner's controls took last frame.
-        self._corner_h = 0.0
-        self._corner_due = False
+        #: Height the toolbar took last frame, and ``(width, height)``: the
+        #: height the corner's controls took when last drawn at that width.
+        self._header_h = 0.0
+        self._corner_need = (0.0, 0.0)
+        #: Whether the corner's controls are on the toolbar (marginals too small).
+        self.corner_in_toolbar = False
+        #: Marginal sizes while a bar between a marginal and the map is dragged.
+        self._marginal_drag: Dict[str, float] = {}
+        self._layout_due = False
         from .features import load_features
 
         #: The feature modules (:mod:`ndxplorer.app.features`), created for this window.
@@ -122,8 +160,8 @@ class NdxApp:
         #: The ChiSurf RPC client (``--chisurf-rpc``), or ``None``: what "Send
         #: selection to" and the phasor features talk to.
         self.chisurf_rpc = None
-        #: One line of non-modal feedback under the plots (Qt's status bar);
-        #: set it with :meth:`show_status`.
+        #: One line of non-modal feedback (Qt's status bar), in the menu bar's
+        #: row; set it with :meth:`show_status`.
         self.status = ""
 
     # ------------------------------------------------------------ features
@@ -214,7 +252,7 @@ class NdxApp:
             modal = self.message is not None or getattr(self, "_feature_modal", False)
             if modal:
                 emtk.begin_disabled(True)
-            self.docks.draw((x, y + MENU_H, w, max(h - MENU_H - STATUS_H, 1.0)))
+            self.docks.draw((x, y + MENU_H, w, max(h - MENU_H, 1.0)))
             if modal:
                 emtk.end_disabled()
             emtk.end()
@@ -235,20 +273,36 @@ class NdxApp:
         # A host draws on demand, so without asking it the window would show
         # the old counts until the pointer next moved.
         self._frame_due = (bool(getattr(ctx, "frame_requested", False)) or self.model.stale
-                           or self._corner_due)
-        self._corner_due = False
+                           or self._layout_due)
+        self._layout_due = False
 
     def _draw_chrome(self, painter, x, y, w, h) -> None:
-        """The status line and the menu bar, drawn with the painter."""
-        if self.status:
-            from emtk import style
-            from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
-
-            painter.text(x + 4.0, y + h - STATUS_H, w - 8.0, STATUS_H,
-                         ALIGN_LEFT | ALIGN_VCENTER, self.status, style.TEXT)
+        """The menu bar, and the status line in its row right of the menus."""
         self._menu_box = (x, y, w, MENU_H)
         self.menubar.set_viewport(x + w, y + h)
         self.menubar.draw(painter, *self._menu_box)
+        if self.status:
+            self._draw_status(painter, x, y, w)
+
+    def _draw_status(self, painter, x, y, w) -> None:
+        """The status text, right-aligned in the menu bar's row; a text too
+        long for the room right of the menus shows its end after a "…"."""
+        from emtk import style
+        from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
+
+        menus_w = sum(self.menubar.title_width(painter, menu) for menu in self.menubar.menus)
+        left = x + menus_w + STATUS_GAP
+        room = x + w - 6.0 - left
+        if room < 20.0:
+            return
+        text = self.status
+        if painter.text_width(text) > room:
+            while text and painter.text_width("…" + text) > room:
+                text = text[1:]
+            text = "…" + text
+        tw = painter.text_width(text)
+        painter.text(x + w - 6.0 - tw, y, tw + 1.0, MENU_H, ALIGN_LEFT | ALIGN_VCENTER, text,
+                     style.TEXT)
 
     def _keep_menu(self) -> None:
         """Keep the context menu (:meth:`open_menu`) up; what it picks runs
@@ -280,28 +334,111 @@ class NdxApp:
                   titles=False)
 
     def _draw_plot(self, box) -> None:
-        """The Plot window: the path row, the display corner and the plots."""
+        """The Plot window: the toolbar, the corner between the marginals, the
+        plots and the bars that resize the marginals.
+
+        The corner holds the counts, the inf/NaN masks and the window's
+        actions. When the user drags the marginals too small for them, they
+        go to the end of the toolbar instead (:attr:`corner_in_toolbar`).
+        """
         import emtk
         from emtk.view_form import draw_form
 
-        from .docks import plot_boxes
+        from .docks import XMARGINAL_KEY, YMARGINAL_KEY, plot_boxes
 
-        row_h = emtk.get_frame_height()
-        boxes = self.plot_boxes = plot_boxes(box, self._corner_h, row_h)
-        for name, key in (("plot_header", "header"), ("plot_corner", "corner")):
-            emtk.begin_child(boxes[key])
-            draw_form(self.specs[name], self.panel, self.forms[name], titles=False)
+        docks = self.docks
+        sizes = {
+            "xmarginal_h": self._marginal_drag.get("xmarginal_h",
+                                                   docks.extra(XMARGINAL_KEY)),
+            "ymarginal_w": self._marginal_drag.get("ymarginal_w",
+                                                   docks.extra(YMARGINAL_KEY)),
+        }
+        row_h = max(emtk.get_frame_height(), self._header_h)
+        boxes = self.plot_boxes = plot_boxes(box, row_h, **sizes)
+        corner = boxes["corner"]
+        # The height the controls took at this width, when they were drawn at
+        # it; at another width they are tried again.
+        at_w, need_h = self._corner_need
+        in_toolbar = corner[2] < CORNER_MIN_W or (abs(at_w - corner[2]) < 1.0
+                                                   and corner[3] < need_h)
+        for form in (self.forms["plot_header"], self.forms["plot_corner"]):
+            form.rects.clear()
+        emtk.begin_child(boxes["header"])
+        draw_form(self.specs["plot_toolbar_full" if in_toolbar else "plot_header"], self.panel,
+                  self.forms["plot_header"], titles=False)
+        emtk.end_child()
+        if not in_toolbar:
+            # inset: the x marginal's last tick label reaches past its edge
+            emtk.begin_child((corner[0] + CORNER_INSET, corner[1],
+                              corner[2] - CORNER_INSET, corner[3]))
+            draw_form(self.specs["plot_corner"], self.panel, self.forms["plot_corner"],
+                      titles=False)
             emtk.end_child()
-        # The corner's controls wrap in a narrow window; the next frame gives
-        # them the height they took (plot_boxes), and one is asked for now.
-        rects = self.forms["plot_corner"].rects.values()
-        top = boxes["corner"][1]
-        need = max((r[1] + r[3] - top for r in rects), default=0.0) + 2.0
-        if abs(need - self._corner_h) > 0.5:
+            self._corner_need = (corner[2], self._form_height("plot_corner", corner[1]) + 2.0)
+        # The toolbar wraps in a narrow window, and the corner's controls may
+        # not fit the corner: the next frame gives them the room they took,
+        # and one is asked for now.
+        header_h = self._form_height("plot_header", boxes["header"][1])
+        moved = in_toolbar != self.corner_in_toolbar or (
+            not in_toolbar and self._corner_need[1] > corner[3] + 0.5)
+        self.corner_in_toolbar = in_toolbar
+        if abs(header_h - self._header_h) > 0.5 or moved:
+            again = plot_boxes(box, max(emtk.get_frame_height(), header_h), **sizes)
             # a frame is due only when the layout it gives differs
-            self._corner_due = plot_boxes(box, need, row_h) != boxes
-            self._corner_h = need
+            self._layout_due = again != boxes or moved
+            self._header_h = header_h
+        self._draw_marginal_bars(boxes)
         self.plots.draw(boxes)
+
+    def control_rect(self, name: str):
+        """Where the toolbar or corner control *name* was drawn last frame, or ``None``."""
+        for form in ("plot_corner", "plot_header"):
+            rect = self.forms[form].rects.get(name)
+            if rect is not None:
+                return rect
+        return None
+
+    def _form_height(self, name: str, top: float) -> float:
+        """How far below *top* the form *name* drew its controls last frame."""
+        rects = self.forms[name].rects.values()
+        return max((r[1] + r[3] - top for r in rects), default=0.0)
+
+    def _draw_marginal_bars(self, boxes: dict) -> None:
+        """The bars between the marginals and the map: drag one to resize its
+        marginal. The size is kept with the window layout when it is let go."""
+        import emtk
+
+        from .docks import SPLIT, XMARGINAL_KEY, YMARGINAL_KEY
+
+        io = emtk.get_io()
+        grid_top = boxes["xmarginal"][1]
+        right = boxes["ymarginal"][0] + boxes["ymarginal"][2]
+        draw = emtk.get_window_draw_list()
+        dragging = False
+        for key, size_key, bar in (("hsplit", "xmarginal_h", boxes["hsplit"]),
+                                   ("vsplit", "ymarginal_w", boxes["vsplit"])):
+            emtk.set_cursor_screen_pos((bar[0], bar[1]))
+            emtk.invisible_button(f"##ndx.{key}", (max(bar[2], 1.0), max(bar[3], 1.0)))
+            active = emtk.is_item_active()
+            if key == "hsplit":
+                emtk.set_item_tooltip("Drag to resize the x marginal.")
+            else:
+                emtk.set_item_tooltip("Drag to resize the y marginal.")
+            if active:
+                dragging = True
+                mx, my = io.mouse_pos
+                self._marginal_drag[size_key] = (my - grid_top - SPLIT / 2.0 if key == "hsplit"
+                                                 else right - mx - SPLIT / 2.0)
+            if active or emtk.is_item_hovered():
+                colour = emtk.get_color_u32(emtk.Col.SEPARATOR_ACTIVE if active
+                                            else emtk.Col.SEPARATOR_HOVERED)
+                draw.add_rect_filled((bar[0], bar[1]), (bar[0] + bar[2], bar[1] + bar[3]), colour)
+        if self._marginal_drag and not dragging:
+            # let go: keep the sizes the layout gave (clamped) with the layout
+            self.docks.set_extra(XMARGINAL_KEY, round(boxes["xmarginal"][3], 1))
+            self.docks.set_extra(YMARGINAL_KEY, round(boxes["ymarginal"][2], 1))
+            self._marginal_drag = {}
+            self._layout_due = True
 
     def _draw_z_plot(self, section, model, state, width: float) -> None:
         height = float((section.get("options") or {}).get("height", 90))
@@ -343,7 +480,9 @@ class NdxApp:
         return bool(result.consumed)
 
     def show_status(self, text: str) -> None:
-        """Say *text* in the status line under the plots, until the next one.
+        """Say *text* in the status line, until the next one.
+
+        The line shares the menu bar's row, right of the menus.
 
         Non-modal feedback ("Copied 2-D histogram"); a box the user must
         dismiss is :attr:`message`.

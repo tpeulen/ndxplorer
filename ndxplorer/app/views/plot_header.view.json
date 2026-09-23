@@ -1,9 +1,10 @@
 {
- "_comment": "The row above the plots in the emtk app: working path, Browse, colormap (plot_main.ui's first row).",
+ "_comment": "The toolbar over the plots in the emtk app: the working path and Browse, then the 2-D map's colours (colormap, log counts, colour limits, Contrast, Update) -- plot_main.ui's first row and the colour controls of its widget_6 corner. One line when the window is wide enough; a narrow one wraps it before the colours, each line starting at the left edge. The rest of widget_6 is in the corner between the marginals (plot_corner).",
  "sections": [
   {
    "type": "row",
-   "n_col": 3,
+   "n_col": 7,
+   "wrap_indent": false,
    "sections": [
     {
      "type": "value",
@@ -12,7 +13,7 @@
      "kind": "str",
      "placeholder": "Drop folder here.",
      "description": "The working folder: where files are opened from.",
-     "weight": 2,
+     "weight": 3,
      "min_chars": 12,
      "elide": "start"
     },
@@ -33,7 +34,50 @@
      "options_source": "colormap_options",
      "description": "Colormap of the 2-D histogram.",
      "weight": 1,
-     "min_chars": 8
+     "min_chars": 8,
+     "wrap_before": true
+    },
+    {
+     "type": "toggle",
+     "attr": "log_counts",
+     "label": "log #",
+     "description": "Colour the 2-D histogram by log10 of the counts."
+    },
+    {
+     "type": "value",
+     "attr": "vmin",
+     "kind": "float",
+     "style": "scientific",
+     "decimals": 2,
+     "description": "Lower colour limit of the 2-D histogram.",
+     "spin": true,
+     "min_chars": 7
+    },
+    {
+     "type": "value",
+     "attr": "vmax",
+     "kind": "float",
+     "style": "scientific",
+     "decimals": 2,
+     "description": "Upper colour limit of the 2-D histogram.",
+     "spin": true,
+     "min_chars": 7
+    },
+    {
+     "type": "button_row",
+     "weight": 0.5,
+     "buttons": [
+      {
+       "label": "Contrast",
+       "action": "auto_contrast",
+       "description": "Set the colour limits from the data."
+      },
+      {
+       "label": "Update",
+       "action": "update_plots",
+       "description": "Redraw the plots."
+      }
+     ]
     }
    ]
   }

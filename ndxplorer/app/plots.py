@@ -2,7 +2,7 @@
 
 Hand-written emtk, because a spec cannot say "a heatmap under a rubber band".
 Drawn with :mod:`emtk.implot` in the Qt window's arrangement: the x marginal
-over the map with its ticks and title on top, the y marginal to the right with
+over the map with its ticks on top (its title inside, top left), the y marginal to the right with
 its ticks and title on the right, and no axes on the map itself -- the
 marginals are its axes.
 
@@ -32,10 +32,23 @@ __all__ = ["PlotArea", "step_outline"]
 
 #: Pixels a drag must move before it is a rectangle rather than a click.
 DRAG_THRESHOLD = 3.0
-#: Height of the red axis title above the x marginal / width beside the y one.
+#: Height of the x marginal's title line (inside its plot) / width of the band
+#: beside the y marginal that holds its title.
 TITLE_BAND = 22.0
 #: The title of a marginal's counts axis.
 COUNTS_TITLE = "counts"
+
+
+#: Below this height the z marginal labels only zero and a round top count.
+SHORT_Z = 80.0
+
+
+def _round_down(value: float) -> float:
+    """*value* rounded down to one significant digit (``663`` -> ``600``)."""
+    if not value > 0 or not np.isfinite(value):
+        return 1.0
+    scale = 10.0 ** np.floor(np.log10(value))
+    return float(np.floor(value / scale) * scale)
 
 
 def step_outline(edges, counts) -> tuple:
@@ -213,10 +226,9 @@ class PlotArea:
     def _draw_xmarginal(self, box) -> None:
         from emtk import implot
 
-        x, y, w, h = box
-        if self._title_shown("xmarginal", "top"):
-            self._titles.append(("h", x, y, w, TITLE_BAND, self.model.x.name))
-        self._begin("##x-marginal", (x, y + TITLE_BAND, w, h - TITLE_BAND))
+        # No band for the title: the tick labels sit right under the toolbar,
+        # and the title is written inside the plot, at its top left.
+        self._begin("##x-marginal", box)
         self._setup_x("x", *self._decorations("xmarginal", True))
         hist = self.model.histograms
         counts = hist.x[1] if hist is not None else np.zeros(1)
@@ -231,7 +243,10 @@ class PlotArea:
                                                        "line_weight": 1.5})
             self._gate_lines("x", vertical=True)
             self._feature_items("xmarginal")
-        self.rects["xmarginal"] = self._plot_rect()
+        self.rects["xmarginal"] = rect = self._plot_rect()
+        if self._title_shown("xmarginal", "top"):
+            self._titles.append(("inset", rect[0] + 4.0, rect[1] + 1.0, rect[2] - 8.0,
+                                 TITLE_BAND - 4.0, self.model.x.name))
         implot.end_plot()
 
     def _draw_ymarginal(self, box) -> None:
@@ -447,6 +462,9 @@ class PlotArea:
                           COUNTS_TITLE if self._title_shown("zmarginal", "left") else None,
                           self._axis_flags(*self._decorations("zmarginal", False)))
         implot.setup_axis_limits(implot.AXIS_Y1, 0.0, top * 1.1, implot.COND_ALWAYS)
+        if height < SHORT_Z:
+            # A short plot has room for two count labels, not a crowd of them.
+            implot.setup_axis_ticks(implot.AXIS_Y1, [0.0, _round_down(top)])
         if model.index_of(model.z.name) >= 0:
             zlo, zhi = model.z_range
             implot.plot_shaded("##z-region", [zlo, zhi], [top * 1.1, top * 1.1],
@@ -469,7 +487,7 @@ class PlotArea:
     # --------------------------------------------------------- the titles
     def draw_overlays(self, painter) -> None:
         """The red axis titles, over the frame (the rotated one needs the painter)."""
-        from emtk.painter import ALIGN_HCENTER, ALIGN_VCENTER
+        from emtk.painter import ALIGN_HCENTER, ALIGN_LEFT, ALIGN_VCENTER
 
         display = getattr(self.model, "axis_display", None)
         colour = display.title_colour if display is not None else theme.text_colour()
@@ -478,6 +496,8 @@ class PlotArea:
                 continue
             if kind == "h":
                 painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, colour, True)
+            elif kind == "inset":
+                painter.text(x, y, w, h, ALIGN_LEFT | ALIGN_VCENTER, text, colour, True)
             else:
                 rotate = getattr(painter, "text_rotated", None)
                 if callable(rotate):

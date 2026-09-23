@@ -16,14 +16,16 @@ The layout is remembered in the settings directory
 app is given :func:`layout_store` -- the shipped entry points do, tests do not.
 
 A feature adds windows through ``Feature.windows()`` (see
-:mod:`ndxplorer.app.features`); the Plot window's own contents -- the path
-row, the marginals, the map and the display corner -- are laid out by
-:func:`plot_boxes`.
+:mod:`ndxplorer.app.features`); the Plot window's own contents -- the
+toolbar, the marginals, the map and the corner between the marginals -- are
+laid out by :func:`plot_boxes`. The user resizes the marginals by the bars
+between them and the map; the sizes are kept with the layout
+(:meth:`emtk.docking.DockManager.set_extra`).
 """
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 __all__ = ["LEFT", "RIGHT", "PLOT_CONTROLS", "PLOT", "LAYOUT_FILE", "LEFT_ORDER",
            "layout_store", "build", "add_feature_windows", "plot_boxes"]
@@ -43,19 +45,26 @@ LAYOUT_FILE = "ndxplorer_layout.json"
 
 #: The left region's share, and its floor: an axis row (combo, bins, toggles,
 #: Set) on one line. A split never gives either side more than half as floor.
-LEFT_FRACTION = 0.357
+LEFT_FRACTION = 0.29
 LEFT_MIN = 405.0
-#: The Plot window's fixed parts, in logical pixels. The path row is one
-#: field tall (emtk's frame height, passed by the app; this is its fallback),
-#: and a small gap parts it from the plots.
+#: The Plot window's fixed parts, in logical pixels. The toolbar over the
+#: plots is one field tall when it fits on a line (emtk's frame height, passed
+#: by the app; this is its fallback), and a small gap parts it from the plots.
 ROW_H = 17.0
 ROW_GAP = 2.0
-#: The display corner (and the y marginal under it): its widest, its narrowest,
-#: and its share of a Plot window between the two.
-CORNER_W = 258.0
-CORNER_MIN = 190.0
-CORNER_FRACTION = 0.3
-XMARGINAL_FRACTION = 0.2
+#: The marginals' default thickness -- the x marginal's height, the y
+#: marginal's width -- and the least and most the user may drag them to
+#: (the most a share of the plot grid).
+XMARGINAL_H = 96.0
+YMARGINAL_W = 132.0
+MARGINAL_MIN = 60.0
+MARGINAL_MAX_FRACTION = 0.45
+#: The bars between the marginals and the map, dragged to resize the marginals.
+SPLIT = 4.0
+#: The layout values (:meth:`emtk.docking.DockManager.extra`) the marginal sizes
+#: are kept under.
+XMARGINAL_KEY = "plot.xmarginal_h"
+YMARGINAL_KEY = "plot.ymarginal_w"
 #: Space between a window's frame and its content: the Qt docks' margins.
 PADDING = 2.0
 
@@ -103,29 +112,40 @@ def add_feature_windows(app) -> None:
     docks.load()
 
 
-def plot_boxes(box: Rect, corner_h: float = 0.0, row_h: float = ROW_H) -> Dict[str, Rect]:
+def plot_boxes(box: Rect, row_h: float = ROW_H, xmarginal_h: Optional[float] = None,
+               ymarginal_w: Optional[float] = None) -> Dict[str, Rect]:
     """The Plot window's parts, in its content *box*.
 
-    The path row on top; under it the x marginal over the map, the display
-    corner beside the x marginal and the y marginal beside the map -- the Qt
-    window's grid.
+    The toolbar on top (the path, the colours, the counts and the actions);
+    under it the x marginal over the map, the y marginal beside the map and
+    the empty corner between the marginals -- the Qt window's grid. A bar parts the
+    marginals from the map (``"hsplit"`` under the x marginal, ``"vsplit"``
+    left of the y marginal): dragging it resizes the marginal.
 
-    *corner_h* is the height the corner's controls took last frame: in a
-    narrow window they wrap onto more lines, and the x marginal's row grows
-    to hold them (up to half the grid) rather than clip them. *row_h* is the
-    path row's height: one field (:func:`emtk.get_frame_height`).
+    *row_h* is the toolbar's height: one field (:func:`emtk.get_frame_height`),
+    more when its controls wrap in a narrow window. The marginals are
+    *xmarginal_h* tall and *ymarginal_w* wide (:data:`XMARGINAL_H`,
+    :data:`YMARGINAL_W` by default), within :data:`MARGINAL_MIN` and a share
+    of the grid. The corner between the marginals holds nothing.
     """
     x, y, w, h = box
     header = (x, y, w, row_h)
     grid_top = y + row_h + ROW_GAP
     grid_h = max(y + h - grid_top, 1.0)
-    corner_w = min(CORNER_W, max(w * CORNER_FRACTION, min(CORNER_MIN, w * 0.45)))
-    xm_h = min(max(90.0, round(h * XMARGINAL_FRACTION), float(corner_h)), grid_h * 0.5)
-    map_w = max(w - corner_w, 1.0)
+    xm_h = XMARGINAL_H if xmarginal_h is None else float(xmarginal_h)
+    ym_w = YMARGINAL_W if ymarginal_w is None else float(ymarginal_w)
+    xm_h = min(max(xm_h, MARGINAL_MIN), grid_h * MARGINAL_MAX_FRACTION)
+    ym_w = min(max(ym_w, MARGINAL_MIN), w * MARGINAL_MAX_FRACTION)
+    map_w = max(w - ym_w - SPLIT, 1.0)
+    map_top = grid_top + xm_h + SPLIT
+    map_h = max(y + h - map_top, 1.0)
+    right = x + map_w + SPLIT
     return {
         "header": header,
         "xmarginal": (x, grid_top, map_w, xm_h),
-        "corner": (x + map_w, grid_top, corner_w, xm_h),
-        "map": (x, grid_top + xm_h, map_w, grid_h - xm_h),
-        "ymarginal": (x + map_w, grid_top + xm_h, corner_w, grid_h - xm_h),
+        "corner": (right, grid_top, ym_w, xm_h),
+        "map": (x, map_top, map_w, map_h),
+        "ymarginal": (right, map_top, ym_w, map_h),
+        "hsplit": (x, grid_top + xm_h, w, SPLIT),
+        "vsplit": (x + map_w, grid_top, SPLIT, grid_h),
     }

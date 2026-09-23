@@ -232,7 +232,11 @@ def test_the_window_draws_every_panel_and_plot(app, source):
     for name in ("Histogram.fold", "Selection.fold", "x_name", "y_bins_2d", "auto_x",
                  "gate_rows"):
         assert name in form.rects, name
-    for name in ("log_counts", "auto_contrast", "vmin", "mask_nan"):
+    for name in ("working_path", "colormap", "log_counts", "vmin", "vmax", "auto_contrast",
+                 "update_plots"):
+        assert name in app.forms["plot_header"].rects, name
+    for name in ("count_current", "count_total", "mask_inf", "mask_nan", "screenshot",
+                 "show_data", "export_figure", "clear_plot"):
         assert name in app.forms["plot_corner"].rects, name
     assert set(app.plots.rects) >= {"xmarginal", "map", "ymarginal"}
 
@@ -310,7 +314,7 @@ def test_a_folded_panel_opens_on_a_click(app, source):
 def test_a_toggle_click_reaches_the_model(app, source):
     app.model.set_source(source)
     draw(app)
-    click(app, *centre(app.forms["plot_corner"].rects["log_counts"]))
+    click(app, *centre(app.forms["plot_header"].rects["log_counts"]))
     assert app.model.log_counts is True
 
 
@@ -477,15 +481,19 @@ def test_a_right_click_elsewhere_closes_a_menu(app):
     assert app.popup is None
 
 
-def test_show_status_writes_a_line_under_the_plots(app, source):
+def test_show_status_writes_a_line_in_the_menu_bar_row(app, source):
+    """The status line costs the plots no height: it sits right of the menus."""
     app.model.set_source(source)
     app.show_status("Copied 2-D histogram")
     from emtk.testing import RecordingPainter
 
+    from ndxplorer.app.frame import MENU_H
+
     painter = RecordingPainter()
     app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
     text = next(t for t in painter.texts if t[5] == "Copied 2-D histogram")
-    assert text[1] > app.plots.rects["map"][1] + app.plots.rects["map"][3] - 1
+    assert text[1] < MENU_H and text[0] > 200.0
+    assert app.plots.rects["map"][1] + app.plots.rects["map"][3] > 890.0
 
 
 def test_menu_shortcuts_run_their_action(app):

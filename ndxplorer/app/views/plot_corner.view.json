@@ -1,53 +1,6 @@
 {
- "_comment": "The controls in the corner between the x marginal and the y marginal (plot_main.ui widget_6).",
+ "_comment": "The corner between the x and the y marginal (plot_main.ui widget_6, less its colour controls, which are on the toolbar): the points shown / loaded, the inf and NaN masks, and Screenshot, Data, Export… and Clear two by two. When the user drags the marginals too small to hold it, the app draws it at the end of the toolbar instead.",
  "sections": [
-  {
-   "type": "button_row",
-   "buttons": [
-    {
-     "label": "Screenshot",
-     "action": "screenshot",
-     "description": "Save a picture of the window."
-    },
-    {
-     "label": "Data",
-     "action": "show_data",
-     "description": "Show the data table."
-    },
-    {
-     "label": "Clear",
-     "action": "clear_plot",
-     "description": "Clear the plots and the working path."
-    }
-   ]
-  },
-  {
-   "type": "row",
-   "n_col": 2,
-   "sections": [
-    {
-     "type": "toggle",
-     "attr": "log_counts",
-     "label": "log #",
-     "description": "Colour the 2-D histogram by log10 of the counts."
-    },
-    {
-     "type": "button_row",
-     "buttons": [
-      {
-       "label": "Update",
-       "action": "update_plots",
-       "description": "Redraw the plots."
-      },
-      {
-       "label": "Contrast",
-       "action": "auto_contrast",
-       "description": "Set the colour limits from the data."
-      }
-     ]
-    }
-   ]
-  },
   {
    "type": "row",
    "n_col": 2,
@@ -57,51 +10,17 @@
      "attr": "count_current",
      "kind": "int",
      "read_only": true,
-     "description": "Points shown (after the gates)."
+     "description": "Points shown (after the gates).",
+     "min_chars": 5
     },
     {
      "type": "value",
      "attr": "count_total",
      "kind": "int",
      "read_only": true,
-     "description": "Points loaded."
-    }
-   ]
-  },
-  {
-   "type": "button_row",
-   "weight": 0,
-   "buttons": [
-    {
-     "label": "Export…",
-     "action": "export_figure",
-     "description": "Export a publication figure."
-    }
-   ]
-  },
-  {
-   "type": "row",
-   "n_col": 2,
-   "sections": [
-    {
-     "type": "value",
-     "attr": "vmin",
-     "kind": "float",
-     "style": "scientific",
-     "decimals": 2,
-     "description": "Lower colour limit of the 2-D histogram.",
-     "spin": true,
-     "min_chars": 8
-    },
-    {
-     "type": "value",
-     "attr": "vmax",
-     "kind": "float",
-     "style": "scientific",
-     "decimals": 2,
-     "description": "Upper colour limit of the 2-D histogram.",
-     "spin": true,
-     "min_chars": 8
+     "description": "Points loaded.",
+     "min_chars": 5,
+     "label": "/"
     }
    ]
   },
@@ -120,6 +39,31 @@
      "attr": "mask_nan",
      "label": "NaN",
      "description": "Leave out points with no value on a plotted axis."
+    }
+   ]
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Screenshot",
+     "action": "screenshot",
+     "description": "Save a picture of the window."
+    },
+    {
+     "label": "Data",
+     "action": "show_data",
+     "description": "Show the data table."
+    },
+    {
+     "label": "Export…",
+     "action": "export_figure",
+     "description": "Export a publication figure."
+    },
+    {
+     "label": "Clear",
+     "action": "clear_plot",
+     "description": "Clear the plots and the working path."
     }
    ]
   }

@@ -2,7 +2,8 @@
 
 A window manager tiles the window (Magnet, macOS tiling): half the screen,
 two thirds, whatever it had. At each size every control of the Plot
-controls, the path row and the display corner must lie inside its window,
+controls, of the toolbar over the plots and of the corner between the
+marginals must lie inside its box,
 every button must show its label whole, and the axis combo boxes must show
 at least a dozen characters. The offscreen painter draws the atlas 1:1, as
 the native window does, so its text widths are the window's.
@@ -136,3 +137,22 @@ def test_size_option_is_parsed():
     for bad in ("992", "axb", "0x10", "10x-3"):
         with pytest.raises(ValueError):
             parse_size(bad)
+
+
+@pytest.mark.parametrize("size", SIZES, ids=[f"{w}x{h}" for w, h in SIZES])
+def test_the_corner_holds_its_controls_or_gives_them_to_the_toolbar(size, data_path, tmp_path,
+                                                                    monkeypatch):
+    """The counts, the masks and the actions fit the corner between the
+    marginals top to bottom too -- or, when it is too small, are on the toolbar."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = _replay(size, data_path, monkeypatch).app
+    corner = app.plot_boxes["corner"]
+    names = ("count_current", "count_total", "mask_inf", "mask_nan", "screenshot", "show_data",
+             "export_figure", "clear_plot")
+    form = app.forms["plot_header" if app.corner_in_toolbar else "plot_corner"]
+    box = app.plot_boxes["header"] if app.corner_in_toolbar else corner
+    for name in names:
+        x, y, w, h = form.rects[name]
+        assert box[1] - 0.5 <= y and y + h <= box[1] + box[3] + 0.5, (name, form.rects[name], box)
+        assert box[0] - 0.5 <= x and x + w <= box[0] + box[2] + 0.5, (name, form.rects[name], box)
+    assert not app.corner_in_toolbar, f"the default marginals hold the corner at {size}"

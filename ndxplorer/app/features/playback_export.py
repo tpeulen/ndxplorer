@@ -814,7 +814,7 @@ class PlaybackExportFeature(Feature):
 
     def _op_click(self, replay, step: dict) -> None:
         if step.get("widget") == "win.toolButton_publication_export":
-            rect = replay.app.forms["plot_corner"].rects.get("export_figure")
+            rect = replay.app.control_rect("export_figure")
             if rect is not None:
                 replay.click_rect(rect)
             else:
