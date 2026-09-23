@@ -58,6 +58,9 @@ The hooks (all optional; the base class does nothing):
     histogram (cluster colours), or ``None``.
 ``on_data_changed()``
     The table was replaced or merged.
+``files_dropped(paths)``
+    Files or folders dropped on the window; return ``True`` to keep them (a
+    drop onto a feature's window) instead of opening the first one.
 ``capture_ops()``
     ``{op name: fn(replay, step)}`` -- scenario steps the capture replay
     (:mod:`ndxplorer.app.capture`) should understand, beyond the core's. A
@@ -148,6 +151,9 @@ class Feature:
 
     def on_data_changed(self) -> None:
         pass
+
+    def files_dropped(self, paths) -> bool:
+        return False
 
     def capture_ops(self) -> Dict[str, Callable]:
         return {}

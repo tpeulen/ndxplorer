@@ -502,9 +502,18 @@ class NdxApp:
         return True
 
     def files_dropped(self, paths) -> None:
-        """A file or folder dropped on the window opens, as in the Qt window."""
-        if paths:
-            self.open_path(str(paths[0]))
+        """A file or folder dropped on the window opens, as in the Qt window.
+
+        A feature whose window takes drops (the report tool's folder list)
+        answers first: ``files_dropped(paths)`` returning ``True`` keeps it.
+        """
+        if not paths:
+            return
+        for feature in self.features:
+            hook = getattr(feature, "files_dropped", None)
+            if callable(hook) and hook(list(paths)):
+                return
+        self.open_path(str(paths[0]))
 
     def animating(self) -> bool:
         """Whether the host should keep drawing without input: a feature is

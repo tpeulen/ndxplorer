@@ -85,3 +85,29 @@ def test_a_dialog_capture_falls_back_to_the_message_box(monkeypatch):
         assert "dialog" in replay.shots
     finally:
         replay.app.close()
+
+
+def test_a_feature_can_keep_a_drop(monkeypatch):
+    from ndxplorer.app.features import Feature
+    from ndxplorer.app.frame import NdxApp
+
+    kept = []
+
+    class Taker(Feature):
+        def files_dropped(self, paths):
+            kept.extend(paths)
+            return bool(self.app.storage.get("take"))
+
+    _install(monkeypatch, Taker)
+    app = NdxApp()
+    opened = []
+    app.open_path = lambda path: opened.append(path) or True
+    try:
+        app.storage["take"] = True
+        app.files_dropped(["/a/folder"])
+        assert kept == ["/a/folder"] and opened == []
+        app.storage["take"] = False
+        app.files_dropped(["/b/file.csv"])
+        assert opened == ["/b/file.csv"]
+    finally:
+        app.close()
