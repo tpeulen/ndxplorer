@@ -11,7 +11,6 @@ from typing import Optional, Dict, List, Tuple
 import numpy as np
 from pathlib import Path
 
-from qtpy import QtCore, QtWidgets
 
 
 def load_mask_from_tiff(filename: str) -> Tuple[np.ndarray, List[int]]:

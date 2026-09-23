@@ -616,6 +616,53 @@ class BurstAnalysisBridge:
         )
 
 
+def unavailable_reason(rpc_client: Any, data_source: Any, selections: Sequence[Any],
+                       bridge: Optional["BurstAnalysisBridge"] = None) -> Optional[str]:
+    """Why a selection cannot be sent right now, or ``None`` when it can.
+
+    Checked in the order the user can act on: connect ChiSurf, load a burst
+    table, then draw a gate. Both GUIs show the answer on their disabled "Send
+    selection to" submenu, because a greyed-out entry that names what is
+    missing says more than a missing entry.
+    """
+    if rpc_client is None:
+        return (
+            "No ChiSurf connection. Open ndX from ChiSurf, or start it with "
+            "--chisurf-rpc host:port."
+        )
+    if data_source is None or data_source.empty:
+        return "No data loaded."
+    missing = {FILE_COL, FIRST_PHOTON_COL, LAST_PHOTON_COL} - set(data_source.parameter_names)
+    if missing:
+        return (
+            "This table has no burst provenance: "
+            f"{', '.join(sorted(missing))} missing. Sending needs the photon "
+            "intervals each burst came from."
+        )
+    if not selections:
+        return "No selection. Draw a gate first — the whole table would be sent."
+    if not (bridge or BurstAnalysisBridge(rpc_client, data_source)).discover():
+        return (
+            "This ChiSurf advertises no burst analyses. It may be an older "
+            "version, or the burst services are not loaded."
+        )
+    return None
+
+
+def outcome_message(reply: Mapping[str, Any], target: str) -> str:
+    """The status line after a send: how much went, and whether it was recorded."""
+    message = f"Sent {reply['n_bursts']} bursts from {reply['n_files']} file(s) to {target}"
+    provenance = reply.get("provenance")
+    if provenance is None:
+        message += " (not recorded: no database product attached)"
+    elif isinstance(provenance, dict) and provenance.get("ok") is False:
+        message += f" — but the provenance record failed: {provenance.get('error')}"
+    else:
+        message += " and recorded it"
+    return message
+
+
+
 __all__ = [
     "BurstAnalysisBridge",
     "Target",
@@ -624,6 +671,8 @@ __all__ = [
     "summarise_result",
     "BurstBridgeError",
     "selection_to_burst_slices",
+    "unavailable_reason",
+    "outcome_message",
     "FILE_COL",
     "LAST_FILE_COL",
     "FIRST_PHOTON_COL",

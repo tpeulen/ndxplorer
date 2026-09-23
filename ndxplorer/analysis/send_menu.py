@@ -35,7 +35,12 @@ from typing import Any, Optional
 from qtpy import QtCore, QtWidgets
 
 from ..logging_config import logging
-from .burst_bridge import BurstAnalysisBridge, BurstBridgeError
+from .burst_bridge import (
+    BurstAnalysisBridge,
+    BurstBridgeError,
+    outcome_message,
+    unavailable_reason,
+)
 
 __all__ = ["make_bridge", "add_send_menu", "send_selection", "why_unavailable"]
 
@@ -55,33 +60,12 @@ def why_unavailable(ndxplorer: Any, bridge: Optional[BurstAnalysisBridge] = None
     Checked in the order the user can act on: connect ChiSurf, load a burst
     table, then draw a gate.
     """
-    if getattr(ndxplorer, "chisurf_rpc", None) is None:
-        return (
-            "No ChiSurf connection. Open ndX from ChiSurf, or start it with "
-            "--chisurf-rpc host:port."
-        )
-    source = getattr(ndxplorer, "data_source", None)
-    if source is None or source.empty:
-        return "No data loaded."
-    columns = set(source.parameter_names)
-    missing = {"First File", "First Photon", "Last Photon"} - columns
-    if missing:
-        return (
-            "This table has no burst provenance: "
-            f"{', '.join(sorted(missing))} missing. Sending needs the photon "
-            "intervals each burst came from."
-        )
     try:
-        if not ndxplorer.plot_control.get_selections():
-            return "No selection. Draw a gate first — the whole table would be sent."
+        selections = ndxplorer.plot_control.get_selections()
     except Exception:  # pragma: no cover - control may not exist headlessly
-        return "No selection."
-    if not (bridge or make_bridge(ndxplorer)).discover():
-        return (
-            "This ChiSurf advertises no burst analyses. It may be an older "
-            "version, or the burst services are not loaded."
-        )
-    return None
+        selections = []
+    return unavailable_reason(getattr(ndxplorer, "chisurf_rpc", None),
+                              getattr(ndxplorer, "data_source", None), selections, bridge)
 
 
 def add_send_menu(menu: QtWidgets.QMenu, ndxplorer: Any) -> QtWidgets.QMenu:
@@ -160,16 +144,7 @@ def send_selection(ndxplorer: Any, target: str, **params: Any) -> Optional[dict]
     finally:
         QtWidgets.QApplication.restoreOverrideCursor()
 
-    message = (
-        f"Sent {reply['n_bursts']} bursts from {reply['n_files']} file(s) to {target}"
-    )
-    provenance = reply.get("provenance")
-    if provenance is None:
-        message += " (not recorded: no database product attached)"
-    elif isinstance(provenance, dict) and provenance.get("ok") is False:
-        message += f" — but the provenance record failed: {provenance.get('error')}"
-    else:
-        message += " and recorded it"
+    message = outcome_message(reply, target)
     _status(ndxplorer, message)
     return reply
 
