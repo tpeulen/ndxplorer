@@ -20,8 +20,9 @@ pytest.importorskip("PIL")
 DATA = pathlib.Path(__file__).resolve().parents[3] / "test" / "mfd" / "burstwise_All 0.1500#30"
 
 #: Half a 1470x949 screen, a Magnet two-thirds tile, what a window manager
-#: left one window at, the default, and the whole work area.
-SIZES = [(735, 949), (980, 949), (992, 593), (1400, 900), (1470, 949)]
+#: left one window at, the default, the parity captures' size, and the whole
+#: work area.
+SIZES = [(735, 949), (980, 949), (992, 593), (1120, 720), (1400, 900), (1470, 949)]
 
 
 @pytest.fixture(scope="module")
@@ -156,3 +157,22 @@ def test_the_corner_holds_its_controls_or_gives_them_to_the_toolbar(size, data_p
         assert box[1] - 0.5 <= y and y + h <= box[1] + box[3] + 0.5, (name, form.rects[name], box)
         assert box[0] - 0.5 <= x and x + w <= box[0] + box[2] + 0.5, (name, form.rects[name], box)
     assert not app.corner_in_toolbar, f"the default marginals hold the corner at {size}"
+
+
+def test_the_default_window_is_three_quarters_of_a_laptop_screen():
+    from ndxplorer.app.capture import WINDOW
+    from ndxplorer.app.launch import SIZE
+
+    assert SIZE == (1120, 720) and SIZE in SIZES
+    assert WINDOW == (1400, 900), "the parity captures keep the Qt baseline's size"
+
+
+@pytest.mark.parametrize("size", SIZES, ids=[f"{w}x{h}" for w, h in SIZES])
+def test_the_colour_limits_show_their_whole_number(size, data_path, tmp_path, monkeypatch):
+    """vmin and vmax ("2.01e+02") are read whole beside their arrows."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = _replay(size, data_path, monkeypatch).app
+    rects = app.forms["plot_header"].rects
+    need = _text_width("2.01e+02") + 8.0
+    for name in ("vmin", "vmax"):
+        assert rects[name][2] >= need, f"{name} is {rects[name][2]:.0f} px at {size}"

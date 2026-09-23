@@ -51,7 +51,7 @@
      "decimals": 2,
      "description": "Lower colour limit of the 2-D histogram.",
      "spin": true,
-     "min_chars": 7
+     "min_chars": 8
     },
     {
      "type": "value",
@@ -61,7 +61,7 @@
      "decimals": 2,
      "description": "Upper colour limit of the 2-D histogram.",
      "spin": true,
-     "min_chars": 7
+     "min_chars": 8
     },
     {
      "type": "button_row",

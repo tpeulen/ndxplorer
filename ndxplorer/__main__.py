@@ -103,7 +103,7 @@ class MutuallyExclusiveOption(click.Option):
 @click.option('--host', type=click.Choice(['native', 'tk']), default=None,
               help='Window for --emtk: native (wgpu + glfw, the default when available) or tk.')
 @click.option('--size', 'size', type=str, default=None, metavar='WxH',
-              help='Window size for --emtk in logical pixels, e.g. 992x593 (default 1400x900).')
+              help='Window size for --emtk in logical pixels, e.g. 992x593 (default 1120x720).')
 @click.pass_context
 def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc,
          verbose, debug, use_emtk, host, size):

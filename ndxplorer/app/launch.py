@@ -21,8 +21,10 @@ from typing import Optional
 
 __all__ = ["run", "available_host", "parse_size"]
 
-#: The window size the Qt window opens at in the parity scenarios.
-SIZE = (1400, 900)
+#: The window's default logical size: about three quarters of a 1470x949 laptop
+#: work area, leaving room beside it. (The parity captures keep the Qt
+#: baseline's 1400x900, :data:`ndxplorer.app.capture.WINDOW`.)
+SIZE = (1120, 720)
 TITLE = "ndX"
 
 
