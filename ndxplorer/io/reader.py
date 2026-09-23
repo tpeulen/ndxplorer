@@ -988,6 +988,10 @@ def read_csv_file(filename: str) -> "tttrlib.DataStore":
     else:
         store = _read_text_store(p, _detect_format(p))
 
+    # A burst file's lines end in a delimiter: one more column, nameless and
+    # empty. Kept, it filled with FILL_MISSING_VALUE and became a parameter
+    # called "" -- which the axis choosers then offered and picked.
+    tables.drop_trailing_empty_columns(store)
     names = [store.column(i).name() for i in range(store.n_columns())]
     logging.info("[read_csv_file] Read %d rows from %s", store.n_rows(), filename)
     logging.info("[read_csv_file] Columns: %s", ", ".join(names))

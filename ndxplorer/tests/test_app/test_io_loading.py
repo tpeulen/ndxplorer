@@ -134,3 +134,13 @@ def test_burst_ids_written_headless_report_progress_and_can_stop(tmp_path, stop_
     assert total >= 1 and seen[0][0] == 0
     assert len(written) == (total if stop_after is None else min(stop_after, total))
     assert sorted(tmp_path.glob("*.bst")) == sorted(written)
+
+
+def test_a_burst_files_trailing_delimiter_is_not_a_nameless_parameter(tmp_path):
+    """A .bur line ends in a tab: the reader used to keep a column called ""
+    (all missing values), and the axis choosers offered -- and picked -- it."""
+    bur = tmp_path / "m000.bur"
+    bur.write_text("First Photon\tLast Photon\tNumber of Photons\t\n"
+                   "0\t10\t11\t\n20\t35\t16\t\n")
+    source = read_csv([str(bur)])
+    assert list(source.parameter_names) == ["First Photon", "Last Photon", "Number of Photons"]
