@@ -49,9 +49,10 @@ def model(source):
 
 @pytest.fixture
 def app():
+    """The core window alone: the features have their own tests."""
     from ndxplorer.app.frame import NdxApp
 
-    a = NdxApp()
+    a = NdxApp(features=[])
     yield a
     a.close()
 
@@ -345,7 +346,7 @@ def test_a_step_the_app_cannot_do_is_reported_not_faked(tmp_path):
     from ndxplorer.app.capture import Unsupported, capture_scenario
 
     catalogue = {"datasets": {}, "setups": {}, "scenarios": [
-        {"id": "x", "steps": [{"op": "canvas_click", "at": [0.5, 0.5]},
+        {"id": "x", "steps": [{"op": "no_such_op", "at": [0.5, 0.5]},
                               {"op": "capture", "name": "main"}]}]}
     with pytest.raises(Unsupported):
         capture_scenario("x", tmp_path, catalogue)
@@ -445,3 +446,25 @@ def test_show_status_writes_a_line_under_the_plots(app, source):
     app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
     text = next(t for t in painter.texts if t[5] == "Copied 2-D histogram")
     assert text[1] > app.plots.rects["map"][1] + app.plots.rects["map"][3] - 1
+
+
+def test_menu_shortcuts_run_their_action(app):
+    from emtk.events import CONTROL_MODIFIER
+
+    ran = []
+    app.panel.actions["open_analysis_folder"] = lambda: ran.append("folder")
+    app.panel.actions["open_text"] = lambda: ran.append("text")
+    assert app.key(ord("I"), "i", CONTROL_MODIFIER)
+    assert app.key(ord("O"), "o", CONTROL_MODIFIER)
+    assert ran == ["folder", "text"]
+    app.key(ord("O"), "o", 0)
+    assert ran == ["folder", "text"]                 # a plain "o" types
+
+
+def test_the_weight_parameter_is_usable_only_while_weight_is_ticked(model):
+    from ndxplorer.app.view_model import PanelModel
+
+    panel = PanelModel(model)
+    assert not panel.enabled("weight_name")
+    panel.weight_enabled = True
+    assert panel.enabled("weight_name")

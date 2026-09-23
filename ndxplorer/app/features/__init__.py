@@ -58,6 +58,8 @@ The hooks (all optional; the base class does nothing):
     histogram (cluster colours), or ``None``.
 ``on_data_changed()``
     The table was replaced or merged.
+``on_z_select()``
+    The z panel's "select" just turned the z range into a gate.
 ``files_dropped(paths)``
     Files or folders dropped on the window; return ``True`` to keep them (a
     drop onto a feature's window) instead of opening the first one.
@@ -150,6 +152,9 @@ class Feature:
         return None
 
     def on_data_changed(self) -> None:
+        pass
+
+    def on_z_select(self) -> None:
         pass
 
     def files_dropped(self, paths) -> bool:

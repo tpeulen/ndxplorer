@@ -60,10 +60,14 @@ class NdxApp:
         Passed to a fresh model.
     on_exit : callable, optional
         What File > Exit does; the host's window close.
+    features : list of str, optional
+        The feature modules to load; all of :data:`~ndxplorer.app.features.FEATURES`
+        by default, ``[]`` for the core alone (its tests).
     """
 
     def __init__(self, model: Optional[ExplorerModel] = None, settings_file=None,
-                 on_exit: Optional[Callable[[], None]] = None) -> None:
+                 on_exit: Optional[Callable[[], None]] = None,
+                 features: Optional[list] = None) -> None:
         import emtk
         from emtk.view_form import FormState
 
@@ -89,7 +93,7 @@ class NdxApp:
         from .features import load_features
 
         #: The feature modules (:mod:`ndxplorer.app.features`), created for this window.
-        self.features = load_features(self)
+        self.features = load_features(self, features)
         for feature in self.features:
             self.panel.actions.update(feature.actions())
             self.panel.fields.update(feature.fields())
@@ -502,7 +506,33 @@ class NdxApp:
         self.io.mouse_wheel += -float(rows) / 3.0
         return 0
 
+    def shortcut_action(self, key: int, modifiers: int) -> Optional[str]:
+        """The menu action whose shortcut (``"Ctrl+O"``) is *key* with *modifiers*.
+
+        ``Ctrl`` is emtk's control modifier -- Command on macOS, as in Qt.
+        """
+        from emtk.events import ALT_MODIFIER, CONTROL_MODIFIER, SHIFT_MODIFIER
+
+        from .menus import iter_entries, merged_menus
+
+        wanted = int(modifiers) & (CONTROL_MODIFIER | SHIFT_MODIFIER | ALT_MODIFIER)
+        for _path, entry in iter_entries(merged_menus(self._feature_menu_entries())):
+            parts = [part.strip().lower() for part in entry.get("shortcut", "").split("+")]
+            if not parts or not parts[-1]:
+                continue
+            mods = ((CONTROL_MODIFIER if "ctrl" in parts else 0)
+                    | (SHIFT_MODIFIER if "shift" in parts else 0)
+                    | (ALT_MODIFIER if "alt" in parts else 0))
+            name = parts[-1]
+            code = ord(name.upper()) if len(name) == 1 else None
+            if mods and mods == wanted and code == int(key):
+                return entry["action"]
+        return None
+
     def key(self, key: int, text: str = "", modifiers: int = 0) -> bool:
+        action = self.shortcut_action(key, modifiers) if modifiers else None
+        if action is not None and self.run_action(action):
+            return True
         self.io.key = int(key)
         self.io.text = "".join(c for c in (text or "") if c >= " " and c != "\x7f")
         return True

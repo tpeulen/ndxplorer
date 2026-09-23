@@ -101,6 +101,9 @@ class PanelModel:
         """AutoForm's hook: a field or action that cannot be used is drawn disabled."""
         if name in self.actions or name in self.fields:
             return self.available(name)
+        if name == "weight_name":
+            # the weight parameter counts only while "weight" is ticked
+            return self.model.has_data and self.model.weight_enabled
         if name.startswith(("x_", "y_", "z_", "weight")) or name in NOT_PORTED:
             if name in NOT_PORTED:
                 return False
@@ -220,7 +223,12 @@ class PanelModel:
         self.model.invalidate()
 
     def z_select(self) -> None:
+        """The z panel's "select": the z range becomes a gate, then every
+        feature hears of it (``Feature.on_z_select``)."""
         self.model.z_select()
+        app = getattr(self.model, "app", None)
+        for feature in getattr(app, "features", ()):
+            feature.on_z_select()
 
     # ---------------------------------------------------------------- gates
     def gate_rows(self) -> List[dict]:
