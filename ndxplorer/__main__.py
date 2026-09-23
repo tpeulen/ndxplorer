@@ -102,9 +102,11 @@ class MutuallyExclusiveOption(click.Option):
               help='Open the emtk app (ndxplorer.app) instead of the Qt window. No Qt is loaded.')
 @click.option('--host', type=click.Choice(['native', 'tk']), default=None,
               help='Window for --emtk: native (wgpu + glfw, the default when available) or tk.')
+@click.option('--size', 'size', type=str, default=None, metavar='WxH',
+              help='Window size for --emtk in logical pixels, e.g. 992x593 (default 1400x900).')
 @click.pass_context
 def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc,
-         verbose, debug, use_emtk, host):
+         verbose, debug, use_emtk, host, size):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -135,7 +137,14 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
     if use_emtk:
         from .app.launch import run
 
-        raise SystemExit(run(path=file or folder, host=host, chisurf_rpc=chisurf_rpc))
+        from .app.launch import parse_size
+
+        try:
+            window_size = parse_size(size)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint='--size')
+        raise SystemExit(run(path=file or folder, host=host, chisurf_rpc=chisurf_rpc,
+                             size=window_size))
 
     logging.info("Starting ndxplorer as standalone module")
 

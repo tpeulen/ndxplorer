@@ -19,11 +19,31 @@ from __future__ import annotations
 import importlib.util
 from typing import Optional
 
-__all__ = ["run", "available_host"]
+__all__ = ["run", "available_host", "parse_size"]
 
 #: The window size the Qt window opens at in the parity scenarios.
 SIZE = (1400, 900)
 TITLE = "ndX"
+
+
+def parse_size(text: Optional[str]) -> Optional[tuple]:
+    """``"992x593"`` -> ``(992, 593)``; ``None`` or ``""`` -> ``None`` (the default size).
+
+    Raises
+    ------
+    ValueError
+        When *text* is not two positive integers joined by ``x``.
+    """
+    if not text:
+        return None
+    width, sep, height = str(text).lower().partition("x")
+    try:
+        size = (int(width), int(height))
+    except ValueError:
+        size = None
+    if not sep or size is None or min(size) <= 0:
+        raise ValueError(f"expected WIDTHxHEIGHT, e.g. 992x593, not {text!r}")
+    return size
 
 
 def available_host() -> str:
@@ -34,12 +54,13 @@ def available_host() -> str:
 
 
 def run(path: Optional[str] = None, host: Optional[str] = None,
-        chisurf_rpc: Optional[str] = None) -> int:
+        chisurf_rpc: Optional[str] = None, size: Optional[tuple] = None) -> int:
     """Open the app, optionally with *path* loaded, and run until the window closes.
 
     *chisurf_rpc* is ``host:port`` of a ChiSurf RPC server (``--chisurf-rpc``):
     the connection "Send selection to" and the phasor features use. A desktop
-    option -- a browser page has no socket to open.
+    option -- a browser page has no socket to open. *size* is the window's
+    logical ``(width, height)`` (``--size``); :data:`SIZE` by default.
     """
     import logging
 
@@ -48,6 +69,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     from . import theme
 
     host = host or available_host()
+    size = tuple(size) if size else SIZE
     app = NdxApp(layout_store=layout_store())
     if chisurf_rpc:
         from ..rpc import connect
@@ -62,13 +84,13 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
         if host == "native":
             from emtk.native import NativeHost
 
-            window = NativeHost(app, size=SIZE, title=TITLE)
+            window = NativeHost(app, size=size, title=TITLE)
             app.on_exit = window.close
             window.run()
         else:
             from emtk.tk_host import TkHost
 
-            window = TkHost(app, title=TITLE, size=SIZE, background=theme.WINDOW_BG)
+            window = TkHost(app, title=TITLE, size=size, background=theme.WINDOW_BG)
             app.on_exit = window.close
             window.run()
     finally:
