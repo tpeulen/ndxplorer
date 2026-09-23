@@ -204,7 +204,7 @@ class NdxApp:
         painter.fill_rect(x, y, w, h, theme.WINDOW_BG)
         boxes = self.layout(x, y, w, h)
         self.plots.begin_frame()
-        with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage):
+        with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage) as ctx:
             emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
             modal = self.message is not None or getattr(self, "_feature_modal", False)
             if modal:
@@ -236,6 +236,11 @@ class NdxApp:
         if self.popup is not None:
             self.popup[0].draw(painter, x, y, w, h)
         self.frames += 1
+        # A frame can change what it shows: a rectangle released on the map
+        # becomes gates, and this frame drew the histograms from before them.
+        # A host draws on demand, so without asking it the window would show
+        # the old counts until the pointer next moved.
+        self._frame_due = bool(getattr(ctx, "frame_requested", False)) or self.model.stale
 
     def _spend_edges(self) -> None:
         """One-frame input edges are used up by the frame that saw them."""
@@ -479,7 +484,9 @@ class NdxApp:
         if action is not None and self.run_action(action):
             return True
         self.io.key = int(key)
-        self.io.text = "".join(c for c in (text or "") if c >= " " and c != "\x7f")
+        # Appended: several keys can arrive before the frame that spends them
+        # (a host draws on demand; a page's frame is slow) -- see _spend_edges.
+        self.io.text += "".join(c for c in (text or "") if c >= " " and c != "\x7f")
         return True
 
     def files_dropped(self, paths) -> None:
@@ -506,7 +513,10 @@ class NdxApp:
 
     def animating(self) -> bool:
         """Whether the host should keep drawing without input: a feature is
-        playing back or streaming results."""
+        playing back or streaming results -- or the last frame changed the data
+        (or an emtk widget asked for a frame) and one more is due."""
+        if getattr(self, "_frame_due", False):
+            return True
         return any(feature.animating() for feature in self.features)
 
 

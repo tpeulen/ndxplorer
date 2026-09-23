@@ -259,6 +259,42 @@ def test_a_drag_on_the_map_makes_two_gates(app, source):
     assert app.model.count_current < 3000
 
 
+def test_the_frame_that_makes_gates_asks_for_the_next(app, source):
+    """A host draws on demand (a browser page, the native window): one frame per
+    event. The frame that sees the release turns the rectangle into gates and
+    has already drawn the ungated histograms, so it must ask for one more --
+    else the page shows the old counts until the pointer moves again."""
+    app.model.set_source(source)
+    app.model.set_parameter("y", "S")
+    draw(app)
+    assert not app.animating()
+    x, y, w, h = app.plots.rects["map"]
+    p0, p1 = (x + 0.1 * w, y + 0.2 * h), (x + 0.6 * w, y + 0.7 * h)
+    app.pointer_move(*p0)
+    draw(app)
+    app.pointer_press(p0[0], p0[1], 1)
+    draw(app)
+    app.pointer_move(p1[0], p1[1], 1)
+    draw(app)
+    app.pointer_release(p1[0], p1[1], 1)
+    draw(app)
+    assert len(app.model.gates) == 2
+    assert app.animating(), "the gates' frame did not ask for the next one"
+    draw(app)
+    assert not app.animating(), "an idle window kept asking for frames"
+
+
+def test_keys_typed_between_two_frames_all_reach_the_frame(app):
+    """Typing "gates" into a file name faster than frames are drawn (a page)
+    delivers five keys to one frame; that frame must see all five."""
+    draw(app)
+    for letter in "gates":
+        app.key(ord(letter.upper()), letter, 0)
+    assert app.io.text == "gates"
+    draw(app)
+    assert app.io.text == ""
+
+
 def test_a_folded_panel_opens_on_a_click(app, source):
     app.model.set_source(source)
     draw(app)

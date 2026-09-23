@@ -391,6 +391,13 @@ class ExplorerModel:
         """
         self._dirty = True
 
+    @property
+    def stale(self) -> bool:
+        """Whether something changed since the last :meth:`update` -- a frame that
+        changed the data (a gate made on release) has drawn the old histograms,
+        and the host owes the window one more frame."""
+        return bool(self._dirty)
+
     def mask_state(self) -> MaskState:
         """Every gating term, for the data manager (the Qt ``_collect_mask_state``)."""
         indices = (self.index_of(self.x.name), self.index_of(self.y.name),
