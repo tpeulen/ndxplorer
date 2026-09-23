@@ -91,7 +91,6 @@ class SpecWindow:
         self.feature = feature
         self.spec = load_spec(self.spec_name)
         self.form = FormState()
-        # A choice's list opens through the frame, like the dock's.
         feature.app.forms[f"analysis.{self.spec_name}.{id(self)}"] = self.form
         self.window = DialogWindow(self.title, size=self.size, pos=pos,
                                    key=f"analysis-{self.spec_name}")

@@ -42,7 +42,6 @@ class _Surface:
         self.io = emtk.IO()
         self.storage: dict = {}
         self.state = FormState()
-        self.popup = None
         self.box = (0.0, 0.0, 1.0, 1.0)
 
     def table(self):
@@ -71,21 +70,6 @@ class _Surface:
         self.io.mouse_double_clicked[0] = False
         self.io.mouse_wheel = 0.0
         self.io.key, self.io.text = 0, ""
-        self._open_dropdown()
-        if self.popup is not None:
-            self.popup[0].draw(painter, x, y, w, h)
-
-    def _open_dropdown(self) -> None:
-        from emtk.widgets.menus import MenuItem, Popup
-
-        request, self.state.dropdown_request = self.state.dropdown_request, None
-        if request is None:
-            return
-        name, (rx, ry, _rw, rh), labels, current = request
-        items = [MenuItem(text, checked=(index == current)) for index, text in enumerate(labels)]
-        popup = Popup(items)
-        popup.open_at(rx, ry + rh)
-        self.popup = (popup, items, name)
 
     # -- input ----------------------------------------------------------------------
     def hover(self, px: float, py: float, *_box) -> None:
@@ -95,15 +79,6 @@ class _Surface:
         self.io.mouse_pos = (px, py)
 
     def press(self, px: float, py: float, *extra, **_kw) -> None:
-        if self.popup is not None:
-            popup, items, name = self.popup
-            x, y, w, h = self.box
-            result = popup.press(px, py, x, y, w, h)
-            if result.item is not None:
-                self.state.dropdown_result[name] = items.index(result.item)
-            if not popup.open:
-                self.popup = None
-            return
         clicks = extra[5] if len(extra) > 5 else 1
         io = self.io
         io.mouse_pos = io.mouse_clicked_pos[0] = (px, py)

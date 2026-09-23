@@ -1399,8 +1399,6 @@ class OverlaysFeature(Feature):
         #: A dialog over :attr:`window` (the column picker over the Table Editor).
         self.top: Optional[Dialog] = None
         self.clipboard = ""
-        self._menu: Optional[tuple] = None
-        self._menu_form = None
         self._file_answers: List[str] = []
         self.constants.install()
         self.register_form(self.overlays.form)
@@ -1409,7 +1407,7 @@ class OverlaysFeature(Feature):
 
     # -- the host's services ---------------------------------------------------
     def register_form(self, form) -> None:
-        """Let the window open this form's choice lists (it draws them above all)."""
+        """Let the window find this form's fields by name (captures, tours)."""
         forms = self.app.forms
         if all(f is not form for f in forms.values()):
             forms[f"overlays:{id(form)}"] = form
@@ -1465,33 +1463,13 @@ class OverlaysFeature(Feature):
         self.register_form(dialog.form)
 
     def open_menu(self, entries: List[Tuple[str, Callable[[], Any]]], where) -> None:
-        """A context menu at *where*, drawn by the window like a choice's list."""
-        from emtk.view_form import FormState
-        from emtk.widgets.menus import MenuItem, Popup
+        """A context menu at *where*: ``(label, action)`` rows, opened by the window."""
+        from emtk.widgets.menus import MenuItem
 
         items = [MenuItem(label) for label, _ in entries]
-        popup = Popup(items)
-        box = self.app.box
-        if hasattr(popup, "set_viewport"):
-            popup.set_viewport(box[0] + box[2], box[1] + box[3])
-        popup.open_at(float(where[0]), float(where[1]))
-        if self._menu_form is None:
-            self._menu_form = FormState()
-            self.register_form(self._menu_form)
-        self._menu = (entries, popup)
-        self.app.popup = (popup, items, self._menu_form, "menu")
-
-    def _run_menu(self) -> None:
-        if self._menu is None or self._menu_form is None:
-            return
-        entries, popup = self._menu
-        picked = self._menu_form.dropdown_result.pop("menu", None)
-        if picked is not None:
-            self._menu = None
-            if 0 <= picked < len(entries):
-                entries[picked][1]()
-        elif not popup.open:
-            self._menu = None
+        actions = {id(item): action for item, (_, action) in zip(items, entries)}
+        self.app.open_menu(items, float(where[0]), float(where[1]),
+                           lambda item: actions[id(item)]())
 
     # -- actions ---------------------------------------------------------------
     def actions(self) -> Dict[str, Callable[[], Any]]:
@@ -1582,7 +1560,6 @@ class OverlaysFeature(Feature):
         self.constants.install()
         self.constants.poll()
         self.equations.follow()
-        self._run_menu()
         frame = self.app.box
         for attr in ("window", "top"):
             dialog = getattr(self, attr)

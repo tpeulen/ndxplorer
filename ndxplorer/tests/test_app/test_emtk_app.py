@@ -317,13 +317,17 @@ def test_a_toggle_click_reaches_the_model(app, source):
 def test_a_choice_opens_a_list_and_takes_the_pick(app, source):
     app.model.set_source(source)
     draw(app)
+    from emtk.overlays import open_panels
+
     click(app, *centre(app.forms["plot_controls"].rects["x_name"]))
-    assert app.popup is not None
-    popup = app.popup[0]
-    rows = popup._rows if hasattr(popup, "_rows") else None
-    target = next(rect for entry, rect in rows if entry is not None and entry.label == "Tau")
+    (popup,) = open_panels(app.storage)            # emtk opened it; the app drew nothing
+    labels = [entry.label for entry in popup.entries]
+    popup.key(0, "tau")                            # type-to-find scrolls it into view
+    draw(app)
+    target = popup.row_rect(labels.index("Tau"))
     click(app, *centre(target))
     assert app.model.x.name == "Tau"
+    assert open_panels(app.storage) == []
 
 
 def test_the_menu_bar_mirrors_the_qt_menus(app):
@@ -467,7 +471,9 @@ def test_a_right_click_elsewhere_closes_a_menu(app):
     app.open_menu([MenuItem("First")], 300.0, 200.0, lambda item: None)
     draw(app)
     app.pointer_press(900.0, 700.0, 2)
+    draw(app)
     app.pointer_release(900.0, 700.0, 2)
+    draw(app)
     assert app.popup is None
 
 

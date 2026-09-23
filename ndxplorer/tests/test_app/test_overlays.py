@@ -50,6 +50,17 @@ def draw(app, size=SIZE):
     return painter.frame
 
 
+def pick(app, popup, index):
+    """Click row *index* of the context menu *popup*, as the user does."""
+    draw(app)
+    x, y, w, h = popup.row_rect(index)
+    app.pointer_press(x + w / 2.0, y + h / 2.0, 1)
+    draw(app)
+    app.pointer_release(x + w / 2.0, y + h / 2.0, 1)
+    draw(app)
+    assert app.popup is None
+
+
 def column(app, name):
     return np.asarray(app.model.source.column_values(name), dtype=float).copy()
 
@@ -305,18 +316,14 @@ def test_a_right_click_menu_copies_and_pastes_a_value(app):
     rows = f.constants.parameter_rows()
     bg = next(r for r in rows if r["name"] == "Bg")
     f.constants.parameter_menu(bg, "value", (100.0, 200.0))
-    popup, items, form, name = app.popup
-    assert [i.label for i in items][:3] == ["Copy", "Paste", "Link…"]
-    form.dropdown_result[name] = 0               # what a click on "Copy" leaves
-    app.popup = None
-    draw(app)
+    popup, _on_choose = app.popup
+    assert [i.label for i in popup.entries][:3] == ["Copy", "Paste", "Link…"]
+    pick(app, popup, 0)                          # Copy
     assert float(f.clipboard) == bg["value"]
     f.clipboard = "7.5"
     phia = next(r for r in rows if r["name"] == "PhiA")
     f.constants.parameter_menu(phia, "value", (100.0, 200.0))
-    app.popup[2].dropdown_result["menu"] = 1     # Paste
-    app.popup = None
-    draw(app)
+    pick(app, app.popup[0], 1)                   # Paste
     assert dict(f.constants.mapping)["PhiA"] == 7.5
 
 

@@ -235,7 +235,6 @@ class RankingPanel:
         self.pairs = pairs
         self.spec = load_vizrank_spec()
         self.state = FormState(on_used=self._used)
-        # The window's dropdowns open through the frame, like the dock's.
         feature.app.forms[f"playback_export.rank.{pairs}"] = self.state
         self.model = None
         title = "Find informative projections" if pairs else "Find informative z parameters"

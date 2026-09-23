@@ -224,19 +224,11 @@ class NdxApp:
                     self._feature_modal = True
             if self.message is not None:
                 self._draw_message(x, y, w, h)
-        if self.status:
-            from emtk import style
-            from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
-
-            painter.text(x + 4.0, y + h - STATUS_H, w - 8.0, STATUS_H,
-                         ALIGN_LEFT | ALIGN_VCENTER, self.status, style.TEXT)
+            # Inside the frame, so what emtk draws over it at the frame's end
+            # -- a choice's list, a context menu -- lies over these too.
+            self._draw_chrome(painter, x, y, w, h)
+            self._keep_menu()
         self._spend_edges()
-        self._menu_box = (x, y, w, MENU_H)
-        self.menubar.set_viewport(x + w, y + h)
-        self.menubar.draw(painter, *self._menu_box)
-        self._open_dropdowns()
-        if self.popup is not None:
-            self.popup[0].draw(painter, x, y, w, h)
         self.frames += 1
         # A frame can change what it shows: a rectangle released on the map
         # becomes gates, and this frame drew the histograms from before them.
@@ -245,6 +237,30 @@ class NdxApp:
         self._frame_due = (bool(getattr(ctx, "frame_requested", False)) or self.model.stale
                            or self._corner_due)
         self._corner_due = False
+
+    def _draw_chrome(self, painter, x, y, w, h) -> None:
+        """The status line and the menu bar, drawn with the painter."""
+        if self.status:
+            from emtk import style
+            from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
+
+            painter.text(x + 4.0, y + h - STATUS_H, w - 8.0, STATUS_H,
+                         ALIGN_LEFT | ALIGN_VCENTER, self.status, style.TEXT)
+        self._menu_box = (x, y, w, MENU_H)
+        self.menubar.set_viewport(x + w, y + h)
+        self.menubar.draw(painter, *self._menu_box)
+
+    def _keep_menu(self) -> None:
+        """Keep the context menu (:meth:`open_menu`) up; what it picks runs
+        at the end of the frame the click landed in."""
+        if self.popup is not None and not self.popup[0].open:
+            self.popup = None
+        if self.popup is None:
+            return
+        from emtk import overlays
+
+        popup, on_choose = self.popup
+        overlays.popup("ndx.menu", popup, on_pick=on_choose)
 
     def _spend_edges(self) -> None:
         """One-frame input edges are used up by the frame that saw them."""
@@ -311,37 +327,12 @@ class NdxApp:
             self.message = None
         emtk.end()
 
-    def _open_dropdowns(self) -> None:
-        """A choice asked for its list: open it as a popup over everything."""
-        from emtk.widgets.menus import MenuItem, Popup
-
-        for form in self.forms.values():
-            request, form.dropdown_request = form.dropdown_request, None
-            if request is None:
-                continue
-            name, (rx, ry, rw, rh), labels, current = request
-            items = [MenuItem(text, checked=(index == current)) for index, text in enumerate(labels)]
-            popup = Popup(items)
-            popup.open_at(rx, ry + rh)
-            self.popup = (popup, items, form, name)
-
     # --------------------------------------------------------------- input
     def _box(self):
         return self.box
 
     def _press_overlays(self, px: float, py: float) -> bool:
-        """Menus and popups take a press first: they are drawn over everything."""
-        if self.popup is not None:
-            popup, items, form, name = self.popup
-            result = popup.press(px, py, *self.box)
-            if not popup.open:
-                self.popup = None
-            if result.item is not None:
-                if callable(name):                      # a menu from open_menu
-                    name(result.item)
-                else:
-                    form.dropdown_result[name] = items.index(result.item)
-            return True
+        """The menu bar takes a press first: its menus hang over the window."""
         result = self.menubar.press(px, py, *self._menu_box)
         if result.item is not None:
             action = getattr(result.item, "action", "")
@@ -362,12 +353,14 @@ class NdxApp:
         """A context menu at ``(x, y)``: *entries* are emtk menu entries
         (``MenuItem``, ``Menu`` for a submenu, ``None`` for a rule); choosing
         an item -- from a submenu too -- calls ``on_choose(item)``. A press
-        anywhere else (either button) closes it."""
+        anywhere else (either button) or Escape closes it. emtk draws it over
+        the window (:func:`emtk.overlays.popup`): kept inside it, scrolled
+        when it is taller, with the keyboard."""
         from emtk.widgets.menus import Popup
 
         popup = Popup(list(entries), title=title)
         popup.open_at(float(x), float(y))
-        self.popup = (popup, None, None, on_choose)
+        self.popup = (popup, on_choose)
 
     def run_action(self, action: str) -> bool:
         """Run a menu or button action by name; ``False`` when unavailable."""
@@ -380,7 +373,12 @@ class NdxApp:
         return False
 
     def pointer_press(self, x, y, button, modifiers=0, clicks=1) -> None:
-        if (button == 1 or self.popup is not None) and self._press_overlays(float(x), float(y)):
+        from emtk.overlays import holding
+
+        # While a list or context menu is up the press is the frame's: it
+        # picks from it or closes it (emtk.overlays).
+        if (button == 1 and not holding(self.storage)
+                and self._press_overlays(float(x), float(y))):
             return
         index = {1: 0, 2: 1, 4: 2}.get(int(button), -1)
         io = self.io
