@@ -86,6 +86,9 @@ class Dialog:
     """A dialog of this feature: a spec drawn in a :class:`emtk.dialog_window.DialogWindow`."""
 
     width, height = 480.0, 200.0
+    #: Size to the drawn content (emtk DialogWindow ``fit_height``); a dialog
+    #: whose tables fill the window sizes itself instead.
+    fit_height = False
 
     def __init__(self, feature: "AccurateFretFeature", title: str, spec: dict,
                  key: str) -> None:
@@ -97,7 +100,8 @@ class Dialog:
         self.spec = spec
         self.form = FormState()
         self.done = False
-        self.frame = DialogWindow(title, size=(self.width, self.height), key=f"afret-{key}")
+        self.frame = DialogWindow(title, size=(self.width, self.height), key=f"afret-{key}",
+                                  fit_height=self.fit_height)
         self.frame.show()
 
     @property
@@ -132,6 +136,7 @@ class OptionsDialog(Dialog):
     """What the calibration may write, before it runs."""
 
     width, height = 560.0, 470.0
+    fit_height = True
 
     def __init__(self, feature: "AccurateFretFeature") -> None:
         from ...analysis.fret_calibration import CalibrationOptions
@@ -163,14 +168,6 @@ class OptionsDialog(Dialog):
         from ...analysis.fret_calibration import unavailable_reason
 
         return unavailable_reason()
-
-    def draw(self, window: tuple) -> None:
-        # Sized to what is open: the folded "How" panel holds six rows.
-        height = 300.0 + (125.0 if self.form.folds.get("How") else 0.0) \
-            + (40.0 if self.unavailable_text() else 0.0)
-        if self.frame.size[1] != height:
-            self.frame.size = (self.width, height)
-        super().draw(window)
 
     def enabled(self, name: str) -> bool:
         if name == "calibrate":
@@ -221,6 +218,7 @@ class Question(Dialog):
     """Yes / No (/ Cancel): ``on_answer("yes" | "no" | "cancel")``."""
 
     width, height = 640.0, 200.0
+    fit_height = True
 
     def __init__(self, feature, title: str, text: str, on_answer: Callable[[str], None],
                  three_way: bool = True) -> None:
@@ -232,14 +230,6 @@ class Question(Dialog):
 
     def body(self) -> str:
         return self.text
-
-    def draw(self, window: tuple) -> None:
-        # As tall as its text: "Apply this calibration?" lists every change.
-        lines = sum(1 + len(line) // 88 for line in self.text.split("\n"))
-        height = min(90.0 + 17.0 * lines, max(float(window[3]) - 40.0, 200.0))
-        if self.frame.size[1] != height:
-            self.frame.size = (self.width, height)
-        super().draw(window)
 
     def _answered(self, answer: str) -> None:
         self.answer = answer
@@ -271,6 +261,7 @@ class ReportWindow(Dialog):
     """A finished (or loaded) calibration, and keeping it."""
 
     width, height = 720.0, 640.0
+    fit_height = True
 
     def __init__(self, feature, title: str, text: str, *, result: Optional[dict] = None,
                  saved: Optional[dict] = None, header: str = "") -> None:
@@ -293,15 +284,6 @@ class ReportWindow(Dialog):
         self._factors = self._factor_rows()
         self._populations = self._population_rows()
         self._constants = self._constant_rows()
-
-    def draw(self, window: tuple) -> None:
-        # As tall as what it shows: a loaded calibration has no populations.
-        height = 150.0 + (150.0 if self._factors else 0.0) \
-            + (120.0 if self._populations else 0.0) + (180.0 if self._constants else 0.0) \
-            + (235.0 if self.form.folds.get("Full report") else 0.0)
-        if self.frame.size[1] != height:
-            self.frame.size = (self.width, height)
-        super().draw(window)
 
     def _factor_rows(self) -> List[dict]:
         from ...analysis.fret_calibration import FACTOR_NAMES

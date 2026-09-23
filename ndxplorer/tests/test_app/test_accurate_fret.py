@@ -112,10 +112,25 @@ def test_burst_columns_and_apply_result_write_into_a_data_source():
     assert np.allclose(source.column_values("E acc"), 1.0)
 
 
-def test_without_a_backend_the_options_say_why_and_calibrate_is_off(app):
+def test_with_chisurf_the_calibration_runs_on_chisurfs_code(app):
+    """No backend installed: ChiSurf's calibration is the one used, and Calibrate is on."""
+    pytest.importorskip("chisurf.plugins.ndxplorer.calibration_bridge")
+    from chisurf.plugins.ndxplorer.calibration_bridge import calibrate_columns
     from ndxplorer.analysis import fret_calibration as fc
 
     fc.set_backend(None)
+    assert fc.backend() is calibrate_columns
+    assert fc.unavailable_reason() == ""
+
+
+def test_without_a_backend_the_options_say_why_and_calibrate_is_off(app, monkeypatch):
+    import sys
+
+    from ndxplorer.analysis import fret_calibration as fc
+
+    fc.set_backend(None)
+    # no ChiSurf: its calibration cannot be imported
+    monkeypatch.setitem(sys.modules, "chisurf.plugins.ndxplorer.calibration_bridge", None)
     assert app.run_action("fret_calibration")
     draw(app)
     dialog = feature(app).window

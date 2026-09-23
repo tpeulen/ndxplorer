@@ -152,9 +152,8 @@ Backend = Callable[..., dict]
 _BACKEND: Dict[str, Any] = {"fn": None}
 
 #: Why no calibration can run, when no backend is installed.
-NO_BACKEND = ("Accurate FRET needs the accurate-FRET library, which is not wired into "
-              "this installation yet (it is moving into a compiled library shared "
-              "with ChiSurf).")
+NO_BACKEND = ("Accurate FRET needs ChiSurf's FRET calibration, which could not be "
+              "imported here.")
 
 
 def set_backend(fn: Optional[Backend]) -> None:
@@ -163,7 +162,16 @@ def set_backend(fn: Optional[Backend]) -> None:
 
 
 def backend() -> Optional[Backend]:
-    """The installed backend, or ``None``."""
+    """The installed backend: the one :func:`set_backend` put in, else ChiSurf's
+    calibration when ChiSurf is importable, else ``None``."""
+    if _BACKEND["fn"] is None:
+        try:
+            from chisurf.plugins.ndxplorer.calibration_bridge import calibrate_columns
+        except Exception:  # noqa: BLE001 - no ChiSurf: the windows say why
+            logger.warning("no FRET calibration backend: ChiSurf's calibration "
+                           "could not be imported", exc_info=True)
+            return None
+        _BACKEND["fn"] = calibrate_columns
     return _BACKEND["fn"]
 
 
