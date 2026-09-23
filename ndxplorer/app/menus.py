@@ -87,7 +87,8 @@ def iter_entries(entries=None, path=()):
 def merged_menus(extra=()) -> List[tuple]:
     """:data:`MENUS` with the features' rows added: ``extra`` is
     ``[(path, entry)]``, *path* a tuple of menu titles. A missing submenu on
-    the path is created at the end of its parent."""
+    the path is created at the end of its parent; a missing top-level menu
+    goes before Help, which stays last."""
     import copy
 
     menus = copy.deepcopy(MENUS)
@@ -99,7 +100,11 @@ def merged_menus(extra=()) -> List[tuple]:
                          None)
             if found is None:
                 found = (title, [])
-                level.append(found)
+                last = level[-1] if level else None
+                if level is menus and isinstance(last, tuple) and last[0] == "Help":
+                    level.insert(len(level) - 1, found)
+                else:
+                    level.append(found)
             entries = found[1]
             level = entries
         if entries is not None:

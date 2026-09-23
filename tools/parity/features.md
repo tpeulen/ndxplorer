@@ -497,3 +497,63 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 - [x] "Clear" (tooltip "Clear plot") empties the plots and the Path field (Qt quirk, do not copy: after Clear the map shows the hidden 1000-row placeholder dataset, two synthetic blobs, while the total still reads 12237)
 - [x] "Update" (tooltip "Update plot") redraws
+
+## ChiSurf-hosted window — what ChiSurf's ndX plugin adds
+
+The scenarios below run the Qt window the way ChiSurf's ribbon opens it: the
+plugin's `__init__.py` executed with `__name__ == "plugin"` (`capture_qt.py`
+scenario key `"host": "chisurf"`). What that adds to the standalone window,
+from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
+
+- `rpc_bridge.make_ndxplorer`: an in-process ChiSurf RPC client (`chisurf_rpc`), which gives the **ChiSurf Phasor** toolbar and panel and the "Send selection to" targets (PDA, burst FCS, burst MLE); and **the calibration stored in an opened `.pto` is restored** into the constants (factor table, background artifact, saved `fret_calibration`).
+- the **Accurate FRET** toolbar: FRET calibration, Save calibration, Load calibration, Sync constants;
+- the **MMFDB** toolbar (Open from MMFDB), only when `mmfdb.status` answers;
+- the constants published as fitting parameters in the **Global View** (`parameters.bind_ndx_parameters`).
+- Not GUI: `cli.py` (`chisurf ndxplorer filter|image`, MMFDB-backed headless runs) and `mmfdb_launcher.open_burst_selection_from_mmfdb` / `send_path_to_ndxplorer` (other plugins open ndX with a path).
+- Trap: ChiSurf's *menu* route (`run_plugin_from_dir`) opens the manifest's `entrypoints.gui` (`make_ndxplorer`) and never runs `__init__.py`, so a window opened from the menu has the Phasor toolbar and the restore, but **no Accurate FRET or MMFDB toolbar and no Global View parameters**; only the ribbon route runs the decoration.
+
+## chisurf_toolbars — ChiSurf-hosted window: the toolbars and constants ChiSurf adds
+
+- [~] Toolbar "Accurate FRET" (🎯 FRET calibration, 💾 Save calibration, 📂 Load calibration, ⟲ Sync constants) — the **FRET** menu (before Help): FRET calibration…, Save calibration…, Load calibration…, in the app whether or not ChiSurf hosts it; no toolbar button (the toolbar's space was just given to the map)
+- [-] "⟲ Sync constants" (Global View -> window, then back) — not needed: the emtk constants *are* the registered parameter group (`overlays.ConstantsPanel` registers it as owner `ndxplorer`, the slot `bind_ndx_parameters` uses), so a Global View edit is the window's value; there is no copy to sync
+- [ ] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — not ported (see chisurf_phasor)
+- [ ] Opening a `.pto` restores its stored calibration (Qt shot `parameters_restored`: gG/gR 1.333, PhiA = PhiD = 1, alpha 0.157, beta 0.0674, r 0.9435, Bg/Br/By 4.24/0.538/2.02) — not yet: the restore is `calibration_bridge.restore_calibration_from_container`, held for the accurate-FRET library move. The emtk app opens with the settings' constants, and a calibration started there starts from them (see accurate_fret_run)
+- [-] Global View publishing — the emtk constants group is registered in ChiSurf's parameter-group registry already; it reaches the Global View once the emtk app runs inside ChiSurf's process, which no ChiSurf plugin does yet
+
+## accurate_fret_options — Accurate FRET > FRET calibration: the options dialog
+
+- [x] Window "FRET calibration" — FRET > FRET calibration…; the form is `ndxplorer/analysis/fret_calibration_options.view.json`, the *same file* the Qt window's AutoForm shows (moved from the plugin into ndX)
+- [x] Determine: α leakage, δ direct excitation, γ detection / QY, β excitation flux (on), R₀ Förster radius (off), two per line, with their tooltips
+- [x] Background: Take from (fit / measurement / constants / none), Min. reference bursts (20)
+- [x] How (folded): γ from (auto / es / lifetime / combined), Use light-path priors, Bootstrap resamples (50), τ_D(0) (ns) (from the window's tauD0), Linker σ (Å) (6), Add accurate E / S / R_DA columns
+- [x] When it finishes: Store the calibration in the measurement (on)
+- [x] 🎯 Calibrate / Cancel — Calibrate / Cancel; without a calibration backend Calibrate is off and a line says why (the algorithm is moving into a compiled library)
+
+## accurate_fret_run — Accurate FRET > FRET calibration: a real run and its report
+
+- [x] Progress "FRET calibration…" with Cancel while it runs — a DialogWindow with the step message, a bar and Cancel; the run is an `emtk.tasks` task (a thread on a desktop, slices in a page)
+- [x] The factors are written into the constants and ndX's columns recomputed (Parameters tab after the run)
+- [x] New columns FRET efficiency (accurate), Stoichiometry (accurate), R_DA (accurate), Population, Off static FRET line, selectable on the axes
+- [x] Stored in the measurement when "Store…" is on, before the report opens; the report says where
+- [~] Report window "FRET calibration — applied": the text (factors ± uncertainty, populations, γ routes, constants before → after, held factors, fitted background, new columns) — the same text (`fret_calibration.report_text`, moved out of the plugin) in a folded "Full report", with tables above it: correction factors (value, ±, written/held), FRET populations (bursts, E, σE, S, R, τf), constants (before, after)
+- [x] Save calibration… / Save report… / Close
+- [x] Numbers: from the same starting constants the emtk run gives α 0.15700104, β 1.05988512, γ 0.75022932, δ 0.06742034 and uncertainties identical to the Qt run, and the same report text (verified with ChiSurf's current algorithm behind the backend contract; the shipped app has no backend until the library lands)
+
+## calibration_save_load — Accurate FRET > Save calibration / Load calibration
+
+- [x] Save: "Store the calibration in the measurement?" with the container path, Yes / No / Cancel; Yes stores into the `.pto`, No asks for a `*.fretcal.json` file (io service: a dialog, a download in a page), then says where it went
+- [x] Save without a container goes straight to the file
+- [x] Load: "This measurement carries N stored calibration(s). Load the most recent one? No opens a file instead." Yes / No / Cancel
+- [x] "Apply this calibration to the window?" with when/where it was saved and the changes (or "Nothing would change."), Yes / No; nothing changes before Yes
+- [x] A stored report opens in the report window "FRET calibration — loaded"
+- [x] Same file format both ways (`ndxplorer/io/fret_calibration_io.py`, moved from the plugin's `calibration_io.py`): a file saved by one window loads in the other
+
+## mmfdb_open — MMFDB > Open from MMFDB (ChiSurf-hosted)
+
+- [~] Toolbar "MMFDB" > "Open from MMFDB" (dataset picker, then open like a drop) — File > Import > "From MMFDB… (only inside ChiSurf)", disabled: it needs ChiSurf's MMFDB client
+- [-] (Qt: broken) The Qt toolbar is never added: the plugin builds `MMFDBClient(inprocess=True)` without a session token, and `mmfdb.status` requires one, so `status()` raises and the toolbar is skipped silently (the log's toolbars list has no MMFDB entry)
+
+## chisurf_phasor — ChiSurf Phasor > Phasor / FRET… (ChiSurf-hosted)
+
+- [ ] "Phasor / FRET…" shows the ChiSurf Phasor / FRET dock: Phasor overlays (Frequency, Harmonic, Lifetimes, Donor τ0, Show: universal semicircle / iso-lifetime grid / lifetime ticks / polar grid / FRET trajectory, Draw overlays, Clear), FRET line (Model, Sweep param, Min, Max, Points, Draw FRET line), Derived columns (τ φ/M columns) — not ported: it needs a ChiSurf RPC client, which the emtk app does not get yet (`--chisurf-rpc` does not reach `NdxApp`)
+- [ ] "✕ Clear" removes the ChiSurf overlays — not ported (as above)

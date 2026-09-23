@@ -1,0 +1,172 @@
+{
+ "title": "FRET calibration",
+ "_comment": "The report of a finished (or loaded) calibration: the factors with their uncertainties, the populations it found, what the window's constants became, and the calibration's whole text -- with keeping the calibration or the text beside it. The Qt window shows the text only; the tables are the same numbers, readable at a glance.",
+ "sections": [
+  {
+   "type": "info",
+   "source": "header_text"
+  },
+  {
+   "type": "custom",
+   "key": "data_table",
+   "title": "Correction factors",
+   "hidden_when": {
+    "attr": "has_factors",
+    "equals": "false"
+   },
+   "options": {
+    "source": "factor_rows",
+    "row_key": "factor",
+    "height": 132,
+    "columns": [
+     {
+      "key": "factor",
+      "title": "Factor",
+      "tooltip": "α leakage, δ direct excitation, γ detection/QY ratio, β excitation flux ratio (Hellenkamp et al. 2018); R₀ the Förster radius."
+     },
+     {
+      "key": "value",
+      "title": "Value",
+      "format": "%.4f"
+     },
+     {
+      "key": "error",
+      "title": "±",
+      "format": "%.4f",
+      "tooltip": "Standard error from the bootstrap (population assignment held fixed)."
+     },
+     {
+      "key": "written",
+      "title": "Written",
+      "tooltip": "Whether the factor was written into the window, or held at the value it had (the options' Determine toggles)."
+     }
+    ]
+   }
+  },
+  {
+   "type": "custom",
+   "key": "data_table",
+   "title": "FRET populations",
+   "hidden_when": {
+    "attr": "has_populations",
+    "equals": "false"
+   },
+   "options": {
+    "source": "population_rows",
+    "row_key": "label",
+    "height": 96,
+    "columns": [
+     {
+      "key": "label",
+      "title": "#"
+     },
+     {
+      "key": "n",
+      "title": "Bursts"
+     },
+     {
+      "key": "E",
+      "title": "E",
+      "format": "%.3f",
+      "tooltip": "Accurate FRET efficiency of the population."
+     },
+     {
+      "key": "sigma_E",
+      "title": "σE",
+      "format": "%.3f"
+     },
+     {
+      "key": "S",
+      "title": "S",
+      "format": "%.3f"
+     },
+     {
+      "key": "distance",
+      "title": "R (Å)",
+      "format": "%.1f"
+     },
+     {
+      "key": "tau_f",
+      "title": "τf (ns)",
+      "format": "%.3f"
+     }
+    ]
+   }
+  },
+  {
+   "type": "custom",
+   "key": "data_table",
+   "title": "ndX constants",
+   "hidden_when": {
+    "attr": "has_constants",
+    "equals": "false"
+   },
+   "options": {
+    "source": "constant_rows",
+    "row_key": "name",
+    "height": 150,
+    "columns": [
+     {
+      "key": "name",
+      "title": "Constant"
+     },
+     {
+      "key": "before",
+      "title": "Before",
+      "format": "%.4g"
+     },
+     {
+      "key": "after",
+      "title": "After",
+      "format": "%.4g"
+     }
+    ]
+   }
+  },
+  {
+   "type": "info",
+   "source": "notes_text"
+  },
+  {
+   "type": "panel",
+   "title": "Full report",
+   "collapsible": true,
+   "collapsed": true,
+   "description": "The calibration's whole text, as the Qt window's report shows it and as Save report writes it.",
+   "sections": [
+    {
+     "type": "custom",
+     "key": "code_editor",
+     "target": "report_text",
+     "options": {
+      "read_only": true,
+      "height": 220
+     }
+    }
+   ]
+  },
+  {
+   "type": "info",
+   "source": "status_text"
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Save calibration…",
+     "action": "save_calibration",
+     "description": "Keep this calibration: into the .pto measurement it was determined from, or a separate *.fretcal.json file."
+    },
+    {
+     "label": "Save report…",
+     "action": "save_report",
+     "description": "Write the report text to a file."
+    },
+    {
+     "label": "Close",
+     "action": "close"
+    }
+   ]
+  }
+ ]
+}

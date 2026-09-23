@@ -1,0 +1,30 @@
+{
+ "title": "Question",
+ "sections": [
+  {
+   "type": "info",
+   "source": "body"
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Yes",
+     "action": "yes"
+    },
+    {
+     "label": "No",
+     "action": "no"
+    },
+    {
+     "label": "Cancel",
+     "action": "cancel",
+     "hidden_when": {
+      "attr": "two_way",
+      "equals": "true"
+     }
+    }
+   ]
+  }
+ ]
+}

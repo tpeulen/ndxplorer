@@ -104,6 +104,7 @@ FEATURES: List[str] = [
     "io",
     "settings",
     "selection",
+    "accurate_fret",
     "analysis",
     "overlays",
     "playback_export",

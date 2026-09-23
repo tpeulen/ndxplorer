@@ -1,0 +1,25 @@
+{
+ "title": "FRET calibration…",
+ "_comment": "Shown while a calibration runs: it is six refinement passes and the bootstrap, twice with background 'fit' -- long enough that a window which simply stops answering looks broken.",
+ "sections": [
+  {
+   "type": "info",
+   "source": "message_text"
+  },
+  {
+   "type": "progress",
+   "attr": "fraction",
+   "text_source": "fraction_text"
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Cancel",
+     "action": "cancel",
+     "description": "Stop the calibration; the window keeps the constants it had."
+    }
+   ]
+  }
+ ]
+}

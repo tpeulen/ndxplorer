@@ -112,6 +112,8 @@ class Replay:
         # user's own layout.
         self.app = NdxApp(layout_store=layout_store)
         self.shots: Dict[str, object] = {}
+        #: Optional steps that could not be replayed, and why.
+        self.skipped: List[str] = []
         self.frame = None
 
     # ------------------------------------------------------------ drawing
@@ -166,6 +168,9 @@ class Replay:
         if ref.startswith("@"):
             ref = self.catalogue["datasets"][ref[1:]]["path"]
         ref = ref.replace("$REPO", str(REPO))
+        # $HOME is the scenario's scratch home (a file it writes); "~" was
+        # expanded against the real one when the catalogue was loaded.
+        ref = ref.replace("$HOME", os.environ.get("HOME", ""))
         return os.path.expanduser(ref)
 
     def panel_rect(self, title: str):
@@ -255,7 +260,14 @@ class Replay:
         for step in (self.catalogue.get("setups", {}).get(setup, []) if setup else []):
             self.step(step)
         for step in self.scenario.get("steps", []):
-            self.step(step)
+            try:
+                self.step(step)
+            except Unsupported as exc:
+                # An optional step (a shot of something only the Qt window
+                # has) is left out, as capture_qt.py leaves it out on failure.
+                if not step.get("optional"):
+                    raise
+                self.skipped.append(f"{step.get('op')}: {exc}")
         if "main" not in self.shots:
             # The Qt harness photographs the window at the end of every
             # scenario that names no "main" shot; so does this.
@@ -283,6 +295,23 @@ class Replay:
             merged.update(feature.capture_actions())
         return merged
 
+    def open_target(self, step: dict) -> str:
+        """The path a step opens: with ``copy``, a copy in the scratch ``$HOME``.
+
+        A scenario that writes into what it opened (a calibration is stored
+        in the `.pto`) works on a copy, as ``capture_qt.py`` does, so the
+        user's measurement is never the one written.
+        """
+        path = self.dataset(step["path"])
+        if not step.get("copy"):
+            return path
+        import shutil
+
+        copy = pathlib.Path(os.environ["HOME"]) / pathlib.Path(path).name
+        if not copy.exists():
+            shutil.copyfile(path, copy)
+        return str(copy)
+
     def op_open(self, step: dict) -> None:
         if step.get("expect_error"):
             ok = self.app.open_path(self.dataset(step["path"]))
@@ -291,7 +320,7 @@ class Replay:
         else:
             if step.get("action") and step["action"] not in self.actions():
                 raise Unsupported(f"action {step['action']!r}")
-            if not self.app.open_path(self.dataset(step["path"])):
+            if not self.app.open_path(self.open_target(step)):
                 raise Unsupported(f"could not open {step['path']}: {self.app.model.error}")
         self.settle()
 
