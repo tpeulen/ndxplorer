@@ -1,32 +1,43 @@
-"""The Playback panel: what AutoForm binds to, and the timer that drives it.
+"""The Playback panel: what a ``view.json`` binds to, and when the step changes.
 
 :class:`~ndxplorer.core.playback.PlaybackController` decides *which points are
 shown*; this decides *when the step changes*. Keeping the two apart is what lets
-the gating be tested without a Qt event loop, which is where the interesting
+the gating be tested without an event loop, which is where the interesting
 cases live -- the edges of the range, the last step, the frame-index equivalence.
 
-The panel itself is declared in ``playback.view.json`` and rendered by chisurf's
-AutoForm, so the controls, their tooltips and the fold state are data rather than
-another two hundred lines of widget construction.
+The panel itself is declared in ``playback.view.json``. The Qt window renders it
+with chisurf's AutoForm and the emtk app (:mod:`ndxplorer.app.features.playback_export`)
+with :mod:`emtk.view_form`; both bind the same :class:`PlaybackViewModel`.
+
+No toolkit is imported here and nothing here owns a timer. Playing is a flag
+and a due time: whoever drives the display calls :meth:`PlaybackViewModel.tick`
+-- the emtk app from its frame loop (so it plays in the browser, where there is
+no timer thread), the Qt window from a ``QTimer`` it starts and stops when
+``on_timing`` says the model started, stopped or changed speed.
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
+import time
 import typing
-
-from qtpy import QtCore
 
 from ..core import playback as pb
 from ..logging_config import logging
 
-__all__ = ["PlaybackViewModel", "VIEW_SPEC_PATH"]
+__all__ = ["PlaybackViewModel", "VIEW_SPEC_PATH", "load_spec"]
 
 VIEW_SPEC_PATH = pathlib.Path(__file__).parent / "playback.view.json"
 
 
-class PlaybackViewModel(QtCore.QObject):
+def load_spec() -> dict:
+    """The parsed ``playback.view.json``, as a plain mapping."""
+    with open(VIEW_SPEC_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class PlaybackViewModel:
     """AutoForm binding for a :class:`~ndxplorer.core.playback.PlaybackController`.
 
     Every field AutoForm writes is a property that forwards to the controller and
@@ -46,15 +57,24 @@ class PlaybackViewModel(QtCore.QObject):
     on_rebuild : callable, optional
         Called when the *shape* of the form changed rather than a value in it --
         the step slider's range is the step count, which is itself editable, so
-        the spec has to be re-read. The host defers the rebuild, because it
-        arrives from inside a signal of a widget the rebuild destroys.
-    parent : QtCore.QObject, optional
-        Qt parent for the playback timer.
+        a retained form (the Qt AutoForm) has to re-read the spec. An immediate
+        form reads :meth:`bounds` every frame and needs no rebuild.
+    on_timing : callable, optional
+        Called with no arguments when playing started or stopped or the speed
+        changed -- for a host that drives :meth:`tick` from a timer of its own
+        and has to start, stop or re-time it.
+    clock : callable, optional
+        Seconds, monotonic; :func:`time.monotonic` by default. Injectable so the
+        timing is testable without waiting.
     """
 
+    #: A tick this close to its due time (as a fraction of the step interval)
+    #: already counts: a timer set to the interval fires a millisecond early as
+    #: often as late, and a frame loop is only ever near the due time.
+    TOLERANCE = 0.25
+
     def __init__(self, controller, on_change=None, on_axis_change=None,
-                 on_rebuild=None, parent=None):
-        super().__init__(parent)
+                 on_rebuild=None, on_timing=None, clock=None):
         self.playback = controller
         self._on_change = on_change
         self._on_axis_change = on_axis_change
@@ -68,9 +88,10 @@ class PlaybackViewModel(QtCore.QObject):
         # ``collapsed: true`` folds the panel under the user's hands.
         self.collapsed = True
 
-        self._timer = QtCore.QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._apply_interval()
+        self._on_timing = on_timing
+        self._clock = clock or time.monotonic
+        self._playing = False
+        self._next_due: typing.Optional[float] = None
 
     # ------------------------------------------------------------- plumbing
 
@@ -85,8 +106,7 @@ class PlaybackViewModel(QtCore.QObject):
         """
         from chisurf.core.dataspec import load_view_spec
 
-        with open(VIEW_SPEC_PATH, encoding="utf-8") as fh:
-            spec = json.load(fh)
+        spec = load_spec()
         panel = spec["sections"][0]
         panel["collapsed"] = bool(self.collapsed)
         for section in panel["sections"]:
@@ -102,8 +122,31 @@ class PlaybackViewModel(QtCore.QObject):
         if callable(self._on_rebuild):
             self._on_rebuild()
 
-    def _apply_interval(self) -> None:
-        self._timer.setInterval(max(1, int(1000 / max(1, self.playback.fps))))
+    def _timing_changed(self) -> None:
+        if callable(self._on_timing):
+            self._on_timing()
+
+    @property
+    def interval(self) -> float:
+        """Seconds between two steps while playing."""
+        return 1.0 / max(1, int(self.playback.fps))
+
+    def bounds(self, name: str):
+        """Run-time limits of a field (:mod:`emtk.view_form`'s hook): the step
+        slider runs over the steps there are."""
+        if name == "position":
+            return (0, max(0, int(self.playback.n_steps) - 1))
+        return None
+
+    def enabled(self, name: str) -> bool:
+        """Which control is usable now: all of them once there is a column to
+        offer, the transport and the step only with an axis chosen."""
+        if not self._options:
+            return False
+        if name in ("position", "step_backward", "step_forward", "play_backward",
+                    "play_forward", "pause", "n_steps", "mode"):
+            return self.playback.enabled
+        return True
 
     def set_axis_options(self, names: typing.Sequence[str]) -> None:
         """Set the columns offered in the axis combo."""
@@ -191,24 +234,33 @@ class PlaybackViewModel(QtCore.QObject):
 
     @fps.setter
     def fps(self, value: int) -> None:
-        self.playback.fps = max(1, int(value))
-        self._apply_interval()
+        fps = max(1, int(value))
+        if fps == self.playback.fps:
+            return
+        self.playback.fps = fps
+        if self._playing:
+            self._next_due = self._clock() + self.interval
+        self._timing_changed()
 
     # ------------------------------------------------------------ transport
 
     @property
     def playing(self) -> bool:
-        """Whether the timer is running."""
-        return self._timer.isActive()
+        """Whether the playback is running."""
+        return self._playing
 
     def _can_step(self) -> bool:
         """Stepping needs an axis and a mode that has steps to move between."""
         return self.playback.gating
 
     def stop(self) -> None:
-        """Stop the timer without changing the step."""
-        self._timer.stop()
+        """Stop playing without changing the step."""
+        was = self._playing
+        self._playing = False
+        self._next_due = None
         self.playback.direction = 0
+        if was:
+            self._timing_changed()
 
     def pause(self) -> None:
         """Transport: stop."""
@@ -253,13 +305,42 @@ class PlaybackViewModel(QtCore.QObject):
             self.playback.set_mode(pb.MODE_WINDOW)
             self.playback.set_position(0 if direction > 0 else self.playback.n_steps - 1)
         self.playback.direction = direction
-        self._apply_interval()
-        self._timer.start()
+        self._playing = True
+        self._next_due = self._clock() + self.interval
+        self._timing_changed()
         self._changed()
 
-    def _tick(self) -> None:
+    def seconds_to_next_step(self, now: typing.Optional[float] = None) -> typing.Optional[float]:
+        """How long until :meth:`tick` steps; ``None`` while stopped."""
+        if not self._playing or self._next_due is None:
+            return None
+        now = self._clock() if now is None else float(now)
+        return max(0.0, self._next_due - now)
+
+    def tick(self, now: typing.Optional[float] = None) -> bool:
+        """Advance one step if one is due; returns whether it stepped.
+
+        Called as often as the host likes -- every frame, or from a timer at
+        the step interval. At most one step is taken per call: a display that
+        cannot keep up drops steps rather than showing a burst of them, so the
+        playback keeps its speed and loses frames instead.
+        """
+        if not self._playing:
+            return False
+        now = self._clock() if now is None else float(now)
+        interval = self.interval
+        if self._next_due is None:
+            self._next_due = now + interval
+            return False
+        if now < self._next_due - self.TOLERANCE * interval:
+            return False
         if not self._can_step():
             self.stop()
-            return
+            self._changed()
+            return False
         self.playback.step(self.playback.direction)
+        self._next_due += interval
+        if self._next_due <= now:
+            self._next_due = now + interval
         self._changed()
+        return True

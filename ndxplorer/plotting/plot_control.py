@@ -1719,8 +1719,12 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             on_change=self._on_playback_changed,
             on_axis_change=self._on_playback_axis_changed,
             on_rebuild=self._rebuild_playback_panel,
-            parent=self,
+            on_timing=self._sync_playback_timer,
         )
+        # The model owns *when* a step is due; the Qt window only has to wake
+        # it up, at the step interval, while it plays.
+        self._playback_timer = QtCore.QTimer(self)
+        self._playback_timer.timeout.connect(self.playback_model.tick)
         self.playback_form = AutoForm(self.playback_model, parent=self)
         # Maximum, not the default Preferred: an AutoForm ends its layout with a
         # stretch, so given spare vertical space it keeps it -- and folding the
@@ -1736,6 +1740,18 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.playback_form.setVisible(False)
         self.playback_form.rebuilt.connect(self._wire_playback_fold)
         self._wire_playback_fold()
+
+    def _sync_playback_timer(self):
+        """Start, stop or re-time the timer that drives the playback's ticks."""
+        model = self.playback_model
+        timer = getattr(self, "_playback_timer", None)
+        if model is None or timer is None:
+            return
+        timer.setInterval(max(1, int(round(model.interval * 1000.0))))
+        if model.playing and not timer.isActive():
+            timer.start()
+        elif not model.playing and timer.isActive():
+            timer.stop()
 
     def _wire_playback_fold(self):
         """Remember whether the user left the panel open, across rebuilds.

@@ -332,10 +332,12 @@ def test_play_starts_the_timer_and_pause_stops_it(control):
 
     _button(control, "play_forward").click()
     assert control.playback_model.playing
+    assert control._playback_timer.isActive()
     assert control.playback.direction == 1
 
     _button(control, "pause").click()
     assert not control.playback_model.playing
+    assert not control._playback_timer.isActive()
 
 
 def test_pressing_play_again_stops_it(control):
@@ -374,7 +376,8 @@ def test_a_timer_tick_advances_one_step(control):
     control.setup_playback(_burst_source())
     control.playback_model.mode = MODE_WINDOW
     _button(control, "play_forward").click()
-    control.playback_model._tick()
+    model = control.playback_model
+    model.tick(model._next_due)
     assert control.playback.position == 1
 
 
@@ -382,10 +385,11 @@ def test_a_timer_tick_advances_one_step(control):
 
 def test_the_speed_control_sets_the_timer_interval(control):
     control.setup_playback(_burst_source())
+    _button(control, "play_forward").click()
     control.playback_model.fps = 20
-    assert control.playback_model._timer.interval() == 50
+    assert control._playback_timer.interval() == 50
     control.update_playback_settings(fps=5)
-    assert control.playback_model._timer.interval() == 200
+    assert control._playback_timer.interval() == 200
     assert control.playback.fps == 5
 
 
