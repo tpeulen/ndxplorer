@@ -32,9 +32,10 @@
           "label": "Step",
           "kind": "int",
           "style": "slider",
+          "field": false,
           "minimum": 0,
           "maximum": 99,
-          "description": "Which slice is on screen. Drag to scrub through the measurement. Hovering shows the slice and how many points survive it."
+          "description": "Which slice is on screen. Drag to scrub through the measurement; double-click to type a step. Hovering shows the slice and how many points survive it."
         },
         {
           "type": "button_row",
@@ -61,6 +62,7 @@
           "label": "Speed",
           "kind": "int",
           "style": "slider",
+          "field": false,
           "minimum": 1,
           "maximum": 60,
           "suffix": " fps",

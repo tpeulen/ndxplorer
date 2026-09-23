@@ -349,7 +349,7 @@
      "type": "custom",
      "key": "z_plot",
      "options": {
-      "height": 90
+      "height": 56
      },
      "description": "The z marginal; drag the region to set the z range."
     }
