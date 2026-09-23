@@ -1,0 +1,259 @@
+{
+ "title": "Axis Control",
+ "description": "Which axes and axis titles the plots show, and the titles' colour.",
+ "sections": [
+  {
+   "type": "info",
+   "text": "Tick the axes each plot shows. Apply or OK redraws the plots; Save also writes the axis titles and their colour to the settings folder."
+  },
+  {
+   "type": "panel",
+   "title": "X Plot",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "x_bottom",
+     "label": "Bottom Axis",
+     "description": "Show/hide the bottom axis of the X plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "x_top",
+     "label": "Top Axis",
+     "description": "Show/hide the top axis of the X plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "x_left",
+     "label": "Left Axis",
+     "description": "Show/hide the left axis of the X plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "x_right",
+     "label": "Right Axis",
+     "description": "Show/hide the right axis of the X plot"
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Y Plot",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "y_bottom",
+     "label": "Bottom Axis",
+     "description": "Show/hide the bottom axis of the Y plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "y_top",
+     "label": "Top Axis",
+     "description": "Show/hide the top axis of the Y plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "y_left",
+     "label": "Left Axis",
+     "description": "Show/hide the left axis of the Y plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "y_right",
+     "label": "Right Axis",
+     "description": "Show/hide the right axis of the Y plot"
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Z Plot",
+   "n_col": 3,
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "z_enable",
+     "label": "Enable Z Plot",
+     "description": "Dynamic z-selection: the z range gates the other plots"
+    },
+    {
+     "type": "toggle",
+     "attr": "z_bottom",
+     "label": "Bottom Axis",
+     "description": "Show/hide the bottom axis of the Z plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "z_left",
+     "label": "Left Axis",
+     "description": "Show/hide the left axis of the Z plot"
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "2D Plot",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "map_bottom",
+     "label": "Bottom Axis",
+     "description": "Show/hide the bottom axis of the 2D plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "map_top",
+     "label": "Top Axis",
+     "description": "Show/hide the top axis of the 2D plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "map_left",
+     "label": "Left Axis",
+     "description": "Show/hide the left axis of the 2D plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "map_right",
+     "label": "Right Axis",
+     "description": "Show/hide the right axis of the 2D plot"
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Overlay Plot",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "overlay_bottom",
+     "label": "Bottom Axis",
+     "description": "Show/hide the bottom axis of the overlay plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "overlay_top",
+     "label": "Top Axis",
+     "description": "Show/hide the top axis of the overlay plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "overlay_left",
+     "label": "Left Axis",
+     "description": "Show/hide the left axis of the overlay plot"
+    },
+    {
+     "type": "toggle",
+     "attr": "overlay_right",
+     "label": "Right Axis",
+     "description": "Show/hide the right axis of the overlay plot"
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Axis Label Settings",
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "enable_all_labels",
+     "label": "Enable All Labels",
+     "description": "Show every axis title; untick to choose them one by one"
+    },
+    {
+     "type": "panel",
+     "title": "Y Plot Labels",
+     "n_col": 2,
+     "sections": [
+      {
+       "type": "toggle",
+       "attr": "y_label_top",
+       "label": "Top Axis Label",
+       "description": "The y parameter's name above the Y plot"
+      },
+      {
+       "type": "toggle",
+       "attr": "y_label_right",
+       "label": "Right Axis Label",
+       "description": "The y parameter's name right of the Y plot"
+      }
+     ]
+    },
+    {
+     "type": "panel",
+     "title": "X Plot Labels",
+     "sections": [
+      {
+       "type": "toggle",
+       "attr": "x_label_top",
+       "label": "Top Axis Label",
+       "description": "The x parameter's name above the X plot"
+      }
+     ]
+    },
+    {
+     "type": "panel",
+     "title": "Z Plot Labels",
+     "n_col": 2,
+     "sections": [
+      {
+       "type": "toggle",
+       "attr": "z_label_bottom",
+       "label": "Bottom Axis Label",
+       "description": "The z parameter's name under the Z plot"
+      },
+      {
+       "type": "toggle",
+       "attr": "z_label_left",
+       "label": "Left Axis Label",
+       "description": "The z parameter's name left of the Z plot"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Font Settings",
+   "sections": [
+    {
+     "type": "value",
+     "attr": "title_color",
+     "label": "Title color",
+     "kind": "color",
+     "description": "Colour of the axis titles"
+    }
+   ]
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "OK",
+     "action": "ok",
+     "description": "Apply and close"
+    },
+    {
+     "label": "Save",
+     "action": "save",
+     "description": "Save axis label settings to the settings folder"
+    },
+    {
+     "label": "Cancel",
+     "action": "cancel",
+     "description": "Close without applying"
+    },
+    {
+     "label": "Apply",
+     "action": "apply",
+     "description": "Redraw the plots with these axes"
+    }
+   ]
+  }
+ ]
+}

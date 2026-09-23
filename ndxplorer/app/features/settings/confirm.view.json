@@ -1,0 +1,22 @@
+{
+ "title": "Confirm",
+ "sections": [
+  {
+   "type": "info",
+   "source": "body"
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Yes",
+     "action": "yes"
+    },
+    {
+     "label": "No",
+     "action": "no"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,154 @@
+{
+ "title": "ndX Report Tool",
+ "description": "Batch reports over analysis folders: a report.yaml names the plots, each folder gets PNGs, CSVs and a DOCX.",
+ "sections": [
+  {
+   "type": "panel",
+   "title": "Analysis folders (drop here):",
+   "sections": [
+    {
+     "type": "custom",
+     "key": "data_table",
+     "options": {
+      "source": "folder_rows",
+      "columns": [
+       {
+        "key": "path",
+        "title": "Folder",
+        "tooltip": "An analysis folder, or a folder above several"
+       },
+       {
+        "key": "processed",
+        "title": "Report",
+        "width": 56,
+        "tooltip": "Has a report already"
+       }
+      ],
+      "selected_call": "select_folder",
+      "row_key": "path",
+      "expand": true,
+      "height": 300,
+      "context_call": "folder_menu"
+     }
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "Add…",
+       "action": "add_folder",
+       "description": "Add an analysis folder (or a folder above several)"
+      },
+      {
+       "label": "Remove",
+       "action": "remove_folder",
+       "description": "Remove the selected folder from the list"
+      },
+      {
+       "label": "Clear",
+       "action": "clear_folders",
+       "description": "Remove every folder from the list"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Report YAML (report.yaml):",
+   "sections": [
+    {
+     "type": "custom",
+     "key": "code_editor",
+     "target": "config_text",
+     "options": {
+      "height": 170,
+      "language": "none"
+     }
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "Load…",
+       "action": "load_config",
+       "description": "Load a report.yaml (YAML or JSON)"
+      },
+      {
+       "label": "Save…",
+       "action": "save_config",
+       "description": "Save the configuration as YAML or JSON"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Browse generated images",
+   "sections": [
+    {
+     "type": "value",
+     "attr": "selected_path",
+     "label": "Folder",
+     "read_only": true,
+     "placeholder": "No folder selected",
+     "description": "The full path of the selected folder"
+    },
+    {
+     "type": "choice",
+     "attr": "image_name",
+     "label": "Plot:",
+     "options_source": "image_options",
+     "description": "The generated images of the selected folder"
+    },
+    {
+     "type": "custom",
+     "key": "report_image",
+     "options": {
+      "expand": true
+     }
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Generate",
+   "sections": [
+    {
+     "type": "info",
+     "source": "status"
+    },
+    {
+     "type": "custom",
+     "key": "report_progress"
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "Clear Reports",
+       "action": "clear_reports",
+       "description": "Delete the report folders of the selected (or all) analysis folders"
+      },
+      {
+       "label": "Generate Reports",
+       "action": "generate",
+       "description": "Make a report for every listed analysis folder that has none"
+      },
+      {
+       "label": "Cancel",
+       "action": "cancel_generation",
+       "description": "Stop after the folder being processed"
+      },
+      {
+       "label": "Close",
+       "action": "close",
+       "description": "Close the report tool"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

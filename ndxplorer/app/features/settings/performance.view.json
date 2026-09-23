@@ -1,0 +1,126 @@
+{
+ "title": "Performance Settings",
+ "description": "Histogram computation and caching settings, saved to the settings file.",
+ "sections": [
+  {
+   "type": "info",
+   "source": "heading"
+  },
+  {
+   "type": "info",
+   "text": "Configure performance settings for ndxplorer. These settings control histogram computation, memory usage, and optimization features. Changes take effect after restarting ndxplorer."
+  },
+  {
+   "type": "panel",
+   "title": "Histogram Computation",
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "use_fast_histogram",
+     "label": "Use Fast Histogram Optimizations",
+     "description": "Enables the caching and pre-binning around the fill. The fill itself is always tttrlib and is not affected."
+    },
+    {
+     "type": "toggle",
+     "attr": "parallel_histogram",
+     "label": "Use Parallel Computation",
+     "description": "Use multiple CPU cores for histogram computation when available."
+    },
+    {
+     "type": "panel",
+     "sections": [
+      {
+       "type": "value",
+       "attr": "histogram_threads",
+       "label": "Histogram Threads:",
+       "kind": "int",
+       "minimum": -1,
+       "maximum": 64,
+       "width": 80,
+       "description": "-1 uses all available cores, 0/1 disables parallelism."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Memory & Caching",
+   "sections": [
+    {
+     "type": "panel",
+     "sections": [
+      {
+       "type": "toggle",
+       "attr": "aggressive_caching",
+       "label": "Aggressive Caching",
+       "description": "Cache more intermediate results for better performance at the cost of higher memory usage."
+      }
+     ]
+    },
+    {
+     "type": "panel",
+     "sections": [
+      {
+       "type": "value",
+       "attr": "general_cache_mb",
+       "label": "General Cache (MB):",
+       "kind": "int",
+       "minimum": 5,
+       "maximum": 1000,
+       "width": 80,
+       "description": "Memory limit for general-purpose caching (selections, computations, etc.). Recommended range: 10-500 MB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Advanced Options",
+   "sections": [
+    {
+     "type": "info",
+     "text": "For most users, the default settings provide optimal performance. Advanced users can fine-tune these settings for specific workloads."
+    },
+    {
+     "type": "info",
+     "source": "backend_note"
+    },
+    {
+     "type": "info",
+     "source": "settings_note"
+    },
+    {
+     "type": "info",
+     "text": "Values in settings file override environment variables."
+    }
+   ]
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Reset to Defaults",
+     "action": "reset",
+     "description": "Reset all performance settings to their default values"
+    },
+    {
+     "label": "Cancel",
+     "action": "cancel",
+     "description": "Close without saving"
+    },
+    {
+     "label": "Apply",
+     "action": "apply",
+     "description": "Save the settings"
+    },
+    {
+     "label": "OK",
+     "action": "ok",
+     "description": "Save the settings and close"
+    }
+   ]
+  }
+ ]
+}
