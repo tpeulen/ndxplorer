@@ -175,6 +175,20 @@ def test_the_playback_panel_is_drawn_in_the_plot_controls(app):
         assert name in form.rects, name
 
 
+def test_selecting_the_z_range_during_playback_gates_the_slice_too(app):
+    _load(app, _bursts())
+    f = feature(app)
+    f.playback.mode = "window"
+    f.playback.n_steps = 4
+    before = len(app.model.gates)
+    f.on_z_select()
+    f.on_z_select()
+    assert len(app.model.gates) == before + 1
+    row = list(app.model.gates)[-1]
+    assert row.name == "Mean Macro Time (s)"
+    assert (row.lower, row.upper) == f.controller.bounds
+
+
 # ------------------------------------------------------------------------ ranking
 def test_ranking_iris_by_class_finds_the_petals_and_applies_them(app):
     from ndxplorer.analysis.vizrank import RunState

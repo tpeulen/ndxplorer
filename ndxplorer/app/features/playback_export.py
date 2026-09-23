@@ -273,6 +273,30 @@ class ToolWindow:
         emtk.end()
 
 
+def help_lines(columns: int) -> List[str]:
+    """``vizrank_help.md`` as plain lines of at most *columns* characters:
+    paragraphs and list items wrapped, emphasis marks dropped."""
+    import textwrap
+
+    try:
+        text = VIZRANK_HELP.read_text(encoding="utf-8")
+    except OSError:
+        return ["The help text is not installed."]
+    lines: List[str] = []
+    for block in re.split(r"\n\s*\n", text):
+        items = re.split(r"\n(?=\s*[-*] |\s*\d+\. )", block.strip())
+        for item in items:
+            item = re.sub(r"\s*\n\s*", " ", item)
+            item = re.sub(r"\*\*|`|(?<!\w)\*(?=\S)|(?<=\S)\*(?!\w)", "", item)
+            item = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", item)
+            if item.startswith("#"):
+                item = item.lstrip("#").strip().upper()
+            indent = "  " if re.match(r"[-*] |\d+\. ", item) else ""
+            lines.extend(textwrap.wrap(item, columns, subsequent_indent=indent) or [""])
+        lines.append("")
+    return lines
+
+
 def _plain(text: str) -> str:
     """The guide's rich text as plain lines."""
     text = re.sub(r"<br\s*/?>", "\n", str(text))
@@ -300,6 +324,9 @@ class RankingPanel:
         title = "Find informative projections" if pairs else "Find informative z parameters"
         self.window = ToolWindow(f"rank{int(pairs)}", title)
         self.show_help = False
+        self._help_window = ToolWindow(f"rankhelp{int(pairs)}",
+                                       "Find informative projections - help", size=(560.0, 520.0))
+        self._help_top = 0
         self.tour: Optional[int] = None
         self._tour_steps: Optional[list] = None
         self._awaited = False
@@ -387,19 +414,27 @@ class RankingPanel:
             emtk.text_wrapped(str(record["note"]))
 
     def _draw_help(self, frame_box) -> None:
+        """The panel's long help (``vizrank_help.md``), wrapped and scrolled by the wheel."""
         import emtk
 
-        window = ToolWindow(f"rankhelp{int(self.pairs)}", "Find informative projections - help",
-                            size=(560.0, 520.0))
+        window = self._help_window
         x, y, w, h = self.window.box
-        window.pos = (max(frame_box[0], x - 570.0), y)
+        if window.pos is None:
+            window.pos = (max(frame_box[0], x - 570.0), y)
         if window.begin(frame_box) == "close":
             self.show_help = False
-        try:
-            text = VIZRANK_HELP.read_text(encoding="utf-8")
-        except OSError:
-            text = "The help text is not installed."
-        emtk.text_wrapped(text.replace("**", "").replace("*", ""))
+        width = max(emtk.get_content_region_avail()[0], 100.0)
+        columns = max(20, int(width // max(emtk.calc_text_size("M")[0], 1.0)) - 1)
+        lines = help_lines(columns)
+        row = emtk.get_text_line_height_with_spacing()
+        visible = max(1, int((window.box[3] - window.HEADER_H - 16.0) // row))
+        io = emtk.get_io()
+        bx, by, bw, bh = window.box
+        if io.mouse_wheel and bx <= io.mouse_pos[0] < bx + bw and by <= io.mouse_pos[1] < by + bh:
+            self._help_top -= int(round(io.mouse_wheel * 3))
+        self._help_top = min(max(self._help_top, 0), max(0, len(lines) - visible))
+        for line in lines[self._help_top:self._help_top + visible]:
+            emtk.text(line)
         window.end()
 
     def _steps(self) -> list:
@@ -654,6 +689,20 @@ class PlaybackExportFeature(Feature):
             if rect is not None and emtk.is_mouse_hovering_rect(
                     (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3])):
                 emtk.set_tooltip(self.playback_status())
+
+    def on_z_select(self) -> None:
+        """The z panel's *select* during playback: the slice on screen becomes a
+        gate too, since the gate drawn on it describes that slice (the Qt
+        window's ``_add_playback_selection_if_needed``). Not twice."""
+        model = self.app.model
+        name = self.controller.axis_name
+        if not self.controller.gating or not name or model.index_of(name) < 0:
+            return
+        lower, upper = self.controller.bounds
+        for row in model.gates:
+            if row.name == name and row.lower == lower and row.upper == upper:
+                return
+        model.add_interval(name, lower, upper)
 
     def playback_status(self) -> str:
         model = self.app.model
