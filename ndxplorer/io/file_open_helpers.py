@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from ..logging_config import logging
-from ..io import file_operations
+from ..io import file_operations, loading
 
 
 def show_merge_dialog(ndxplorer, title: str):
@@ -53,7 +53,7 @@ def _open_with_merge_dialog(
 
 
 def open_csv(ndxplorer, filenames: Optional[List[str]] = None, append: bool = False, merge_mode: str = "columns"):
-    _open_with_merge_dialog(ndxplorer, filenames, "csv", "Open CSV Files", append, merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "csv", loading.IMPORTERS["csv"].merge_title, append, merge_mode)
 
 
 def open_sampling(
@@ -62,7 +62,7 @@ def open_sampling(
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    _open_with_merge_dialog(ndxplorer, filenames, "cs_sampling", "Open Sampling Files", append, merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "cs_sampling", loading.IMPORTERS["cs_sampling"].merge_title, append, merge_mode)
 
 
 def open_mfd_hdf5(
@@ -71,14 +71,14 @@ def open_mfd_hdf5(
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    _open_with_merge_dialog(ndxplorer, filenames, "mfd_hdf5", "Open MFD HDF5 Files", append, merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "mfd_hdf5", loading.IMPORTERS["mfd_hdf5"].merge_title, append, merge_mode)
 
 
 def open_smfret(ndxplorer, merge_mode: str = "columns"):
     logging.debug("open_smFRET")
     append = False
     if getattr(ndxplorer, "data_source", None) is not None and not ndxplorer.data_source.empty:
-        result = show_merge_dialog(ndxplorer, "Open SmFRET Files")
+        result = show_merge_dialog(ndxplorer, loading.IMPORTERS["burst_dir"].merge_title)
         if result is None:
             return
         append, merge_mode = result
@@ -91,4 +91,4 @@ def open_pto(
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    _open_with_merge_dialog(ndxplorer, filenames, "pto", "Open PTO Container", append, merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "pto", loading.IMPORTERS["pto"].merge_title, append, merge_mode)

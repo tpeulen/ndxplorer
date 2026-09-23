@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
@@ -59,122 +60,111 @@ def frame_column(param_names: Sequence[str]) -> Optional[str]:
     return None
 
 
+@dataclass(frozen=True)
+class ImageAxes:
+    """What makes a table an image, and how to show it as one.
+
+    Attributes
+    ----------
+    x, y : str
+        The pixel columns (``"X pixel"``/``"Y pixel"``, any case).
+    nx, ny : int
+        Pixels across: the largest index plus one (256 for an empty column).
+    weight : str or None
+        The photon-count column the histogram is weighted by.
+    frame : str or None
+        The column that indexes the frames of a stack.
+    """
+
+    x: str
+    y: str
+    nx: int
+    ny: int
+    weight: Optional[str] = None
+    frame: Optional[str] = None
+
+    @property
+    def x_range(self):
+        """``(0, nx)``: one bin per pixel, bin *k* holding pixel *k*."""
+        return (0.0, float(self.nx))
+
+    @property
+    def y_range(self):
+        return (0.0, float(self.ny))
+
+
+def _pixels(values) -> int:
+    values = np.asarray(values)
+    return int(np.max(values)) + 1 if values.size else 256
+
+
+def image_axes(data_source) -> Optional[ImageAxes]:
+    """The image a table holds, or ``None`` when it is not one.
+
+    A table with an ``X pixel`` and a ``Y pixel`` column is an image: those are
+    the axes, one bin per pixel over ``[0, n)`` (over ``[0, n-1]`` each bin is
+    ``(n-1)/n`` of a pixel and the picture picks up a moire that is not in the
+    data), weighted by the photon count, and played back along its frame
+    column. Both GUIs show an image this way.
+    """
+    if data_source is None or data_source.empty:
+        return None
+    names = list(data_source.parameter_names)
+    x = next((n for n in names if "x pixel" in n.lower()), None)
+    y = next((n for n in names if "y pixel" in n.lower()), None)
+    if x is None or y is None:
+        return None
+    weight = next((n for n in names if "number of photons" in n.lower()), None)
+    return ImageAxes(
+        x=x, y=y,
+        nx=_pixels(data_source.column_view(names.index(x))),
+        ny=_pixels(data_source.column_view(names.index(y))),
+        weight=weight, frame=frame_column(names),
+    )
+
+
 def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
+    """Show an image table as an image in the Qt window (see :func:`image_axes`)."""
     logging.debug("check_and_set_image_axes()")
-    # Use the data_source property which handles both _data_source and data_manager
     try:
-        data_source = ndxplorer.data_source
+        image = image_axes(ndxplorer.data_source)
     except Exception as exc:
         logging.debug(f"Could not get data_source: {exc}")
         return False
-    
-    if data_source is None or data_source.empty:
-        logging.info("Image detection skipped: data_source is None or empty")
+    if image is None:
+        logging.info("Image detection: no X pixel / Y pixel columns")
         return False
+    logging.info("Image data detected: %sx%s pixels on %s, %s", image.nx, image.ny,
+                 image.x, image.y)
 
-    param_names = data_source.parameter_names
-    logging.info(f"Image detection: checking parameter names: {list(param_names)}")
+    # Exact matching, so "X pixel" does not find "T pixel". Even if setting an
+    # axis fails the image setup goes on (and returns True), so the settings'
+    # default axes do not override it.
+    for key, name in (("x", image.x), ("y", image.y)):
+        if not ndxplorer.plot_control.set_axis_by_name(key, name, match_contains=False,
+                                                        block_signals=True):
+            logging.warning("Failed to set %s axis to %s", key.upper(), name)
 
-    has_x_pixel = any("x pixel" in name.lower() for name in param_names)
-    has_y_pixel = any("y pixel" in name.lower() for name in param_names)
-    
-    logging.info(f"Image detection: has_x_pixel={has_x_pixel}, has_y_pixel={has_y_pixel}")
-
-    if not (has_x_pixel and has_y_pixel):
-        logging.info("Image detection failed: X pixel or Y pixel columns not found")
-        return False
-
-    logging.info("Image data detected (X pixel and Y pixel columns found)")
-    x_pixel_param = next((name for name in param_names if "x pixel" in name.lower()), None)
-    y_pixel_param = next((name for name in param_names if "y pixel" in name.lower()), None)
-    
-    frame_param = frame_column(param_names)
-
-    # Set X and Y axes to the pixel parameters
-    # Use match_contains=False for exact matching to avoid matching "T pixel" 
-    x_success = ndxplorer.plot_control.set_axis_by_name("x", x_pixel_param, match_contains=False, block_signals=True)
-    y_success = ndxplorer.plot_control.set_axis_by_name("y", y_pixel_param, match_contains=False, block_signals=True)
-    
-    if not x_success:
-        logging.warning("Failed to set X axis to %s", x_pixel_param)
-    if not y_success:
-        logging.warning("Failed to set Y axis to %s", y_pixel_param)
-    
-    # Even if setting axes failed, continue with image setup (return True at end)
-    # This prevents apply_default_axes_from_settings from overriding
-
-    photon_param = next((name for name in param_names if "number of photons" in name.lower() or "Number of Photons" in name), None)
-    logging.debug("Weight parameter: %s", photon_param)
-    weight_success = ndxplorer.plot_control.set_axis_by_name(
-        "weight", photon_param, match_contains=True, block_signals=True
-    )
-    if weight_success:
-        logging.debug("Set weighting to %s", photon_param)
+    if image.weight and ndxplorer.plot_control.set_axis_by_name(
+            "weight", image.weight, match_contains=True, block_signals=True):
         try:
-            ndxplorer.weight_param = photon_param
+            ndxplorer.weight_param = image.weight
             ndxplorer.weight_enabled = True
-            # Automatically check the weight checkbox when weight parameter is detected
             ndxplorer.checkBoxWeight.setChecked(True)
-            logging.info("Automatically enabled weight checkbox for %s", photon_param)
+            logging.info("Automatically enabled weight checkbox for %s", image.weight)
         except Exception as exc:  # pragma: no cover - defensive
             logging.debug("Failed to enable weight parameter: %s", exc)
-    else:
-        logging.debug("No matching weight parameter found, using default")
 
-    x_values = data_source.column_view(param_names.index(x_pixel_param))
-    y_values = data_source.column_view(param_names.index(y_pixel_param))
-    logging.debug("x_pixel_param: %s, x_values: %s", x_pixel_param, x_values)
-    logging.debug("y_pixel_param: %s, y_values: %s", y_pixel_param, y_values)
-
-    # Handle empty data arrays safely
-    if len(x_values) > 0:
-        x_pixels = int(np.max(x_values)) + 1
-    else:
-        x_pixels = 256  # Default size
-    if len(y_values) > 0:
-        y_pixels = int(np.max(y_values)) + 1
-    else:
-        y_pixels = 256  # Default size
-    logging.info("Image dimensions: %sx%s pixels", x_pixels, y_pixels)
-
-    logging.info(f"Setting histogram bins to match image dimensions: {x_pixels}x{y_pixels}")
-    ndxplorer.plot_control.n_xhist_1d = x_pixels
-    ndxplorer.plot_control.n_yhist_1d = y_pixels
-    ndxplorer.plot_control.n_xhist_2d = x_pixels
-    ndxplorer.plot_control.n_yhist_2d = y_pixels
-    
-    # Also update UI spinboxes so bins are read correctly
-    if hasattr(ndxplorer.plot_control, 'spinBoxNXHist1D'):
-        ndxplorer.plot_control.spinBoxNXHist1D.setValue(x_pixels)
-    if hasattr(ndxplorer.plot_control, 'spinBoxNYHist1D'):
-        ndxplorer.plot_control.spinBoxNYHist1D.setValue(y_pixels)
-    if hasattr(ndxplorer.plot_control, 'spinBoxNXHist2D'):
-        ndxplorer.plot_control.spinBoxNXHist2D.setValue(x_pixels)
-    if hasattr(ndxplorer.plot_control, 'spinBoxNYHist2D'):
-        ndxplorer.plot_control.spinBoxNYHist2D.setValue(y_pixels)
-    
-    logging.info(f"Bins set: n_xhist_2d={ndxplorer.plot_control.n_xhist_2d}, n_yhist_2d={ndxplorer.plot_control.n_yhist_2d}")
-    # The range spans the PIXELS, not the largest pixel INDEX. With n bins over
-    # [0, n) each bin is exactly one pixel: bin k covers [k, k+1) and holds
-    # pixel k. Over [0, n-1] -- the largest index -- each bin is (n-1)/n of a
-    # pixel wide, so pixel and bin drift apart across the image and the picture
-    # picks up a moire that is not in the data.
-    ndxplorer.plot_control.xmin = 0
-    ndxplorer.plot_control.ymin = 0
-    ndxplorer.plot_control.xmax = x_pixels
-    ndxplorer.plot_control.ymax = y_pixels
-
-    if frame_param:
-        logging.info("Frame stack detected (%s)", frame_param)
-    # The frame selector itself is not set up here any more. It is one case of
-    # playing a data set back along one of its columns, which every data set can
-    # do -- a burst table has a macro time -- so it is set up for every load, by
-    # ``plot_control.setup_playback``, and not only for the images that happen to
-    # come through this function.
-
-    logging.debug("Set binning and ranges to match pixel dimensions")
-    # Don't call update_plots here - it will be called by _apply_axes_and_refresh
-    # after this function returns True
+    pc = ndxplorer.plot_control
+    pc.n_xhist_1d = pc.n_xhist_2d = image.nx
+    pc.n_yhist_1d = pc.n_yhist_2d = image.ny
+    for name, value in (("spinBoxNXHist1D", image.nx), ("spinBoxNYHist1D", image.ny),
+                        ("spinBoxNXHist2D", image.nx), ("spinBoxNYHist2D", image.ny)):
+        if hasattr(pc, name):
+            getattr(pc, name).setValue(value)
+    pc.xmin, pc.xmax = image.x_range
+    pc.ymin, pc.ymax = image.y_range
+    # The frame selector is set up for every load by ``plot_control.setup_playback``.
     return True
 
 

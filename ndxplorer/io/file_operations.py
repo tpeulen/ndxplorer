@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import functools
-from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
-import numpy as np
 from qtpy import QtWidgets
 
 from ..logging_config import logging
-from ..io import reader
+from ..io import loading
+from ..utils.axis_helpers import image_axes
 
 if False:  # pragma: no cover - circular import safety for type checkers
     from .plot_main import NDXplorer
@@ -29,12 +27,7 @@ def _update_working_path(ndxplorer: "NDXplorer", first_selection: Optional[str])
     """Keep ndxplorer.working_path synced with the most recent selection."""
     if not first_selection:
         return
-    try:
-        dir_path = str(Path(first_selection).parent)
-    except Exception as exc:  # pragma: no cover - defensive
-        logging.debug("Could not derive working path: %s", exc)
-        return
-    ndxplorer.working_path = dir_path
+    ndxplorer.working_path = loading.working_path_for(first_selection)
 
 
 def _update_window_title(
@@ -51,11 +44,7 @@ def _update_window_title(
     if append or not selections:
         return
     try:
-        first = Path(str(selections[0]))
-        title = f"ndX - {first.name}"
-        if len(selections) > 1:
-            title += f" (+{len(selections) - 1})"
-        ndxplorer.setWindowTitle(title)
+        ndxplorer.setWindowTitle(loading.window_title(selections))
         edit = getattr(ndxplorer, "lineEditWorkingPath", None)
         if edit is not None:
             edit.setToolTip("\n".join(str(s) for s in selections))
@@ -70,7 +59,7 @@ def _handle_append(ndxplorer: "NDXplorer", new_source, merge_mode: str) -> None:
         def warn(title: str, message: str) -> None:
             QtWidgets.QMessageBox.warning(ndxplorer, title, message)
 
-        if current.merge(new_source, mode=merge_mode, warn=warn):
+        if loading.merge(current, new_source, merge_mode, warn=warn):
             # Re-assign through the property so the data manager sees the
             # merged frame and its caches are invalidated.
             ndxplorer.data_source = current
@@ -80,6 +69,23 @@ def _handle_append(ndxplorer: "NDXplorer", new_source, merge_mode: str) -> None:
         ndxplorer.update()
 
 
+def _ask_paths(ndxplorer: "NDXplorer", importer: "loading.Importer", working_path: str):
+    """The Qt dialog for *importer*: a folder, or files."""
+    if importer.mode == "folder":
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            ndxplorer, importer.title, working_path
+        )
+        return (folder,) if folder else ()
+    files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+        ndxplorer, importer.title, working_path, loading.filter_string(importer.filters)
+    )
+    return _ensure_sequence(files)
+
+
+#: Kinds older callers pass that are spelled differently in ``loading.IMPORTERS``.
+_KIND_ALIASES = {"sampling_folder": "cs_sampling"}
+
+
 def open_files(
     ndxplorer: "NDXplorer",
     file_handles: Optional[Sequence[str]] = None,
@@ -87,184 +93,54 @@ def open_files(
     append: bool = False,
     merge_mode: str = "columns",
 ) -> None:
-    """Central entry point for all data-loading actions."""
+    """Central entry point for all data-loading actions.
+
+    Which dialog to raise, which reader to run and what the working path
+    becomes are :mod:`ndxplorer.io.loading`'s, shared with the emtk app; this
+    raises the Qt dialog and hands the load to the window's worker.
+    """
     logging.info("NDXplorer: Opening files..")
     logging.debug("Merge mode: %s", merge_mode)
-    
-    # Auto-detect sampling folder
-    file_handles_seq = _ensure_sequence(file_handles)
-    if not file_type and file_handles_seq and len(file_handles_seq) == 1:
-        p = Path(file_handles_seq[0])
-        if p.is_dir() and (p / "parameters.json").exists():
-            file_type = "sampling_folder"
 
     file_handles_seq = _ensure_sequence(file_handles)
-    reader_input = file_handles_seq
-    working_path = str(ndxplorer.working_path)
+    kind = _KIND_ALIASES.get(file_type, file_type)
+    if kind not in loading.IMPORTERS:
+        # No importer named (a drop, ``--file``, a macro): the paths decide.
+        kind = loading.kind_for_paths(file_handles_seq) if file_handles_seq else "csv"
 
-    # --- Sampling / ER4 ----------------------------------------------------
-    if file_type == "cs_sampling":
-        if not file_handles_seq:
-            directory = QtWidgets.QFileDialog.getExistingDirectory(
-                ndxplorer, "Open sampling folder", working_path
-            )
-            file_handles_seq = (directory,) if directory else ()
-        
-        if file_handles_seq:
-            reader_input = str(file_handles_seq[0])
-            logging.info("Opening sampling folder: %s", reader_input)
-            data_reader = reader.read_sampling_folder
-            _update_working_path(ndxplorer, reader_input)
-        else:
-            reader_input = ()
-
-    elif file_type == "er4":
-        if not file_handles_seq:
-            file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                ndxplorer,
-                "ChiSurf sampling files",
-                working_path,
-                "Sampling files (*.er4);;All files (*.*)",
-            )
-        if file_handles_seq:
-            _update_working_path(ndxplorer, file_handles_seq[0])
-            logging.info("Opening files (%s): %s", file_type, file_handles_seq)
-            data_reader = reader.read_csv_sampling
-            reader_input = file_handles_seq
-        else:
-            reader_input = ()
-
-    # --- Sampling Folder (New Format) --------------------------------------
-    elif file_type == "sampling_folder":
-        if not file_handles_seq:
-            directory = QtWidgets.QFileDialog.getExistingDirectory(
-                ndxplorer, "Open sampling folder", working_path
-            )
-            file_handles_seq = (directory,) if directory else ()
-        
-        if file_handles_seq:
-            reader_input = file_handles_seq[0]
-            data_reader = reader.read_sampling_folder
-        else:
-            reader_input = ()
-
-    # --- HDF5 / zipped HDF5 ------------------------------------------------
-    elif file_type == "mfd_hdf5":
-        if not file_handles_seq:
-            file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                ndxplorer,
-                "MFD HDF5 files",
-                working_path,
-                "HDF5 files (*.h5 *.hdf5);;ZIP files (*.zip);;All Files (*.*)",
-            )
-
-        _update_working_path(ndxplorer, file_handles_seq[0] if file_handles_seq else None)
-        logging.info("Opening MFD HDF5/Zip files: %s", file_handles_seq)
-
-        if not file_handles_seq:
-            return
-
-        # Through the shared path, like every other format. This branch used to
-        # load inline instead -- synchronously on the GUI thread, duplicating
-        # what read_mfd_hdf5 already does with zips and multiple files, and then
-        # calling _apply_axes_and_refresh with the wrong number of arguments, so
-        # opening an MFD HDF5 raised a TypeError after the data had loaded.
-        #
-        # Falling through is not only shorter: it is what runs the image-axis
-        # detection, populates the parameter combo boxes and puts the load on
-        # the background runner. An imaging HDF5 opened here never got any of
-        # those.
-        data_reader = functools.partial(reader.read_mfd_hdf5, merge_mode=merge_mode)
-        reader_input = [str(f) for f in file_handles_seq]
-
-    # --- Burst analysis folder (bi4_bur/*.bur) -----------------------------
-    elif file_type == "burst_dir":
-        if not file_handles_seq:
-            folder = QtWidgets.QFileDialog.getExistingDirectory(
-                ndxplorer, "Burst analysis folder", working_path
-            )
-            file_handles_seq = [folder] if folder else []
-        if not file_handles_seq:
-            return
-        _update_working_path(ndxplorer, file_handles_seq[0])
-        # read_burst_analysis takes a single base path containing bi4_bur/ (or
-        # bur/). Route it through the shared async loader so the result is
-        # finalized via the data_source property (data_manager) like every other
-        # reader — previously burst_dir fell through to the CSV loader, which
-        # tried to read the directory itself ("Is a directory") and loaded zero
-        # bursts, leaving the bundled example data on screen.
-        data_reader = reader.read_burst_analysis
-        reader_input = str(file_handles_seq[0])
-
-    # --- PTO Measurement Container (.pto) -----------------------------------
-    elif file_type == "pto" or (file_handles_seq and any(str(f).lower().endswith(".pto") for f in file_handles_seq)):
-        if not file_handles_seq:
-            file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                ndxplorer,
-                "PTO Measurement Containers",
-                working_path,
-                "PTO files (*.pto);;All Files (*.*)",
-            )
-        if not file_handles_seq:
-            return
-        _update_working_path(ndxplorer, file_handles_seq[0])
-        from .pto_reader import read_container
-        data_reader = read_container
-        reader_input = str(file_handles_seq[0])
-
-    # --- Generic CSV loader ------------------------------------------------
-    else:
-        if not file_handles_seq:
-            file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                ndxplorer,
-                "Comma separated value files",
-                working_path,
-                "Text files (*.csv *.dat *.er4 *.txt);;All files (*.*)",
-            )
-        _update_working_path(ndxplorer, file_handles_seq[0] if file_handles_seq else None)
-
-        # Auto-detect .er4 in generic loader
-        if any(str(f).lower().endswith(".er4") for f in file_handles_seq):
-            data_reader = reader.read_csv_sampling
-        else:
-            data_reader = reader.read_csv
-        reader_input = file_handles_seq
-
-    if reader_input:
-        logging.info("Opening files (%s): %s", file_type or "csv", file_handles_seq)
-        _update_window_title(ndxplorer, file_handles_seq, append)
-
-        # Capture equations and constants to use in worker thread
-        # Important: do this BEFORE launching the thread to avoid main-thread access issues
-        equations = getattr(ndxplorer, "equations", [])
-        constants = getattr(ndxplorer, "constants", {})
-
-        def load_callable():
-            # Perform initial raw data load
-            ds = data_reader(reader_input)
-
-            # Re-read equations/constants at execution time (not just the values
-            # captured above): when a viewer is opened right after construction the
-            # settings — and thus the equations that derive Sg/Sr/Proximity ratio/
-            # FRET etc. — may still be loading in deferred init, so the captured
-            # copies can be stale/empty.
-            eqs = getattr(ndxplorer, "equations", None) or equations
-            cs = getattr(ndxplorer, "constants", None) or constants
-
-            # If successful and not empty, perform heavy column computations in background
-            if ds is not None and not ds.empty:
-                logging.info(f"Background: Computing columns for {ds.size} rows")
-                ds.compute_columns(constants=cs, equations=eqs)
-                logging.info("Background: Column computation complete.")
-            return ds
-
-        _dispatch_data_load(
-            ndxplorer,
-            f"Loading {file_type or 'CSV'} files",
-            load_callable,
-            append,
-            merge_mode,
+    if not file_handles_seq:
+        file_handles_seq = _ask_paths(
+            ndxplorer, loading.IMPORTERS[kind], str(ndxplorer.working_path)
         )
+    if not file_handles_seq:
+        return
+    _update_working_path(ndxplorer, file_handles_seq[0])
+
+    logging.info("Opening files (%s): %s", kind, file_handles_seq)
+    _update_window_title(ndxplorer, file_handles_seq, append)
+
+    # Capture equations and constants to use in worker thread
+    # Important: do this BEFORE launching the thread to avoid main-thread access issues
+    equations = getattr(ndxplorer, "equations", [])
+    constants = getattr(ndxplorer, "constants", {})
+
+    def load_callable():
+        # Re-read equations/constants at execution time (not just the values
+        # captured above): when a viewer is opened right after construction the
+        # settings — and thus the equations that derive Sg/Sr/Proximity ratio/
+        # FRET etc. — may still be loading in deferred init, so the captured
+        # copies can be stale/empty.
+        eqs = getattr(ndxplorer, "equations", None) or equations
+        cs = getattr(ndxplorer, "constants", None) or constants
+        return loading.load(file_handles_seq, kind, merge_mode, equations=eqs, constants=cs)
+
+    _dispatch_data_load(
+        ndxplorer,
+        f"Loading {kind} files",
+        load_callable,
+        append,
+        merge_mode,
+    )
 
 
 def _dispatch_data_load(
@@ -305,29 +181,15 @@ def _finalize_loaded_data(
     image_dims = None
     if not append and data_source is not None and not data_source.empty:
         try:
-            param_names = list(data_source.parameter_names)
-            logging.info(f"Raw data has {len(param_names)} parameters before compute_columns: {param_names[:10]}")
-            
-            has_x_pixel = any("x pixel" in name.lower() for name in param_names)
-            has_y_pixel = any("y pixel" in name.lower() for name in param_names)
-            
-            if has_x_pixel and has_y_pixel:
-                has_image_data = True
-                x_pixel_param = next((name for name in param_names if "x pixel" in name.lower()), None)
-                y_pixel_param = next((name for name in param_names if "y pixel" in name.lower()), None)
-                
-                # Get image dimensions from raw data
-                x_values = data_source.values[param_names.index(x_pixel_param), :]
-                y_values = data_source.values[param_names.index(y_pixel_param), :]
-                
-                x_pixels = int(np.max(x_values)) + 1 if len(x_values) > 0 else 256
-                y_pixels = int(np.max(y_values)) + 1 if len(y_values) > 0 else 256
-                
-                image_dims = (x_pixels, y_pixels, x_pixel_param, y_pixel_param)
-                logging.info(f"Detected image data in raw loaded data: {x_pixels}x{y_pixels} pixels")
+            image = image_axes(data_source)
         except Exception as e:
             logging.error(f"Error detecting image data in raw data: {e}")
-    
+            image = None
+        if image is not None:
+            has_image_data = True
+            image_dims = (image.nx, image.ny, image.x, image.y)
+            logging.info(f"Detected image data in raw loaded data: {image.nx}x{image.ny} pixels")
+
     if append:
         _handle_append(ndxplorer, data_source, merge_mode)
     else:
@@ -552,21 +414,13 @@ def show_merge_dialog(
     dialog.setWindowTitle(title)
     layout = QtWidgets.QVBoxLayout()
 
-    label = QtWidgets.QLabel("How do you want to merge the new data?")
-    layout.addWidget(label)
-
-    replace_rb = QtWidgets.QRadioButton("Replace existing data")
-    append_columns_rb = QtWidgets.QRadioButton(
-        "Append as columns (add new columns, rows must match)"
-    )
-    append_rows_rb = QtWidgets.QRadioButton(
-        "Append as rows (add new rows of existing columns)"
-    )
-    replace_rb.setChecked(True)
-
-    layout.addWidget(replace_rb)
-    layout.addWidget(append_columns_rb)
-    layout.addWidget(append_rows_rb)
+    layout.addWidget(QtWidgets.QLabel(loading.MERGE_PROMPT))
+    radios = []
+    for index, (_mode, text) in enumerate(loading.MERGE_CHOICES):
+        radio = QtWidgets.QRadioButton(text)
+        radio.setChecked(index == 0)
+        layout.addWidget(radio)
+        radios.append(radio)
 
     buttons = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -580,10 +434,6 @@ def show_merge_dialog(
     if result != QtWidgets.QDialog.Accepted:
         return None
 
-    append = append_columns_rb.isChecked() or append_rows_rb.isChecked()
-    merge_mode = "columns"
-    if append_columns_rb.isChecked():
-        merge_mode = "columns"
-    elif append_rows_rb.isChecked():
-        merge_mode = "rows"
+    chosen = next(i for i, radio in enumerate(radios) if radio.isChecked())
+    append, merge_mode = loading.merge_choice(chosen)
     return append, merge_mode

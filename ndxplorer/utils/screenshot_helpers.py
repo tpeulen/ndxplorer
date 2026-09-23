@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 from qtpy import QtWidgets
+
+from ..export.screenshots import (
+    SCREENSHOT_FILTERS,
+    SCREENSHOT_TITLE,
+    default_screenshot_name,
+    screenshot_format,
+)
 
 from ..logging_config import logging
 
@@ -19,22 +25,14 @@ def take_screenshot(ndxplorer: "NDXplorer") -> None:
         default_path = _default_screenshot_path(ndxplorer)
         filename, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
             ndxplorer,
-            "Save Screenshot",
+            SCREENSHOT_TITLE,
             default_path,
-            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;BMP Image (*.bmp)",
+            SCREENSHOT_FILTERS,
         )
         if not filename:
             return
 
-        ext = os.path.splitext(filename)[1].lower()
-        if ext in (".jpg", ".jpeg"):
-            img_format = "JPEG"
-        elif ext == ".bmp":
-            img_format = "BMP"
-        else:
-            img_format = "PNG"
-            if not ext:
-                filename = f"{filename}.png"
+        filename, img_format = screenshot_format(filename)
 
         if not pixmap.save(filename, img_format):
             QtWidgets.QMessageBox.warning(
@@ -56,8 +54,7 @@ def _default_screenshot_path(ndxplorer) -> str:
         base_dir = ndxplorer.working_path if getattr(ndxplorer, "working_path", None) else os.getcwd()
     except Exception:
         base_dir = os.getcwd()
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    return os.path.join(base_dir, f"ndxplorer_screenshot_{ts}.png")
+    return default_screenshot_name(base_dir)
 
 
 def _copy_pixmap_to_clipboard(pixmap) -> None:

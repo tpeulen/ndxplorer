@@ -8,7 +8,6 @@ is :mod:`ndxplorer.io.writer`, which is what the CLI uses.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -103,24 +102,9 @@ def save_burst_ids(ndxplorer, folder: Optional[str] = None) -> None:
 
     do_hist = cb_hist.isChecked()
     do_corr = cb_correlate.isChecked()
-    setup_name = None
-    try:
-        bid_folder = Path(folder)
-        logging.info("Looking for setup name in %s...", bid_folder)
-        info_folder = bid_folder.parent / "Info"
-        if not info_folder.exists():
-            info_folder = bid_folder.parent.parent / "Info"
-            logging.info("Looking for setup name in %s...", info_folder)
-        if info_folder.exists():
-            params_file = info_folder / "photon_selection_parameters.json"
-            if params_file.exists():
-                with open(params_file, "r", encoding="utf-8") as handle:
-                    params = json.load(handle)
-                setup_name = params.get("selected_setup")
-                if setup_name:
-                    logging.info("Found setup name '%s' in photon_selection_parameters.json", setup_name)
-    except Exception as exc:  # pragma: no cover - UI path
-        logging.error("Error reading setup information: %s", exc)
+    setup_name = writer.find_setup_name(folder)
+    if setup_name:
+        logging.info("Found setup name '%s' in photon_selection_parameters.json", setup_name)
 
     if do_hist:
         QtWidgets.QMessageBox.information(
@@ -134,15 +118,7 @@ def save_burst_ids(ndxplorer, folder: Optional[str] = None) -> None:
             from chisurf.plugins.fcs.fcs_correlator.wizard import ChisurfFCSWizard
 
             root = Path(folder)
-            bst_files = set()
-            bst_files.update(str(p.resolve()) for p in root.glob("*.bst"))
-            for sub in [root / "BID", root / "BID" / "ALL", root / "ALL"]:
-                if sub.exists() and sub.is_dir():
-                    bst_files.update(str(p.resolve()) for p in sub.glob("*.bst"))
-            if not bst_files:
-                bst_files.update(str(p.resolve()) for p in root.rglob("*.bst"))
-
-            bst_files = sorted(bst_files)
+            bst_files = writer.find_bst_files(folder)
             if not bst_files:
                 QtWidgets.QMessageBox.information(
                     ndxplorer,

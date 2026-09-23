@@ -48,44 +48,106 @@ def save_burst_ids(
         selections: List[DataSelection],
         data_source: DataSource
 ):
+    """:func:`save_burst_ids_headless` with the Qt progress window."""
     if not _HAS_QT or QApplication is None:
         raise RuntimeError("save_burst_ids requires Qt (not available in headless mode)")
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
+    progress_window = None
 
-    folder_path = Path(folder_name)
-    folder_path.mkdir(parents=True, exist_ok=True)
-    logging.info(f"Saving burst IDs to {folder_path}")
-
-    groups = list(_burst_id_groups(selections, data_source))
-    total_files = len(groups)
-    progress_window = ProgressWindow(title="Saving Files", message="Saving Burst ID files...", max_value=total_files)
-    progress_window.show()
-
-    for i, (filename, ids) in enumerate(groups, start=1):
-        bst_file = folder_path / f"{Path(filename).name}.bst"
-        np.savetxt(bst_file, ids.T, fmt='%i', delimiter='\t')
-        logging.info(f"Saved burst ID file: {bst_file}")
-        progress_window.set_value(i)
+    def progress(done: int, total: int) -> bool:
+        nonlocal progress_window
+        if progress_window is None:
+            progress_window = ProgressWindow(title="Saving Files",
+                                             message="Saving Burst ID files...",
+                                             max_value=total)
+            progress_window.show()
+        progress_window.set_value(done)
         QCoreApplication.processEvents()
+        return True
 
-    progress_window.set_value(total_files)
-    progress_window.close()
+    try:
+        return save_burst_ids_headless(folder_name, selections, data_source, progress=progress)
+    finally:
+        if progress_window is not None:
+            progress_window.close()
 
 
 def save_burst_ids_headless(
         folder_name: str,
         selections: List[DataSelection],
-        data_source: DataSource
-):
-    """Headless version of save_burst_ids that does not require Qt/GUI components."""
+        data_source: DataSource,
+        progress=None,
+) -> List[Path]:
+    """Write one ``<measurement>.bst`` of first/last photon per kept burst and file.
+
+    Parameters
+    ----------
+    folder_name : str
+        Where the files go (created).
+    selections : list of DataSelection
+        The gates; the bursts they keep are written.
+    data_source : DataSource
+        A burst table with ``First File``/``Last File``/``First Photon``/``Last Photon``.
+    progress : callable, optional
+        ``progress(done, total) -> bool``, called before the first file and
+        after each; returning ``False`` stops (the files written so far stay).
+
+    Returns
+    -------
+    list of Path
+        The files written.
+    """
     folder_path = Path(folder_name)
     folder_path.mkdir(parents=True, exist_ok=True)
     logging.info(f"Saving burst IDs to {folder_path}")
 
-    for filename, ids in _burst_id_groups(selections, data_source):
+    groups = list(_burst_id_groups(selections, data_source))
+    written: List[Path] = []
+    if progress is not None and progress(0, len(groups)) is False:
+        return written
+    for i, (filename, ids) in enumerate(groups, start=1):
         bst_file = folder_path / f"{Path(filename).name}.bst"
         np.savetxt(bst_file, ids.T, fmt='%i', delimiter='\t')
         logging.info(f"Saved burst ID file: {bst_file}")
+        written.append(bst_file)
+        if progress is not None and progress(i, len(groups)) is False:
+            break
+    return written
+
+
+def find_setup_name(folder: str) -> Optional[str]:
+    """The measurement setup a burst-ID folder belongs to, or ``None``.
+
+    Read from ``Info/photon_selection_parameters.json`` (``selected_setup``)
+    beside the folder or one level up.
+    """
+    bid_folder = Path(folder)
+    for info in (bid_folder.parent / "Info", bid_folder.parent.parent / "Info"):
+        params_file = info / "photon_selection_parameters.json"
+        if params_file.exists():
+            try:
+                with open(params_file, "r", encoding="utf-8") as handle:
+                    return json.load(handle).get("selected_setup") or None
+            except (OSError, ValueError) as exc:
+                logging.error("Error reading setup information: %s", exc)
+                return None
+    return None
+
+
+def find_bst_files(folder: str) -> List[str]:
+    """The ``.bst`` files of a burst-ID folder, sorted, as absolute paths.
+
+    The folder itself, its ``BID``, ``BID/ALL`` and ``ALL`` subfolders, and
+    -- when those hold none -- anywhere below it.
+    """
+    root = Path(folder)
+    found: Set[str] = {str(p.resolve()) for p in root.glob("*.bst")}
+    for sub in (root / "BID", root / "BID" / "ALL", root / "ALL"):
+        if sub.is_dir():
+            found.update(str(p.resolve()) for p in sub.glob("*.bst"))
+    if not found:
+        found.update(str(p.resolve()) for p in root.rglob("*.bst"))
+    return sorted(found)
 
 
 def save_clustering_data(
