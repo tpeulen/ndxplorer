@@ -1,13 +1,18 @@
 from ..logging_config import logging
-from typing import Dict, List, Optional, Tuple, Set, Callable, Any
-from pathlib import Path
 import numpy as np
 import re
-import os
-import csv
-import yaml
-import inspect
-import textwrap
+
+from ..core.overlay_curves import (
+    CUSTOM_EQUATION,
+    CurveEvaluator,
+    curve_points,
+    equation_parameter_names,
+    filled_text,
+    load_predefined_equations,
+    next_curve_title,
+    signature_defaults,
+    write_curves_csv,
+)
 
 from qtpy import QtCore, QtWidgets, QtGui
 from qtpy.QtCore import Qt
@@ -29,20 +34,6 @@ _CURVE_SEQ = [0]
 #: layer so a redraw here leaves the Gaussian ellipses and the server-driven
 #: line sets alone.
 EQUATION_LAYER = "equations"
-
-# Names that appear in an equation but are NOT free parameters: the independent
-# variables and the maths functions/constants the evaluator provides. Without
-# this, a regex that harvests identifiers turns ``exp``/``sqrt``/``pi`` into
-# spurious parameter sliders and corrupts the "filled" equation display.
-_NON_PARAMETER_NAMES: Set[str] = {
-    "x", "y", "pi", "e", "inf", "nan",
-    "exp", "expm1", "log", "log2", "log10", "log1p", "sqrt", "cbrt", "square",
-    "abs", "sign", "power", "hypot", "mod", "fmod", "sin", "cos", "tan",
-    "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh",
-    "deg2rad", "rad2deg", "floor", "ceil", "trunc", "round", "clip", "where",
-    "minimum", "maximum", "heaviside", "nan_to_num", "sinc", "erf",
-}
-
 
 class _CurveColumns:
     """Columns the overlay table shows — the same set as the ndX constants.
@@ -196,34 +187,14 @@ class CurveWidget(QtWidgets.QGroupBox):
         params = set()
 
         if self.is_function:
-            # For Python functions, use inspection to get parameter names
             try:
-                # Print the function string for debugging
-                print(f"Parsing function in CurveWidget:\n{equation_or_function}")
-
-                # Compile the function if it's a string
-                if isinstance(equation_or_function, str):
-                    self.function = self.curve_evaluator.compile_function(equation_or_function)
-                else:
-                    self.function = equation_or_function
-
-                # Get parameter names using inspection
+                self.function = self.curve_evaluator.compile_function(equation_or_function)
                 params = set(self.curve_evaluator.get_function_parameters(self.function))
-                print(f"Function parameters: {params}")
             except Exception as e:
-                print(f"Error parsing function: {e}")
-                import traceback
-                traceback.print_exc()
-                # If there's an error, fall back to empty parameter set
+                logging.warning("Error parsing function: %s", e)
                 params = set()
         else:
-            # For equations, use regex to find parameters
-            # Find all parameters (variables that are not x or y)
-            param_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
-            params = set(re.findall(param_pattern, equation_or_function))
-            # Drop independent variables + maths functions/constants so only the
-            # genuine free parameters get sliders.
-            params -= _NON_PARAMETER_NAMES
+            params = set(equation_parameter_names(equation_or_function))
 
         if HAS_PARAM_TABLE:
             self._sync_table(sorted(params), values=self._signature_defaults())
@@ -231,22 +202,8 @@ class CurveWidget(QtWidgets.QGroupBox):
         self._sync_sliders(params)
 
     def _signature_defaults(self):
-        """Starting values a *function* curve declares in its own signature.
-
-        ``def static_fret_line(forster_radius=52.0, ..., num_points=500)`` says
-        what those parameters are; falling back to the generic 1.0 gave a line
-        traced with a single point, which cannot be drawn or fitted.
-        """
-        if not self.is_function or self.function is None:
-            return {}
-        defaults = {}
-        for name, p in inspect.signature(self.function).parameters.items():
-            if p.default is not inspect.Parameter.empty:
-                try:
-                    defaults[name] = float(p.default)
-                except (TypeError, ValueError):
-                    continue
-        return defaults
+        """Starting values a *function* curve declares in its own signature."""
+        return signature_defaults(self.function if self.is_function else None)
 
     # -- parameter table ---------------------------------------------------
     def _sync_table(self, names, values=None):
@@ -401,58 +358,27 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.equationChanged.emit()
 
     def _update_filled_equation(self):
-        """
-        Updates the filled equation display by replacing parameter names with their values.
-        """
-        equation_or_function = self.equation_edit.text()
-
-        # Build both raw and formatted parameter mappings
+        """Show the equation with the parameter values written in."""
         raw_params = {}
-        formatted_params = {}
+        formatted = {}
         for name, holder in self.parameters.items():
             try:
                 # A FittingParameter carries its value as an attribute (and a
                 # *linked* one reports its master's); a legacy widget as value().
-                raw_val = holder.value if self._group is not None else holder.value()
+                raw_params[name] = holder.value if self._group is not None else holder.value()
             except Exception:
-                raw_val = None
-            raw_params[name] = raw_val
-            try:
-                if self._group is not None:
-                    formatted_params[name] = f"{float(raw_val):.4e}"
-                elif hasattr(holder, 'spinbox') and holder.spinbox is not None:
-                    # Use the spinbox's own text so decimals/format_str are respected
-                    formatted_params[name] = holder.spinbox.text()
-                else:
-                    # Reasonable fallback formatting
-                    formatted_params[name] = f"{raw_val:.6g}" if isinstance(raw_val, (int, float)) else str(raw_val)
-            except Exception:
-                formatted_params[name] = str(raw_val)
-
-        if self.is_function:
-            # For functions, just show the function name and parameter values (formatted)
-            try:
-                if self.function:
-                    func_name = self.function.__name__
-                    params_str = ", ".join([f"{name}={formatted_params.get(name, str(val))}" for name, val in raw_params.items()])
-                    filled_equation = f"{func_name}({params_str})"
-                else:
-                    filled_equation = "Function not compiled"
-            except Exception as e:
-                filled_equation = f"Error: {str(e)}"
-        else:
-            # For equations, replace parameter names with their formatted values
-            # If there's an equals sign, only use the right side
-            if '=' in equation_or_function:
-                equation_or_function = equation_or_function.split('=', 1)[1].strip()
-
-            # Replace parameter names with their values
-            filled_equation = equation_or_function
-            for param_name, formatted_value in formatted_params.items():
-                # Use word boundaries to ensure we only replace whole parameter names
-                pattern = r'\b' + re.escape(param_name) + r'\b'
-                filled_equation = re.sub(pattern, formatted_value, filled_equation)
-
+                raw_params[name] = None
+            spinbox = getattr(holder, "spinbox", None) if self._group is None else None
+            if spinbox is not None:
+                formatted[name] = spinbox.text()
+        try:
+            filled_equation = filled_text(
+                self.equation_edit.text(), raw_params,
+                function=self.function if self.is_function else None,
+                formatted=formatted,
+            )
+        except Exception as e:
+            filled_equation = f"Error: {e}"
         self.filled_equation_edit.setText(filled_equation)
         # Show the *start* of a long equation: a line edit left at the end of its
         # text shows the tail, so a FRET line read "…num_points*0".
@@ -591,7 +517,7 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         predefined_layout.setSpacing(0)  # Reduce spacing
         predefined_layout.addWidget(QtWidgets.QLabel("Equation:"))
         self.predefined_combo = QtWidgets.QComboBox()
-        self.predefined_combo.addItem("Custom Equation")  # Default option
+        self.predefined_combo.addItem(CUSTOM_EQUATION)  # Default option
         predefined_layout.addWidget(self.predefined_combo)
         self.add_button = QtWidgets.QPushButton("Add Curve")
         predefined_layout.addWidget(self.add_button)
@@ -723,43 +649,10 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             self.add_predefined_curve()
 
     def load_predefined_equations(self):
-        """
-        Load predefined equations from the YAML file.
-        """
-        candidates: List[Path] = []
-        module_dir = Path(__file__).resolve().parent
-        candidates.append(module_dir / "settings" / "curve_equations.yaml")
-        candidates.append(Path(__file__).resolve().parents[1] / "settings" / "curve_equations.yaml")
-
-        try:
-            from ..settings import get_settings_path  # type: ignore
-        except Exception:
-            get_settings_path = None
-
-        if callable(get_settings_path):
-            try:
-                candidates.append(get_settings_path() / "curve_equations.yaml")
-            except Exception:
-                pass
-
-        file_path = next((path for path in candidates if path.exists()), None)
-
-        if not file_path:
-            logging.warning(
-                "Curve overlay predefined equations not found. Tried: %s",
-                ", ".join(str(path) for path in candidates),
-            )
-            return
-
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                self.predefined_equations = yaml.safe_load(f) or []
-
-            for equation in self.predefined_equations:
-                if isinstance(equation, dict) and "name" in equation:
-                    self.predefined_combo.addItem(equation["name"])
-        except Exception as e:
-            logging.error("Error loading predefined equations from %s: %s", file_path, e)
+        """Fill the Equation combo from ``curve_equations.yaml``."""
+        self.predefined_equations = load_predefined_equations()
+        for equation in self.predefined_equations:
+            self.predefined_combo.addItem(equation["name"])
 
     def add_predefined_curve(self):
         """
@@ -775,7 +668,6 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         # Check if it's a function or an equation
         if 'function' in equation_data:
             function_str = equation_data['function']
-            print(f"Function string from YAML:\n{function_str}")
             curve_widget = self.add_curve(function_str, use_sliders=True, is_function=True, base_name=base_name)
         else:
             curve_widget = self.add_curve(equation_data['equation'], use_sliders=True, is_function=False, base_name=base_name)
@@ -798,10 +690,8 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             base_name (str): Base name for the groupbox title (e.g., "Static FRET line")
         """
         if base_name is None:
-            base_name = "Custom Equation"
-        # Count existing curves with the same base name
-        existing = sum(1 for c in self.curves if str(c.title()).startswith(base_name))
-        curve_title = f"{base_name} {existing + 1}"
+            base_name = CUSTOM_EQUATION
+        curve_title = next_curve_title(base_name, (c.title() for c in self.curves))
         curve_widget = CurveWidget(curve_title, equation_or_function, is_function=is_function)
         curve_widget.use_sliders = use_sliders
 
@@ -897,74 +787,19 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         overlay_plot.setAxisScale(1, 0, len(y_edges) - 1)
 
         for equation, parameters, color in visible_curves:
-            # Create x values array with the specified number of points
-            # Use the same scaling function (linear or logarithmic) that was used to create the bins
-            x_min = x_edges[0]
-            x_max = x_edges[-1]
-
-            # Check if x-axis is using logarithmic scale
-            if plot_control.scale_x == "log":
-                if x_min <= 0:
-                    x_min = 1e-6
-                if x_max <= 0:
-                    x_max = 1e-6
-                x_values = np.logspace(np.log10(x_min), np.log10(x_max), num_points)
-            else:
-                x_values = np.linspace(x_min, x_max, num_points)
-
-            # Evaluate the equation or function
-            result = curve_evaluator.evaluate(equation, x_values, parameters)
-            if result is None:
-                continue  # Skip if evaluation failed
-
-            # Check if result is a tuple (parametric function) or array (equation)
-            if isinstance(result, tuple) and len(result) == 2:
-                # Parametric function - use both x and y values from the function
-                x_values, y_values = result
-            else:
-                # Regular equation - use the generated x_values and the evaluated y_values
-                y_values = result
-
-            # A constant equation (e.g. "2") evaluates to a scalar; broadcast it to
-            # a horizontal line so the zip over (x, y) below does not choke on a
-            # non-iterable 0-d value (which silently dropped the curve).
-            x_values = np.atleast_1d(np.asarray(x_values, dtype=float))
-            y_values = np.asarray(y_values, dtype=float)
-            if y_values.ndim == 0:
-                y_values = np.full(x_values.shape, float(y_values))
-
-            # Convert x and y values to bin coordinates for plotting
-            # Note: The 2D histogram is rotated 90 degrees in the plot
-            x_coords = []
-            y_coords = []
-
-            # Check if y-axis is using logarithmic scale and adjust y values accordingly
-            if plot_control.scale_y == "log":
-                # For logarithmic y-axis, we need to ensure y values are positive
-                y_values = np.maximum(y_values, 1e-6)
-
-            for i, (x, y) in enumerate(zip(x_values, y_values)):
-                # Check if y is within the y range
-                if y < y_edges[0] or y > y_edges[-1]:
-                    continue
-
-                # Convert to bin coordinates
-                # Note: The 2D histogram is rotated 90 degrees in the plot
-                # so we need to swap x and y coordinates
+            x_values, y_values = curve_points(
+                curve_evaluator, equation, parameters, num_points, x_edges, y_edges,
+                x_log=plot_control.scale_x == "log", y_log=plot_control.scale_y == "log",
+            )
+            # Bin coordinates: the 2-D plot is drawn in bins, not values.
+            x_coords, y_coords = [], []
+            for x, y in zip(x_values, y_values):
                 y_bin = value_to_bin_func(y, y_edges)
-                if y_bin is None:
-                    continue
-
-                # Convert x value to bin index
                 x_bin = value_to_bin_func(x, x_edges)
-                if x_bin is None:
+                if x_bin is None or y_bin is None:
                     continue
-
-                # Add points to the curve
-                # The y-coordinate is the bin index (not the value)
-                # The x-coordinate is the bin index (not the value)
-                x_coords.append(x_bin)  # x bin index
-                y_coords.append(y_bin)  # y bin index
+                x_coords.append(x_bin)
+                y_coords.append(y_bin)
 
             if not x_coords:
                 continue  # Skip if no valid points
@@ -978,45 +813,6 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             )
 
         overlay_plot.replot()
-
-    def _compute_curve_points(self, equation, parameters, num_points, x_edges, y_edges, plot_control, curve_evaluator):
-        """
-        Compute value-domain x,y points for a curve given current edges and scaling.
-        Filters points outside the y range.
-        Returns two numpy arrays (x_values_filtered, y_values_filtered).
-        """
-        # Determine x sampling based on axis scale
-        x_min = x_edges[0]
-        x_max = x_edges[-1]
-
-        if plot_control.scale_x == "log":
-            if x_min <= 0:
-                x_min = 1e-6
-            if x_max <= 0:
-                x_max = 1e-6
-            x_values = np.logspace(np.log10(x_min), np.log10(x_max), num_points)
-        else:
-            x_values = np.linspace(x_min, x_max, num_points)
-
-        # Evaluate equation or function
-        result = curve_evaluator.evaluate(equation, x_values, parameters)
-        if result is None:
-            return np.array([]), np.array([])
-
-        # Unpack parametric vs standard equation
-        if isinstance(result, tuple) and len(result) == 2:
-            x_eval, y_eval = result
-        else:
-            x_eval, y_eval = x_values, result
-
-        # For log y scale, clamp minimum positive
-        if plot_control.scale_y == "log":
-            y_eval = np.maximum(y_eval, 1e-6)
-
-        # Filter to y range
-        y_min, y_max = y_edges[0], y_edges[-1]
-        mask = (y_eval >= y_min) & (y_eval <= y_max)
-        return x_eval[mask], y_eval[mask]
 
     def _on_save_csv(self):
         """
@@ -1042,195 +838,16 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         # Compute and write CSV
         try:
             num_points = self.get_num_points()
-
-            # Compute all curves first
-            curves_data = []  # list of (name, x_vals, y_vals)
-            max_len = 0
+            control = self._last_plot_control
+            curves_data = []
             for curve in visible_curves_widgets:
-                name = str(curve.title())
-                equation_or_function = curve.get_equation()
-                parameters = curve.get_parameters()
-
-                x_vals, y_vals = self._compute_curve_points(
-                    equation_or_function,
-                    parameters,
-                    num_points,
-                    self._last_x_edges,
-                    self._last_y_edges,
-                    self._last_plot_control,
-                    curve.curve_evaluator  # evaluator from the curve widget ensures consistency
+                x_vals, y_vals = curve_points(
+                    curve.curve_evaluator, curve.get_equation(), curve.get_parameters(),
+                    num_points, self._last_x_edges, self._last_y_edges,
+                    x_log=control.scale_x == "log", y_log=control.scale_y == "log",
                 )
-
-                curves_data.append((name, x_vals, y_vals))
-                if len(x_vals) > max_len:
-                    max_len = len(x_vals)
-
-            # Write the CSV with two header lines and horizontal stacking
-            with open(filename, mode='w', newline='') as f:
-                writer = csv.writer(f)
-
-                # Header line 1: curve names repeated for x and y columns
-                header1 = []
-                for name, _, _ in curves_data:
-                    header1.extend([name, name])
-                writer.writerow(header1)
-
-                # Header line 2: x,y under each curve
-                header2 = []
-                for _ in curves_data:
-                    header2.extend(["x", "y"])
-                writer.writerow(header2)
-
-                # Data rows: pad with empty strings when a curve has fewer points
-                for i in range(max_len):
-                    row = []
-                    for _, x_vals, y_vals in curves_data:
-                        if i < len(x_vals):
-                            row.extend([x_vals[i], y_vals[i]])
-                        else:
-                            row.extend(["", ""])  # pad
-                    writer.writerow(row)
-
+                curves_data.append((str(curve.title()), x_vals, y_vals))
+            write_curves_csv(filename, curves_data)
             QtWidgets.QMessageBox.information(self, "Save Overlays", f"Saved overlay curves to:\n{filename}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Save Overlays", f"Failed to save CSV:\n{e}")
-
-
-class CurveEvaluator:
-    """
-    Class for evaluating curve equations and Python functions.
-    """
-    def __init__(self):
-        self.last_error = None
-        self.compiled_functions = {}  # Cache for compiled functions
-
-    def compile_function(self, function_str: str) -> Callable:
-        """
-        Compile a Python function from a string.
-
-        Args:
-            function_str (str): String containing the function definition
-
-        Returns:
-            Callable: The compiled function
-        """
-        try:
-            # Dedent the function string to handle indentation properly
-            function_str = textwrap.dedent(function_str)
-
-            # Ensure the function string has proper line breaks
-            if '\n' not in function_str:
-                # If there are no line breaks, try to split by indentation
-                function_str = function_str.replace('    ', '\n    ')
-                if '\n' not in function_str:
-                    # If still no line breaks, this might be a one-line function definition
-                    # which is not valid Python syntax, so we need to add proper formatting
-                    parts = function_str.split(':', 1)
-                    if len(parts) == 2:
-                        function_header = parts[0].strip()
-                        function_body = parts[1].strip()
-                        function_str = f"{function_header}:\n    {function_body}"
-
-            # Create a namespace for the function
-            namespace = {
-                'np': np,
-                'sin': np.sin,
-                'cos': np.cos,
-                'tan': np.tan,
-                'exp': np.exp,
-                'log': np.log,
-                'log10': np.log10,
-                'sqrt': np.sqrt,
-                'pi': np.pi,
-                'e': np.e
-            }
-
-            # Print the function string for debugging
-            print(f"Compiling function:\n{function_str}")
-
-            # Execute the function definition in the namespace
-            exec(function_str, namespace)
-
-            # Extract the function from the namespace
-            # The function name is the first word after 'def ' in the function string
-            function_name = function_str.split('def ')[1].split('(')[0].strip()
-            return namespace[function_name]
-        except Exception as e:
-            print(f"Error compiling function: {e}")
-            print(f"Function string: {function_str}")
-            raise
-
-    def get_function_parameters(self, function: Callable) -> List[str]:
-        """
-        Get the parameter names of a function using inspection.
-
-        Args:
-            function (Callable): The function to inspect
-
-        Returns:
-            List[str]: List of parameter names
-        """
-        return list(inspect.signature(function).parameters.keys())
-
-    def evaluate(self, equation_or_function, x_values, parameters):
-        """
-        Evaluate the equation or function for the given x values and parameters.
-
-        Args:
-            equation_or_function (str or Callable): The equation to evaluate (e.g., "y = 1-x/tau0")
-                                                   or a Python function that returns x, y pairs
-            x_values (np.ndarray): Array of x values (used for equation evaluation)
-            parameters (dict): Dictionary of parameter values
-
-        Returns:
-            tuple or np.ndarray: For parametric functions, returns (x_values, y_values) tuple.
-                                For equations, returns array of y values, or None if evaluation failed
-        """
-        self.last_error = None
-
-        # Check if equation_or_function is a callable (Python function)
-        if isinstance(equation_or_function, Callable):
-            # Call the function with parameters
-            x_result, y_result = equation_or_function(**parameters)
-            return (x_result, y_result)  # Return both x and y values
-
-        # Check if equation_or_function is a function definition string
-        elif isinstance(equation_or_function, str) and equation_or_function.strip().startswith("def "):
-            # Compile the function if not already in cache
-            if equation_or_function not in self.compiled_functions:
-                self.compiled_functions[equation_or_function] = self.compile_function(equation_or_function)
-
-            # Call the compiled function with parameters
-            function = self.compiled_functions[equation_or_function]
-            x_result, y_result = function(**parameters)
-            return (x_result, y_result)  # Return both x and y values
-
-        # Otherwise, treat as a mathematical expression
-        else:
-            # Create a safe local environment with only allowed functions and constants
-            locals_dict = {
-                'x': x_values,
-                'np': np,
-                'sin': np.sin,
-                'cos': np.cos,
-                'tan': np.tan,
-                'exp': np.exp,
-                'log': np.log,
-                'log10': np.log10,
-                'sqrt': np.sqrt,
-                'pi': np.pi,
-                'e': np.e
-            }
-
-            # Add parameters to locals
-            locals_dict.update(parameters)
-
-            # Extract the right side of the equation (after '=')
-            equation = equation_or_function
-            if '=' in equation:
-                equation = equation.split('=', 1)[1].strip()
-
-            # Evaluate the expression
-            result = eval(equation, {"__builtins__": {}}, locals_dict)
-
-            return result

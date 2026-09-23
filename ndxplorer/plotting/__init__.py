@@ -13,7 +13,6 @@ __all__ = [
     'PGHistogramPlot',
     'PGImageWidget',
     'CurveOverlayWidget',
-    'CurveEvaluator',
     'histograms',
     'scatter',
     'colormaps',

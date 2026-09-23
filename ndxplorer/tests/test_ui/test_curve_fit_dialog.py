@@ -109,9 +109,9 @@ def test_all_fixed_reports_error(qapp):
 
 def test_the_default_target_is_the_displayed_data(qapp):
     """A curve is drawn over the 2-D distribution, so that is what it fits."""
-    from ndxplorer.ui.curve_fit_dialog import DEFAULT_TARGETS
+    from ndxplorer.analysis.curve_fit_setup import TARGETS
 
-    assert DEFAULT_TARGETS[0][0] == "2d"
+    assert TARGETS[0][0] == "2d"
     _cf, dlg = _build(qapp, {}, target="2d")
     assert dlg.target == "2d"
 

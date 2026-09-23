@@ -30,6 +30,7 @@ from typing import Callable, Optional, Sequence, Tuple
 from qtpy import QtCore, QtWidgets
 
 from ..analysis.curve_fit import CurveFit, CurveFitError, CurveFitResult
+from ..analysis.curve_fit_setup import REDUCTIONS, TARGETS, result_text
 
 try:
     from chisurf.gui.autoform.sections.parameter_table import ParameterGroupTableWidget
@@ -53,22 +54,6 @@ class _CompactColumns:
     columns = ("name", "value", "fixed", "bounds_lo", "bounds_hi", "bounds_on")
 
 
-#: The things a curve can be fitted to, in the order the dialog offers them.
-DEFAULT_TARGETS: Tuple[Tuple[str, str], ...] = (
-    ("2d", "Displayed data (y vs x)"),
-    ("x", "X marginal histogram"),
-    ("y", "Y marginal histogram"),
-)
-
-#: How a column of the displayed distribution is reduced to the point the curve
-#: is fitted through.
-DEFAULT_REDUCTIONS: Tuple[Tuple[str, str], ...] = (
-    ("cloud", "the cloud (every populated bin)"),
-    ("population", "the population of each column"),
-    ("mean", "the mean of each column"),
-)
-
-
 class CurveFitDialog(QtWidgets.QDialog):
     """Fit an overlay curve to the displayed data with per-parameter control."""
 
@@ -76,7 +61,7 @@ class CurveFitDialog(QtWidgets.QDialog):
         self,
         parent: Optional[QtWidgets.QWidget],
         build_fit: Callable[[str, str], CurveFit],
-        targets: Sequence[Tuple[str, str]] = DEFAULT_TARGETS,
+        targets: Sequence[Tuple[str, str]] = TARGETS,
         on_applied: Optional[Callable[[CurveFitResult], None]] = None,
         target: str = "2d",
     ) -> None:
@@ -110,7 +95,7 @@ class CurveFitDialog(QtWidgets.QDialog):
         reduction_row = QtWidgets.QHBoxLayout()
         reduction_row.addWidget(QtWidgets.QLabel("Fit through:"))
         self._reduction_combo = QtWidgets.QComboBox()
-        for key, label in DEFAULT_REDUCTIONS:
+        for key, label in REDUCTIONS:
             self._reduction_combo.addItem(label, key)
         self._reduction_combo.setToolTip(
             "The cloud fits the curve to the distribution itself: every "
@@ -317,17 +302,11 @@ class CurveFitDialog(QtWidgets.QDialog):
             QtWidgets.QApplication.restoreOverrideCursor()
             self._btn_fit.setEnabled(True)
         self._refresh_table()
-        if result.ok:
-            fitted = dict(result.params)
-            fitted.update(result.data_params)  # only the constants that moved
-            self._status.setText(
-                f"reduced χ² = {result.chi2r:.4g}   ·   "
-                + ", ".join(f"{k}={v:.4g}" for k, v in fitted.items())
-            )
-            self._status.setStyleSheet("color: #2e7d32; font-size: 9pt;")
-        else:
-            self._status.setText(result.message or "fit failed")
-            self._status.setStyleSheet("color: #c62828; font-size: 9pt;")
+        message, failed = result_text(result)
+        self._status.setText(message)
+        self._status.setStyleSheet(
+            "color: #c62828; font-size: 9pt;" if failed else "color: #2e7d32; font-size: 9pt;"
+        )
         if self._on_applied is not None:
             try:
                 self._on_applied(result)
@@ -381,5 +360,4 @@ class CurveFitDialog(QtWidgets.QDialog):
                     pass
 
 
-__all__ = ["CurveFitDialog", "HAS_FIT_TABLE", "DEFAULT_TARGETS",
-           "DEFAULT_REDUCTIONS"]
+__all__ = ["CurveFitDialog", "HAS_FIT_TABLE"]

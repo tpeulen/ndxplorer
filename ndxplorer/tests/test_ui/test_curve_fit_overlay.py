@@ -217,7 +217,9 @@ def test_the_fit_offers_the_constants_the_equations_read(qapp, monkeypatch):
     apply_value_dict(ndx.parameter_control.parameter_group, {"nothing_reads_me": 1.0})
     cw = ndx.curve_overlay_widget.add_curve("m*x + b")
 
-    cf = ndx.build_curve_fit_for(cw, "2d")
+    from ndxplorer.analysis.curve_fit_setup import build_curve_fit_for
+
+    cf = build_curve_fit_for(ndx, cw, "2d")
 
     names = [p.name for p in cf.data_parameters]
     assert "gG/gR" in names and "tauD0" in names
