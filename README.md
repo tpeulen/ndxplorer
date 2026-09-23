@@ -83,11 +83,13 @@ python -m ndxplorer.app.web --wheels path/to/extra-*.whl   # e.g. an IMP wheel
 Run it from a directory that has no `chisurf/` folder in it other than the
 package itself (the ChiSurf checkout root is fine). It needs tttrlib built for
 Pyodide: the newest `tttrlib-*-pyodide_*_wasm32.whl` under a tttrlib
-checkout's `dist/pyodide`, or the wheel named by `$NDX_TTTRLIB_WHEEL`. Open the
+checkout's `dist/pyodide`, or the wheel named by `$NDX_TTTRLIB_WHEEL`. The
+IMP.bff wheel (fitting parameters: Parameters, overlay curves, curve fit,
+Gaussian Fit) is found the same way (`imp_bff-*`, `$NDX_IMPBFF_WHEEL`). Open the
 page in a browser with WebGPU (Chrome, Edge), then drop a burst-analysis folder,
 a `.bur` or a `.csv` on the plots, or use *Mount folder...*. Saving a file
-downloads it. Without a Pyodide build of IMP (IMP.bff), Gaussian Fit and the
-overlay curves are off and say so on their tabs. All options:
+downloads it. Without the IMP.bff wheel, Gaussian Fit and the overlay curves
+are off and say so on their tabs. All options:
 `python -m ndxplorer.app.web --help` (`emtk.web.serve`'s).
 
 ### Basic Workflow

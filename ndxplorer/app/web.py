@@ -13,17 +13,26 @@ Every :mod:`emtk.web.serve` option works; this only presets the bundle.
 What the page carries
 ---------------------
 * **ndxplorer** (without its tests) and **emtk**, as the archive;
-* **chisurf**'s Qt-free core (``chisurf.core``, ``chisurf.settings``) and
-  **mmfdb**'s runtime config, which that core reads at import. The GUI, the
-  plugins and the server stay behind (:data:`CHISURF_KEEP`, :data:`MMFDB_KEEP`);
-* from the Pyodide distribution: numpy, scipy, PyYAML, matplotlib, Pillow, and
-  ``lzma`` (a stdlib module Pyodide ships apart; ``chisurf.core.fio`` imports it);
-* **tttrlib**'s Pyodide wheel (:func:`find_tttrlib_wheel`) -- every data
-  source is a ``tttrlib.DataStore``;
-* any further ``--wheels``: IMP (with ``IMP.bff``, the fitting-parameter
-  runtime) when a Pyodide build of it exists. Without it the page boots
-  anyway; Gaussian Fit and the overlay curves say on their tabs why they are
-  off, as they do in any environment without IMP.
+* **chisurf**'s Qt-free core (``chisurf.core``, ``chisurf.settings``),
+  **mmfdb**'s runtime config, which that core reads at import, and **chimol**'s
+  readers (``chimol.io``): ``chisurf.core.fitting.fit`` imports every experiment
+  type, and the modelling one reaches ``chisurf.core.fio.structure``, which takes
+  its atom dtype from ``chimol.io.atoms``. The GUI, the plugins, the server and
+  chimol's viewer stay behind (:data:`CHISURF_KEEP`, :data:`MMFDB_KEEP`,
+  :data:`CHIMOL_KEEP`);
+* from the Pyodide distribution: numpy, scipy, PyYAML, matplotlib, Pillow,
+  scikit-learn (Find structure's K-means, PCA and HDBSCAN), and ``lzma`` (a
+  stdlib module Pyodide ships apart; ``chisurf.core.fio`` imports it);
+* **tttrlib**'s Pyodide wheel -- every data source is a ``tttrlib.DataStore``;
+* **IMP.bff**'s Pyodide wheel (the IMP-free core, ``import IMP, IMP.bff``) --
+  the port runtime behind chisurf's fitting parameters: the Parameters tab,
+  the overlay curves, the curve fit and Gaussian Fit. Without it the page boots
+  anyway and those say on their tabs why they are off;
+* any further ``--wheels``.
+
+The wheels are found by :func:`find_wheel` (:data:`WHEELS`): an environment
+variable naming the file, else the newest match under a checkout's
+``dist/pyodide``.
 
 Data comes in by dropping a file (a ``.bur``, a ``.csv``) or a whole
 burst-analysis folder on the view, or through *Mount folder...* (Chrome);
@@ -44,9 +53,10 @@ __all__ = [
     "DEFAULT_PORT",
     "MMFDB_KEEP",
     "PYODIDE_PACKAGES",
-    "TTTRLIB_WHEEL_GLOBS",
+    "CHIMOL_KEEP",
+    "WHEELS",
     "bundle",
-    "find_tttrlib_wheel",
+    "find_wheel",
     "main",
 ]
 
@@ -57,7 +67,8 @@ APP = "ndxplorer.app.frame:make_app"
 DEFAULT_PORT = 8795
 
 #: Loaded from the Pyodide distribution.
-PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma")
+PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma",
+                    "scikit-learn")
 
 #: The parts of the ``chisurf`` package the page ships: what the Qt-free core
 #: imports (``chisurf/__init__`` reaches ``_bundled_packages``, ``core`` and
@@ -70,39 +81,53 @@ CHISURF_KEEP = ("__init__.py", "_bundled_packages.py", "settings", "core")
 #: ``chisurf.core.settings`` reads; the database layer is never imported.
 MMFDB_KEEP = ("__init__.py", "config.py")
 
-#: Where a tttrlib Pyodide wheel is looked for when ``$NDX_TTTRLIB_WHEEL`` is
-#: not set: a tttrlib checkout's ``dist/pyodide`` (``pyodide build`` puts it
-#: there), first match wins.
-TTTRLIB_WHEEL_GLOBS = (
-    "~/dev/worktrees/tttrlib-pyodide/dist/pyodide/tttrlib-*-pyodide_*_wasm32.whl",
-    "~/dev/tttrlib/dist/pyodide/tttrlib-*-pyodide_*_wasm32.whl",
-)
+#: The parts of ``chimol`` the page ships: its readers, which ``chisurf.core``
+#: imports (``chimol.io.atoms``, ``chimol.io.dcd``); the viewer does not come.
+CHIMOL_KEEP = ("__init__.py", "io")
+
+#: The Pyodide wheels a page needs, by name: ``(environment variable, globs,
+#: required)``. The variable names the file; otherwise the newest match of the
+#: globs (a checkout's ``dist/pyodide``, where ``pyodide build`` puts it) wins.
+#: A missing required wheel stops the build; a missing optional one is said.
+WHEELS = {
+    "tttrlib": ("NDX_TTTRLIB_WHEEL", (
+        "~/dev/worktrees/tttrlib-pyodide/dist/pyodide/tttrlib-*-pyodide_*_wasm32.whl",
+        "~/dev/tttrlib/dist/pyodide/tttrlib-*-pyodide_*_wasm32.whl",
+    ), True),
+    "IMP.bff": ("NDX_IMPBFF_WHEEL", (
+        "~/dev/worktrees/imp.bff-pyodide/dist/pyodide/imp_bff-*-pyodide_*_wasm32.whl",
+        "~/dev/imp.bff/dist/pyodide/imp_bff-*-pyodide_*_wasm32.whl",
+    ), False),
+}
 
 
-def find_tttrlib_wheel(patterns: Iterable[str] = TTTRLIB_WHEEL_GLOBS) -> pathlib.Path:
-    """The tttrlib wheel built for Pyodide: ``$NDX_TTTRLIB_WHEEL``, else the newest
-    match of *patterns*.
+def find_wheel(name: str) -> Optional[pathlib.Path]:
+    """The Pyodide wheel of *name* (a key of :data:`WHEELS`), or ``None``.
 
     Raises
     ------
     FileNotFoundError
-        If there is none. A page without tttrlib boots and then cannot open a
-        single file, so the build stops here instead.
+        If the environment variable names a file that is not there, or a
+        required wheel (tttrlib: a page without it cannot open a single file)
+        is not found.
     """
-    named = os.environ.get("NDX_TTTRLIB_WHEEL")
+    variable, patterns, required = WHEELS[name]
+    named = os.environ.get(variable)
     if named:
         path = pathlib.Path(os.path.expanduser(named))
         if not path.is_file():
-            raise FileNotFoundError(f"$NDX_TTTRLIB_WHEEL={named}: no such file")
+            raise FileNotFoundError(f"${variable}={named}: no such file")
         return path
     for pattern in patterns:
         matches = sorted(glob.glob(os.path.expanduser(pattern)), key=os.path.getmtime)
         if matches:
             return pathlib.Path(matches[-1])
-    raise FileNotFoundError(
-        "no tttrlib wheel for Pyodide found; build one (pyodide build in a tttrlib "
-        "checkout) and point $NDX_TTTRLIB_WHEEL at it, or pass --no-tttrlib-wheel "
-        "with --wheels PATH")
+    if required:
+        raise FileNotFoundError(
+            f"no {name} wheel for Pyodide found; build one (pyodide build in a {name} "
+            f"checkout) and point ${variable} at it, or pass --no-{name.lower()}-wheel "
+            "with --wheels PATH")
+    return None
 
 
 def _package_dir(name: str) -> Optional[pathlib.Path]:
@@ -143,23 +168,32 @@ def _exclude_all_but(name: str, keep: Sequence[str]) -> list[str]:
     return out
 
 
-def bundle(tttrlib_wheel: bool = True):
+def bundle(tttrlib_wheel: bool = True, impbff_wheel: bool = True):
     """The :class:`emtk.web.serve.Bundle` for ndX: app, dependencies, wheels."""
     from emtk.web.serve import DEFAULT_PYODIDE_PACKAGES, Bundle
 
     extra, exclude = [], ["ndxplorer/tests/"]
-    for name, keep in (("chisurf", CHISURF_KEEP), ("mmfdb", MMFDB_KEEP)):
+    for name, keep in (("chisurf", CHISURF_KEEP), ("mmfdb", MMFDB_KEEP),
+                       ("chimol", CHIMOL_KEEP)):
         if _package_dir(name) is not None:
             extra.append(name)
             exclude += _exclude_all_but(name, keep)
     pyodide = list(DEFAULT_PYODIDE_PACKAGES)
     pyodide += [p for p in PYODIDE_PACKAGES if p not in pyodide]
+    wheels = []
+    for name, wanted in (("tttrlib", tttrlib_wheel), ("IMP.bff", impbff_wheel)):
+        wheel = find_wheel(name) if wanted else None
+        if wheel is not None:
+            wheels.append(wheel)
+        elif wanted:
+            print(f"no {name} wheel for Pyodide found (${WHEELS[name][0]}); "
+                  "the page boots without it")
     return Bundle(
         app=APP,
         packages=["ndxplorer"],
         extra_packages=extra,
         pyodide_packages=pyodide,
-        wheels=[find_tttrlib_wheel()] if tttrlib_wheel else [],
+        wheels=wheels,
         exclude=tuple(exclude),
         title="ndX",
         ready_message="ready -- drop a burst folder, .bur or .csv on the view",
@@ -167,15 +201,18 @@ def bundle(tttrlib_wheel: bool = True):
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """``python -m ndxplorer.app.web [emtk.web.serve options] [--no-tttrlib-wheel]``."""
+    """``python -m ndxplorer.app.web [emtk.web.serve options] [--no-tttrlib-wheel]
+    [--no-imp.bff-wheel]``."""
     from emtk.web import serve
 
     argv = list(sys.argv[1:] if argv is None else argv)
-    tttrlib_wheel = "--no-tttrlib-wheel" not in argv
-    argv = [a for a in argv if a != "--no-tttrlib-wheel"]
+    flags = {"tttrlib": "--no-tttrlib-wheel", "impbff": "--no-imp.bff-wheel"}
+    off = {key for key, flag in flags.items() if flag in argv}
+    argv = [a for a in argv if a not in flags.values()]
     if not any(a == "--port" or a.startswith("--port=") for a in argv):
         argv += ["--port", str(DEFAULT_PORT)]
-    return serve.main(argv, base=bundle(tttrlib_wheel=tttrlib_wheel))
+    return serve.main(argv, base=bundle(tttrlib_wheel="tttrlib" not in off,
+                                        impbff_wheel="impbff" not in off))
 
 
 if __name__ == "__main__":  # pragma: no cover - a dev server
