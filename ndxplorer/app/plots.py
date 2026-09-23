@@ -163,6 +163,28 @@ class PlotArea:
         log = axis.log and lo > 0
         return lo, hi, log
 
+    def _sides(self, plot: str) -> dict:
+        """The axes *plot* shows: View > Axis Control's ``model.axis_display``."""
+        display = getattr(self.model, "axis_display", None)
+        if display is not None:
+            return display.sides(plot)
+        from ..plotting.axis_display import DEFAULT_SIDES
+
+        return DEFAULT_SIDES[plot]
+
+    def _decorations(self, plot: str, horizontal: bool) -> tuple:
+        """``(decorated, opposite)`` of *plot*'s x (*horizontal*) or y axis.
+
+        One side is drawn per axis: bottom (left) when it is on, else top (right).
+        """
+        sides = self._sides(plot)
+        near, far = ("bottom", "top") if horizontal else ("left", "right")
+        return bool(sides.get(near) or sides.get(far)), bool(sides.get(far) and not sides.get(near))
+
+    def _title_shown(self, plot: str, side: str) -> bool:
+        display = getattr(self.model, "axis_display", None)
+        return True if display is None else display.label(plot, side)
+
     def _setup_x(self, key: str, decorated: bool, opposite: bool = False) -> None:
         from emtk import implot
 
@@ -185,13 +207,15 @@ class PlotArea:
         from emtk import implot
 
         x, y, w, h = box
-        self._titles.append(("h", x, y, w, TITLE_BAND, self.model.x.name))
+        if self._title_shown("xmarginal", "top"):
+            self._titles.append(("h", x, y, w, TITLE_BAND, self.model.x.name))
         self._begin("##x-marginal", (x, y + TITLE_BAND, w, h - TITLE_BAND))
-        self._setup_x("x", decorated=True, opposite=True)
+        self._setup_x("x", *self._decorations("xmarginal", True))
         hist = self.model.histograms
         counts = hist.x[1] if hist is not None else np.zeros(1)
         top = float(np.nanmax(counts)) if np.size(counts) and np.nanmax(counts) > 0 else 1.0
-        implot.setup_axis(implot.AXIS_Y1, None, self._axis_flags(False))
+        implot.setup_axis(implot.AXIS_Y1, None,
+                          self._axis_flags(*self._decorations("xmarginal", False)))
         implot.setup_axis_limits(implot.AXIS_Y1, 0.0, top * 1.05, implot.COND_ALWAYS)
         if hist is not None:
             xs, ys = step_outline(*hist.x)
@@ -207,14 +231,16 @@ class PlotArea:
         from emtk import implot
 
         x, y, w, h = box
-        self._titles.append(("v", x + w - TITLE_BAND, y, TITLE_BAND, h, self.model.y.name))
+        if self._title_shown("ymarginal", "right"):
+            self._titles.append(("v", x + w - TITLE_BAND, y, TITLE_BAND, h, self.model.y.name))
         self._begin("##y-marginal", (x, y, w - TITLE_BAND, h))
         hist = self.model.histograms
         counts = hist.y[1] if hist is not None else np.zeros(1)
         top = float(np.nanmax(counts)) if np.size(counts) and np.nanmax(counts) > 0 else 1.0
-        implot.setup_axis(implot.AXIS_X1, None, self._axis_flags(False))
+        implot.setup_axis(implot.AXIS_X1, None,
+                          self._axis_flags(*self._decorations("ymarginal", True)))
         implot.setup_axis_limits(implot.AXIS_X1, 0.0, top * 1.05, implot.COND_ALWAYS)
-        self._setup_y("y", decorated=True, opposite=True)
+        self._setup_y("y", *self._decorations("ymarginal", False))
         if hist is not None:
             ys, xs = step_outline(*hist.y)
             implot.plot_line("##y-line", xs, ys, spec={"line_color": theme.axis_colour("y"),
@@ -281,8 +307,8 @@ class PlotArea:
             self._draw_splash(box)
             return
         self._begin("##map", box)
-        self._setup_x("x", decorated=False)
-        self._setup_y("y", decorated=False)
+        self._setup_x("x", *self._decorations("map", True))
+        self._setup_y("y", *self._decorations("map", False))
         texture = self.texture()
         if texture is not None:
             (x0, x1, _), (y0, y1, _) = self._range("x"), self._range("y")
@@ -402,11 +428,13 @@ class PlotArea:
         hist = model.histograms
         counts = hist.z[1] if hist is not None and hist.z is not None else np.zeros(1)
         top = float(np.nanmax(counts)) if np.size(counts) and np.nanmax(counts) > 0 else 1.0
-        implot.setup_axis(implot.AXIS_X1, None, self._axis_flags(True))
+        implot.setup_axis(implot.AXIS_X1, None,
+                          self._axis_flags(*self._decorations("zmarginal", True)))
         if log:
             implot.setup_axis_scale(implot.AXIS_X1, implot.SCALE_LOG10)
         implot.setup_axis_limits(implot.AXIS_X1, lo, hi, implot.COND_ALWAYS)
-        implot.setup_axis(implot.AXIS_Y1, None, self._axis_flags(True))
+        implot.setup_axis(implot.AXIS_Y1, None,
+                          self._axis_flags(*self._decorations("zmarginal", False)))
         implot.setup_axis_limits(implot.AXIS_Y1, 0.0, top * 1.1, implot.COND_ALWAYS)
         if model.index_of(model.z.name) >= 0:
             zlo, zhi = model.z_range
@@ -432,19 +460,19 @@ class PlotArea:
         """The red axis titles, over the frame (the rotated one needs the painter)."""
         from emtk.painter import ALIGN_HCENTER, ALIGN_VCENTER
 
+        display = getattr(self.model, "axis_display", None)
+        colour = display.title_colour if display is not None else theme.text_colour()
         for kind, x, y, w, h, text in self._titles:
             if not text:
                 continue
             if kind == "h":
-                painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, theme.text_colour(),
-                             True)
+                painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, colour, True)
             else:
                 rotate = getattr(painter, "text_rotated", None)
                 if callable(rotate):
                     # The box is the text's own, unturned, centred on the band.
                     cx, cy = x + w / 2.0, y + h / 2.0
                     rotate(cx - h / 2.0, cy - w / 2.0, h, w, ALIGN_HCENTER | ALIGN_VCENTER,
-                           text, theme.text_colour(), -90.0)
+                           text, colour, -90.0)
                 else:
-                    painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text,
-                                 theme.text_colour(), True)
+                    painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, colour, True)
