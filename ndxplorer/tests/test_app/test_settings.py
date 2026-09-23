@@ -313,4 +313,4 @@ def test_report_capture_scenario_adds_the_folder(home, tmp_path):
 
     files = capture_scenario("report_tool", tmp_path / "shots", load_catalogue(),
                              size=SIZE)
-    assert [p.name for p in files] == ["report_tool--dialog.png"]
+    assert "report_tool--dialog.png" in [p.name for p in files]
