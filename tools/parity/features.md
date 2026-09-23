@@ -118,29 +118,29 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## menu_settings — Settings menu (+ Save settings submenu)
 
-- [ ] Settings > "Performance Settings" (tooltip "Configure performance settings for histogram computation…")
-- [ ] Settings > "Load settings" (file chooser "ndX settings file")
-- [ ] Settings > Save settings > "Axis settings" (save-file chooser)
-- [ ] Settings > Save settings > "Constants" (writes mfd.constants.json)
-- [ ] Settings > Save settings > "Equations" (Qt: broken, not connected)
-- [ ] Settings > "Set default axis"
+- [x] Settings > "Performance Settings" (opens the dialog, see performance_settings; usable without data)
+- [x] Settings > "Load settings" (io file chooser "ndX settings file"; see load_settings_dialog)
+- [x] Settings > Save settings > "Axis settings" (save-file chooser; see save_axis_settings_dialog)
+- [x] Settings > Save settings > "Constants" (writes mfd.constants.json in the settings folder: the Parameters tab's Save, values + bounds + fixed, as Qt's save_parameters; the plain values when that tab is not loaded)
+- [x] Settings > Save settings > "Equations" (Qt: broken, not connected) -- works: the Equations tab's save (a save-file chooser, default mfd.equations.yaml); `settings/persist.write_equations` when that tab is not loaded
+- [x] Settings > "Set default axis" (needs data, as it needs axes)
 
 ## menu_view — View menu
 
-- [ ] View > "Plot controls" / "Parameters" / "Overlays" (checkable panel toggles; Qt: broken, they only flip their check mark because they were wired to the QDockWidgets that `convert_docks` deletes)
-- [ ] View > "Fit Gaussians" (checkable; shows or hides the Gaussian Fit tab)
-- [ ] View > "Equations" (checkable; shows the Equations tab; Qt: broken like the other panel toggles, so the Equations panel is unreachable)
-- [ ] View > "UMAP" (Qt: broken, see view_umap_action)
-- [ ] View > "Find informative projections…" (tooltip "Rank every x/y pair by class separation…")
-- [ ] View > "Find informative projections (z axis)…"
-- [ ] View > "Axis Control" (tooltip "Control the visibility of axes in plots")
+- [x] View > "Plot controls" / "Parameters" / "Overlays" (checkable, enabled, checked in parity/emtk/menu_view--menu.png; they toggle the tabs: core for Plot controls, the overlays feature for the other two)
+- [x] View > "Fit Gaussians" (checkable entry present and enabled; function: the analysis feature, gaussian_fit)
+- [x] View > "Equations" (checkable, enabled; shows the Equations tab, overlays feature)
+- [x] View > "UMAP" (entry present and enabled; function: analysis feature, view_umap_action)
+- [x] View > "Find informative projections…" (entry present and enabled; function: find_projections)
+- [x] View > "Find informative projections (z axis)…" (entry present and enabled; function: find_projections_z)
+- [x] View > "Axis Control" (opens the dialog, see axis_control_dialog; usable without data)
 
 ## menu_help — Help menu
 
-- [ ] Help > "Help" (Qt: disabled in the .ui, not connected)
-- [ ] Help > "Fix Report Tool" (Qt: broken, see fix_report_tool)
-- [ ] Help > "About" (Qt: not connected)
-- [ ] Help > "Update" (Qt: not connected)
+- [x] Help > "Help" (Qt: disabled in the .ui, not connected) -- works: a help window (what ndX does, the five steps, the project URL)
+- [-] Help > "Fix Report Tool" (Qt: broken, see fix_report_tool) -- dropped, justification under fix_report_tool
+- [x] Help > "About" (Qt: not connected) -- works: ndXplorer, tttrlib, emtk, numpy, matplotlib and Python versions, author, licence, URL
+- [~] Help > "Update" (Qt: not connected) -- an "Update" window with the installed version and how to update (conda / pip, restart; in a browser: reload the page). It installs nothing itself: an app that rewrites its own environment is what deps_installer warns about
 
 ## axes_fdfa_tau — Set x/y parameters: Fd/Fa vs Tau (green)
 
@@ -337,79 +337,87 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## overlays_curve — Overlays: static FRET line on Fd/Fa vs Tau
 
-- [ ] "Equation:" combo with the predefined curves, "Add Curve", "Number of points:" (10..999, default 500), "Save CSV"
-- [ ] Each curve is a checkable group "<name> N" (the check is visibility) with "Equation: y =" or "Function:", a read-only "Filled: y =" field, a Color button, "Fit", "Delete", and a parameter table (Name / Value / Fixed / Lo / Hi / Bounds)
-- [ ] The curve is drawn over the 2-D map in its colour and updates live when a parameter changes
-- [ ] Curve parameters can be linked to constants
+- [x] "Equation:" combo with the predefined curves, "Add Curve", "Number of points:" (10..999, default 500), "Save CSV"
+- [x] Each curve is a checkable group "<name> N" (the check is visibility) with "Equation: y =" or "Function:", a read-only "Filled: y =" field, a Color button, "Fit", "Delete", and a parameter table (Name / Value / Fixed / Lo / Hi / Bounds)
+- [x] The curve is drawn over the 2-D map in its colour and updates live when a parameter changes
+- [x] Curve parameters can be linked to constants
+- [~] The group's check is a check box on the first line of the group (emtk has no checkable group box); a function curve's source is a code editor instead of a one-line field (a `def` does not fit one line); the colour is a swatch with a hex field and an HSV picker instead of QColorDialog; the parameter table has a Link column; linking is a right-click menu (Copy / Paste / Link… / Unlink) and a dialog listing every registered parameter
 
 ## overlays_equation_list — Overlays: predefined equation list
 
-- [ ] Items: Custom Equation, Perrin-Equation, Perrin 2x rho, FD/FA vs tau (static line), FD/FA vs tau (dynamic line), E vs tau (static line), kFRET vs RDA, E vs tau (dynamic line), Static FRET Line (Gaussian Distribution), WLC FRET Line (Worm-Like Chain), Mixture FRET Line (Gaussian + WLC), Dynamic FRET Line (2-state Gaussian), Circle
-- [ ] The list is read from the user's curve_equations.yaml, so it can be extended
+- [x] Items: Custom Equation, Perrin-Equation, Perrin 2x rho, FD/FA vs tau (static line), FD/FA vs tau (dynamic line), E vs tau (static line), kFRET vs RDA, E vs tau (dynamic line), Static FRET Line (Gaussian Distribution), WLC FRET Line (Worm-Like Chain), Mixture FRET Line (Gaussian + WLC), Dynamic FRET Line (2-state Gaussian), Circle
+- [x] The list is read from the user's curve_equations.yaml, so it can be extended (Qt: broken -- it read the shipped file first, so a user's copy was never seen; fixed in ndxplorer/core/overlay_curves.py for both windows)
 
 ## curve_fit_dialog — Fit curve to data dialog
 
-- [ ] Title "Fit curve to data"
-- [ ] "Fit to:" Displayed data (y vs x) / X marginal histogram / Y marginal histogram
-- [ ] "Fit through:" the cloud (every populated bin) / the population of each column / the mean of each column
-- [ ] "Scan first" check (on)
-- [ ] Hint about free, fixed and crosslinked parameters
-- [ ] Parameter table (Name / Value / Fixed / Lo / Hi / Bounds), plus a second "nDXplorer parameters" table when constants take part
-- [ ] Status line (red error; green result "reduced χ² = … · k=v")
-- [ ] Inline progress with Cancel; "Fit" / "Close"
-- [ ] The fitted values are written back to the curve and the constants
+- [x] Title "Fit curve to data"
+- [x] "Fit to:" Displayed data (y vs x) / X marginal histogram / Y marginal histogram
+- [x] "Fit through:" the cloud (every populated bin) / the population of each column / the mean of each column
+- [x] "Scan first" check (on)
+- [x] Hint about free, fixed and crosslinked parameters
+- [x] Parameter table (Name / Value / Fixed / Lo / Hi / Bounds), plus a second "nDXplorer parameters" table when constants take part
+- [x] Status line (red error; green result "reduced χ² = … · k=v")
+- [x] Inline progress with Cancel; "Fit" / "Close"
+- [x] The fitted values are written back to the curve and the constants
+- [~] The status line is plain text in emtk's default colour (no per-feature styling); the fit runs on a thread on a desktop (the window stays live, Cancel stops it) and in the frame in a browser
 
 ## parameters_panel — Parameters tab (constants)
 
-- [ ] Constants table: gG/gR, Bg, Br, By, PhiA, PhiD, alpha, tauD0, beta, r, forster_radius, omega_r_um, T_K, eta_Pa_s, KB
-- [ ] Columns Name / Value / Fixed / Lo / Hi / Bounds; an edit recomputes only the dependent columns (debounced) and redraws
-- [ ] Row context menu: Copy, Paste, Link / Unlink (crosslink to fit parameters)
-- [ ] "Add parameter" button (tooltip "Add a new constant (name + value)")
-- [ ] "Save" button (tooltip "Save parameters"), writes mfd.constants.json
+- [x] Constants table: gG/gR, Bg, Br, By, PhiA, PhiD, alpha, tauD0, beta, r, forster_radius, omega_r_um, T_K, eta_Pa_s, KB
+- [x] Columns Name / Value / Fixed / Lo / Hi / Bounds; an edit recomputes only the dependent columns (debounced) and redraws
+- [x] Row context menu: Copy, Paste, Link / Unlink (crosslink to fit parameters)
+- [x] "Add parameter" button (tooltip "Add a new constant (name + value)")
+- [x] "Save" button (tooltip "Save parameters"), writes mfd.constants.json
+- [~] Debounce is one recompute per frame for all edits since the last frame (no timer); a Link column shows what a constant follows; "Link…" opens a list of every registered parameter group (fits, curves, Gaussians) instead of a submenu
 
 ## add_parameter — Parameters: Add parameter prompt
 
-- [ ] Asks for the name ("Parameter name:"), then the value; a duplicate name is refused with a message
+- [x] Asks for the name ("Parameter name:"), then the value; a duplicate name is refused with a message
+- [~] One dialog with two steps (name, then "Value for 'name':") instead of two QInputDialogs
 
 ## equations_panel — Equations tab and names dialog
 
-- [ ] The panel can be reached from the UI (Qt: it cannot, see menu_view)
-- [ ] Equation table: Output | Expression | status (✓/✗ with the error as tooltip)
-- [ ] Preview line and status line ("N equation(s), all valid" / "… with problems")
-- [ ] "➕" add, "➖" remove, "🔤" names & functions
-- [ ] "Apply" (validate all and recompute the derived columns)
-- [ ] "Names & functions" dialog: hint, list of column / constant / function names (click inserts), Close
-- [ ] Load / save of equation files
+- [x] The panel can be reached from the UI (Qt: it cannot, see menu_view) -- View > Equations shows the tab and selects it; its check mark follows
+- [x] Equation table: Output | Expression | status (✓/✗ with the error as tooltip)
+- [x] Preview line and status line ("N equation(s), all valid" / "… with problems")
+- [x] "➕" add, "➖" remove, "🔤" names & functions
+- [x] "Apply" (validate all and recompute the derived columns)
+- [x] "Names & functions" dialog: hint, list of column / constant / function names (click inserts), Close
+- [x] Load / save of equation files
+- [~] Buttons read "+", "−", "Names" (the default font has no emoji); the error of a ✗ row is shown under the table when the row is selected (a painter has no tooltips); the preview line is the selected equation written out (Qt's rendered preview is off for ndX's quoted names anyway); the names list has a filter box; Delete removes the selected row
+- [~] The functions listed are those ndX's equation engine accepts (abs); the Qt dialog lists chisurf's (exp, sqrt, …), which the engine rejects (Qt: broken)
 
 ## store_editor — Data button → Table Editor
 
-- [ ] Title "Table Editor", about 900×600, edits a copy of the data
-- [ ] Search field ("🔍 Search…")
-- [ ] Column picker ☑, hide-empty ✕, colour-by-value 🎨, colour scope ∥, CSV export
-- [ ] Status "N rows × M columns"
-- [ ] Sortable table, one column per parameter; edits are staged
-- [ ] Cell context menu: Copy, Copy with headers, Paste, Export as CSV…, Select all, Filter this column…, Hide this column, Resize columns to contents
-- [ ] "↺ Reset", "✓ Apply" (writes back and redraws), "✕ Cancel"
+- [x] Title "Table Editor", about 900×600, edits a copy of the data
+- [x] Search field ("🔍 Search…")
+- [x] Column picker ☑, hide-empty ✕, colour-by-value 🎨, colour scope ∥, CSV export
+- [x] Status "N rows × M columns"
+- [x] Sortable table, one column per parameter; edits are staged
+- [x] Cell context menu: Copy, Copy with headers, Paste, Export as CSV…, Select all, Filter this column…, Hide this column, Resize columns to contents
+- [x] "↺ Reset", "✓ Apply" (writes back and redraws), "✕ Cancel"
+- [~] The search field is the table's filter box; hide-empty, colour and one-scale are check boxes ("Hide empty", "Colour by value", "∥ One scale") and the picker and export are buttons ("☑ Columns…", "Export CSV…"); the columns keep a minimum width and the table scrolls sideways (a bar under the rows, shift + wheel); Select all selects rows (Copy copies the selected rows of the shown columns)
 
 ## axis_control_dialog — View > Axis Control
 
-- [ ] Title "Axis Control", resizable (with a size grip and a hint about resizing)
-- [ ] X Plot: Bottom / Top / Left / Right axis
-- [ ] Y Plot: Bottom / Top / Left / Right axis
-- [ ] Z Plot: Enable Z Plot, Bottom / Left axis
-- [ ] 2D Plot: Bottom / Top / Left / Right axis
-- [ ] Overlay Plot: Bottom / Top / Left / Right axis
-- [ ] Axis Label Settings: Enable All Labels; Y Plot labels (Top, Right); X Plot labels (Top); Z Plot labels (Bottom, Left)
-- [ ] Font Settings: Tick size (6..48, default 8), Title size (6..64, default 10), Bold titles, Title color (colour picker)
-- [ ] OK / Save (axis label settings to the settings folder) / Cancel / Apply
+- [~] Title "Axis Control" in an emtk dialog window (movable, ✕/Escape close); not resizable: it is sized to hold every control, so the size grip and the "you can resize" hint went (the capture's resize_dialog step is a no-op)
+- [x] X Plot: Bottom / Top / Left / Right axis (the ticks of the x marginal; Apply redraws, test_plot_axis_display)
+- [x] Y Plot: Bottom / Top / Left / Right axis
+- [x] Z Plot: Enable Z Plot (dynamic z-selection, as the Qt box drives checkBoxEnableZ), Bottom / Left axis (disabled until Enable Z Plot, as in Qt)
+- [x] 2D Plot: Bottom / Top / Left / Right axis (the map gets ticks; none by default)
+- [x] Overlay Plot: Bottom / Top / Left / Right axis -- present and disabled, as in Qt (the overlay is a drawing surface without axes in both apps)
+- [~] Axis Label Settings: Enable All Labels; Y Plot labels (Top, Right); X Plot labels (Top); Z Plot labels (Bottom, Left) -- all present, individual boxes disabled while Enable All Labels is on (Qt); the x "top" and y "right" titles switch in the plots; the plots draw no y-top or z titles, so those three switches are stored (axis_labels.yaml) but show nothing
+- [~] Font Settings: Title color (swatch + HSV picker + hex, emtk view_form kind "color") works on the axis titles. Tick size / Title size / Bold titles are not shown: the emtk app draws in emtk's default font by the user's directive; their values are kept in axis_labels.yaml for the Qt window
+- [x] OK / Save (axis_labels.yaml in the settings folder, named by the settings' axis_labels) / Cancel / Apply
 
 ## performance_settings — Settings > Performance Settings
 
-- [ ] "Performance Configuration" heading and description
-- [ ] Histogram Computation: Use Fast Histogram Optimizations, Use Parallel Computation, Histogram Threads (-1..64), Plot Backend (pyqtgraph / matplotlib)
-- [ ] Memory & Caching: Aggressive Caching, General Cache (MB) 5..1000 (default 50) (Qt shows the group title as "Memory _Caching" because the & is read as a mnemonic)
-- [ ] Advanced Options info, including "Settings are saved to: ~/.ndxplorer/mfd.settings.json"
-- [ ] "↺ Reset to Defaults", "✕ Cancel", "✓ Apply", "✓ OK"; confirmation messages
+- [x] "Performance Configuration" heading and description
+- [~] Histogram Computation: Use Fast Histogram Optimizations, Use Parallel Computation, Histogram Threads (-1..64) present and saved; Plot Backend is not a choice: the emtk app draws with emtk, and a note says the Qt window's backend is kept in the settings for it (Qt never saved that choice; `save_performance_config` now does)
+- [x] Memory & Caching: Aggressive Caching, General Cache (MB) 5..1000 (default 50) ("Memory & Caching", no mnemonic)
+- [x] Advanced Options info, including "Settings are saved to: ~/.ndxplorer/mfd.settings.json" and "Values in settings file override environment variables."
+- [x] "Reset to Defaults", "Cancel", "Apply", "OK" (the ↺ ✕ ✓ glyphs dropped: not in emtk's font); "Settings Applied" message; Reset asks first and then shows the defaults (Qt: broken, it re-read the saved file, so nothing reset), Apply saves them
+- Note: none of these values changes a computation in either app today (nothing reads PerformanceConfig), recorded in okf
 
 ## publication_export — Export… (publication figure)
 
@@ -426,16 +434,16 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## report_tool — File > Make Report
 
-- [ ] Title "ndX Report Tool", 900×600, split view
-- [ ] "Analysis folders (drop here):" list (multi-select, accepts folder drops; context menu "Copy Path(s)")
-- [ ] "Add…" (folder chooser), "Remove", "Clear" (confirm)
-- [ ] "Report YAML (report.yaml):" editor with "Load…" / "Save…" (YAML / JSON)
-- [ ] "Browse generated images": folder field, "Plot:" combo (context menu "Copy Image Path"), image preview
-- [ ] "Clear Reports" (confirm) and "Generate Reports" (validation, progress "Generating reports…" with Cancel, optional combined DOCX)
+- [~] Title "ndX Report Tool", 1000×700 emtk dialog window, folders left, config and images right (fixed split, no splitter handle)
+- [~] "Analysis folders (drop here):" list -- a data_table (Folder, Report ✓ column replaces the green "processed" highlight); drops add the analysis folders found in what was dropped (Qt), right-click "Copy Path(s)"; single selection, not multi-select
+- [x] "Add…" (io folder chooser), "Remove" (the selected folder), "Clear" (confirm)
+- [x] "Report YAML (report.yaml):" editor (emtk TextEditor via view_form code_editor) with "Load…" / "Save…" (YAML / JSON, validated; a file that does not parse asks "Load as-is?")
+- [x] "Browse generated images": folder field, "Plot:" choice, image preview (right-click "Copy Image Path" on the preview, not on the combo)
+- [x] "Clear Reports" (confirm; also clears the analysis folders below a listed root) and "Generate Reports" (validation messages, one folder per frame with a progress bar and "Cancel", "Done"/"Canceled" message, combined DOCX offered through io save_bytes when python-docx is installed, which it is not in arm64, so that is said in the message); plus "Close". The work is ndxplorer/export/report.py, shared with the Qt tool; it fixes the transposed 2-D CSV/PNG
 
 ## fix_report_tool — Help > Fix Report Tool
 
-- [ ] Help > Fix Report Tool (Qt: broken, it shows "Fix Report Tool Error: No module named …"); implement it or drop the entry deliberately
+- [-] Help > Fix Report Tool (Qt: broken, it shows "Fix Report Tool Error: No module named …") -- dropped from both menus (core 3cf8811). `ndxplorer.fix_report_tool` never existed in the history: a5a1b2a added the menu entry and a dangling import, so there is no intended behaviour to port. What "fixing" a report would mean -- a folder whose report is missing or stale -- is covered by the report tool itself: the Report column shows which folders have one, Clear Reports removes them, Generate Reports rebuilds the ones missing
 
 ## find_projections — View > Find informative projections…
 
@@ -467,15 +475,15 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## set_default_axis — Settings > Set default axis
 
-- [ ] Stores the current x / y / z / weight in the settings `default_axes` and confirms with a message
+- [x] Stores the current x / y / z / weight (and colormap) in the loaded settings file's `default_axes`, the rest of the file kept, and confirms with "Default axis settings have been updated." (settings/persist.write_default_axes, shared with Qt)
 
 ## load_settings_dialog — Settings > Load settings
 
-- [ ] File chooser "ndX settings file"; loading re-applies equations, constants, axis settings and colormap
+- [x] File chooser "ndX settings file" (io service; filter ndX settings (*.settings.json)); loading re-applies equations (columns recomputed), constants (taken over by the Parameters tab), per-parameter axis settings, axis titles and colormap, and later saves go to that file
 
 ## save_axis_settings_dialog — Settings > Save settings > Axis settings
 
-- [ ] Save-file chooser for the per-parameter axis settings JSON
+- [x] Save-file chooser "Axis settings file" (Axis file (*.axis.json), default mfd.axis.json) for the per-parameter axis settings: the axes on screen are taken first ("Set" for x, y, z), then written over the chosen file (or the packaged one), other parameters kept. It opens in the working folder, not in ~/.ndxplorer (the io service has no start-folder argument)
 
 ## browse_working_path — Browse (working path)
 
