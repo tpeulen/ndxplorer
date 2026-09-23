@@ -168,3 +168,19 @@ def test_flat_file_carries_a_vector_and_old_files_still_read(group):
     assert cg.vector_labels(again, "gamma") == ["0", "1"]
     old = cg.build_group_from_data({"gamma": 0.7, "Bg": 1.2})
     assert cg.vector_names(old) == []
+
+
+def test_settings_persist_writes_elements_in_either_format(tmp_path):
+    from ndxplorer.settings.persist import constants_payload, read_json, write_constants
+    from ndxplorer.core.constants_group import values_from_data
+
+    values = {"gamma": 0.7, "gamma[HF]": 0.61, "gamma[LF]": 0.83}
+    flat = constants_payload(values)
+    assert flat == values                            # the old flat format, unchanged
+    rich = {"parameters": {"gamma": {"value": 0.5, "fixed": True}},
+            "vectors": {"gamma": {"populations": ["HF", "LF"], "column": "Population"}}}
+    path = tmp_path / "c.json"
+    write_constants(path, constants_payload(values, rich))
+    data = read_json(path)
+    assert data["vectors"]["gamma"]["column"] == "Population"
+    assert values_from_data(data) == values
