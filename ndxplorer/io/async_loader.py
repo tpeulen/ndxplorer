@@ -1,4 +1,8 @@
-"""Utilities for running expensive data-loading operations off the UI thread."""
+"""Utilities for running expensive data-loading operations off the UI thread.
+
+Qt is imported only once a Qt application is running: a process without one
+(the emtk app, a script, a test) loads inline and never pays for Qt.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from qtpy import QtCore
+import sys
 
 from ..logging_config import logging
 
@@ -32,27 +36,41 @@ class DataLoadResult:
     data_source: "DataSource"
 
 
-class DataLoadWorker(QtCore.QObject):
-    """Qt worker object that executes a :class:`DataLoadTask` in a thread."""
+def _worker_class():
+    """The Qt worker class, built on first use (it subclasses ``QObject``)."""
+    global DataLoadWorker
+    if DataLoadWorker is not None:
+        return DataLoadWorker
+    from qtpy import QtCore
 
-    finished = QtCore.Signal(object)  # DataLoadResult
-    error = QtCore.Signal(str)
+    class _DataLoadWorker(QtCore.QObject):
+        """Qt worker object that executes a :class:`DataLoadTask` in a thread."""
 
-    def __init__(self, task: DataLoadTask):
-        super().__init__()
-        self._task = task
+        finished = QtCore.Signal(object)  # DataLoadResult
+        error = QtCore.Signal(str)
 
-    @QtCore.Slot()
-    def run(self) -> None:
-        try:
-            logging.info("Starting background data load: %s", self._task.description)
-            data_source = self._task.load_callable()
-        except Exception:  # pragma: no cover - GUI path
-            logging.exception("Background data load failed")
-            self.error.emit(traceback.format_exc())
-            return
+        def __init__(self, task: DataLoadTask):
+            super().__init__()
+            self._task = task
 
-        self.finished.emit(DataLoadResult(task=self._task, data_source=data_source))
+        @QtCore.Slot()
+        def run(self) -> None:
+            try:
+                logging.info("Starting background data load: %s", self._task.description)
+                data_source = self._task.load_callable()
+            except Exception:  # pragma: no cover - GUI path
+                logging.exception("Background data load failed")
+                self.error.emit(traceback.format_exc())
+                return
+
+            self.finished.emit(DataLoadResult(task=self._task, data_source=data_source))
+
+    DataLoadWorker = _DataLoadWorker
+    return DataLoadWorker
+
+
+#: The Qt worker class once :func:`_worker_class` has built it.
+DataLoadWorker = None
 
 
 def run_task_inline(task: DataLoadTask) -> None:
@@ -73,6 +91,11 @@ def run_task_inline(task: DataLoadTask) -> None:
 
 def _in_gui_thread() -> bool:
     """Whether this is the thread a Qt application runs its event loop on."""
+    if "qtpy" not in sys.modules:
+        # Nothing imported Qt, so no Qt application can be running.
+        return False
+    from qtpy import QtCore
+
     app = QtCore.QCoreApplication.instance()
     if app is None:
         return False
@@ -99,8 +122,10 @@ def run_task(task: DataLoadTask) -> None:
         run_task_inline(task)
         return
 
+    from qtpy import QtCore
+
     thread = QtCore.QThread()
-    worker = DataLoadWorker(task)
+    worker = _worker_class()(task)
     worker.moveToThread(thread)
     entry = (thread, worker)
     _RUNNING.append(entry)
