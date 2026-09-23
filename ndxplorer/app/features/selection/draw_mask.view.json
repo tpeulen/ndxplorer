@@ -1,0 +1,72 @@
+{
+ "_comment": "The Draw Mask panel of the emtk app, drawn by emtk.view_form over ndxplorer.app.features.selection.DrawMaskModel inside the plot-control dock's 'draw_mask' custom section. The same controls as the Qt window's widgetMaskDrawing (plot_control.ui): Enable drawing, Draw/Erase, Cat, Clear, Load Mask, Save Mask, Brush, Apply.",
+ "sections": [
+  {
+   "type": "toggle",
+   "attr": "drawing",
+   "label": "Enable drawing",
+   "description": "Enable/disable drawing on the 2-D plot. While on, the left button paints instead of dragging a rectangle gate."
+  },
+  {
+   "type": "row",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "choice",
+     "attr": "mode",
+     "options": ["draw", "erase"],
+     "labels": ["Draw", "Erase"],
+     "style": "radio",
+     "description": "Paint the category, or erase back to unpainted."
+    },
+    {
+     "type": "value",
+     "attr": "category",
+     "label": "Cat:",
+     "kind": "int",
+     "style": "spin",
+     "minimum": 1,
+     "maximum": 255,
+     "width": 70,
+     "description": "Category/class ID for drawing (1-255): the one the brush paints and Apply turns into a gate."
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "Clear", "action": "clear_mask", "description": "Erase the whole mask."}
+     ]
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "n_col": 4,
+   "sections": [
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "Load Mask", "action": "load_mask", "description": "Load a mask from an integer TIFF (one label per bin, the map's binning)."},
+      {"label": "Save Mask", "action": "save_mask", "description": "Save the mask as an integer TIFF."}
+     ]
+    },
+    {
+     "type": "value",
+     "attr": "brush",
+     "label": "Brush:",
+     "kind": "int",
+     "style": "spin",
+     "minimum": 1,
+     "maximum": 50,
+     "width": 70,
+     "description": "Brush radius in pixels."
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "Apply", "action": "apply_mask", "description": "Add the painted category as a mask gate in the Selection table."}
+     ]
+    }
+   ]
+  }
+ ]
+}
