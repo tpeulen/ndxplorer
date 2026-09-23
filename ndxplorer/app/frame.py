@@ -97,6 +97,9 @@ class NdxApp:
             self.panel.fields[name] = self._visibility_field(title)
         #: The Plot window's parts, as last drawn (:func:`.docks.plot_boxes`).
         self.plot_boxes: Dict[str, tuple] = {}
+        #: Height the display corner's controls took last frame.
+        self._corner_h = 0.0
+        self._corner_due = False
         from .features import load_features
 
         #: The feature modules (:mod:`ndxplorer.app.features`), created for this window.
@@ -239,7 +242,9 @@ class NdxApp:
         # becomes gates, and this frame drew the histograms from before them.
         # A host draws on demand, so without asking it the window would show
         # the old counts until the pointer next moved.
-        self._frame_due = bool(getattr(ctx, "frame_requested", False)) or self.model.stale
+        self._frame_due = (bool(getattr(ctx, "frame_requested", False)) or self.model.stale
+                           or self._corner_due)
+        self._corner_due = False
 
     def _spend_edges(self) -> None:
         """One-frame input edges are used up by the frame that saw them."""
@@ -265,11 +270,20 @@ class NdxApp:
 
         from .docks import plot_boxes
 
-        boxes = self.plot_boxes = plot_boxes(box)
+        boxes = self.plot_boxes = plot_boxes(box, self._corner_h)
         for name, key in (("plot_header", "header"), ("plot_corner", "corner")):
             emtk.begin_child(boxes[key])
             draw_form(self.specs[name], self.panel, self.forms[name], titles=False)
             emtk.end_child()
+        # The corner's controls wrap in a narrow window; the next frame gives
+        # them the height they took (plot_boxes), and one is asked for now.
+        rects = self.forms["plot_corner"].rects.values()
+        top = boxes["corner"][1]
+        need = max((r[1] + r[3] - top for r in rects), default=0.0) + 4.0
+        if abs(need - self._corner_h) > 0.5:
+            # a frame is due only when the layout it gives differs
+            self._corner_due = plot_boxes(box, need) != boxes
+            self._corner_h = need
         self.plots.draw(boxes)
 
     def _draw_z_plot(self, section, model, state, width: float) -> None:

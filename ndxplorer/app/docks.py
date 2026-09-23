@@ -41,12 +41,17 @@ LEFT_ORDER = [PLOT_CONTROLS, "Parameters", "Overlays"]
 #: Where the layout is kept, in the settings directory.
 LAYOUT_FILE = "ndxplorer_layout.json"
 
-#: The left region's share and its floor (the Qt window's dock widths).
+#: The left region's share, and its floor: an axis row (combo, bins, toggles,
+#: Set) on one line. A split never gives either side more than half as floor.
 LEFT_FRACTION = 0.357
-LEFT_MIN = 360.0
+LEFT_MIN = 405.0
 #: The Plot window's fixed parts, in logical pixels.
 ROW_H = 26.0
+#: The display corner (and the y marginal under it): its widest, its narrowest,
+#: and its share of a Plot window between the two.
 CORNER_W = 258.0
+CORNER_MIN = 190.0
+CORNER_FRACTION = 0.3
 XMARGINAL_FRACTION = 0.2
 #: Space between a window's frame and its content: the Qt docks' margins.
 PADDING = 2.0
@@ -95,19 +100,23 @@ def add_feature_windows(app) -> None:
     docks.load()
 
 
-def plot_boxes(box: Rect) -> Dict[str, Rect]:
+def plot_boxes(box: Rect, corner_h: float = 0.0) -> Dict[str, Rect]:
     """The Plot window's parts, in its content *box*.
 
     The path row on top; under it the x marginal over the map, the display
     corner beside the x marginal and the y marginal beside the map -- the Qt
     window's grid.
+
+    *corner_h* is the height the corner's controls took last frame: in a
+    narrow window they wrap onto more lines, and the x marginal's row grows
+    to hold them (up to half the grid) rather than clip them.
     """
     x, y, w, h = box
     header = (x, y, w, ROW_H)
     grid_top = y + ROW_H + 2.0
     grid_h = max(y + h - grid_top, 1.0)
-    corner_w = min(CORNER_W, max(w * 0.3, 120.0))
-    xm_h = min(max(90.0, round(h * XMARGINAL_FRACTION)), grid_h * 0.5)
+    corner_w = min(CORNER_W, max(w * CORNER_FRACTION, min(CORNER_MIN, w * 0.45)))
+    xm_h = min(max(90.0, round(h * XMARGINAL_FRACTION), float(corner_h)), grid_h * 0.5)
     map_w = max(w - corner_w, 1.0)
     return {
         "header": header,

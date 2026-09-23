@@ -70,7 +70,7 @@
   },
   {
    "type": "button_row",
-   "width": 100,
+   "weight": 0,
    "buttons": [
     {
      "label": "Export…",
@@ -90,7 +90,8 @@
      "style": "scientific",
      "decimals": 2,
      "description": "Lower colour limit of the 2-D histogram.",
-     "spin": true
+     "spin": true,
+     "min_chars": 8
     },
     {
      "type": "value",
@@ -99,7 +100,8 @@
      "style": "scientific",
      "decimals": 2,
      "description": "Upper colour limit of the 2-D histogram.",
-     "spin": true
+     "spin": true,
+     "min_chars": 8
     }
    ]
   },

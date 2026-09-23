@@ -40,7 +40,8 @@
        "maximum": 100000,
        "width": 48,
        "description": "Number of 1D bins",
-       "style": "spin"
+       "style": "spin",
+       "wrap_before": true
       },
       {
        "type": "value",
@@ -72,7 +73,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Set",
@@ -96,7 +97,8 @@
        "maximum": 100000,
        "width": 48,
        "description": "Number of 1D bins",
-       "style": "spin"
+       "style": "spin",
+       "wrap_before": true
       },
       {
        "type": "value",
@@ -128,7 +130,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Set",
@@ -160,7 +162,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Auto",
@@ -186,7 +188,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Auto",
@@ -249,7 +251,8 @@
        "maximum": 100000,
        "width": 48,
        "description": "Number of 1D bins",
-       "style": "spin"
+       "style": "spin",
+       "wrap_before": true
       },
       {
        "type": "value",
@@ -281,7 +284,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Set",
@@ -315,11 +318,12 @@
        "type": "toggle",
        "attr": "z_dynamic",
        "label": "",
-       "description": "Limit histograms to overlay selection, dynamic"
+       "description": "Limit histograms to overlay selection, dynamic",
+       "wrap_before": true
       },
       {
        "type": "button_row",
-       "width": 100,
+       "weight": 0,
        "buttons": [
         {
          "label": "select",
@@ -330,7 +334,7 @@
       },
       {
        "type": "button_row",
-       "width": 50,
+       "weight": 0,
        "buttons": [
         {
          "label": "Auto",
@@ -377,7 +381,7 @@
      "sections": [
       {
        "type": "button_row",
-       "width": 70,
+       "weight": 0,
        "buttons": [
         {
          "label": "Cluster",

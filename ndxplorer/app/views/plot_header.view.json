@@ -11,11 +11,14 @@
      "label": "Path",
      "kind": "str",
      "placeholder": "Drop folder here.",
-     "description": "The working folder: where files are opened from."
+     "description": "The working folder: where files are opened from.",
+     "weight": 2,
+     "min_chars": 12,
+     "elide": "start"
     },
     {
      "type": "button_row",
-     "width": 72,
+     "weight": 0,
      "buttons": [
       {
        "label": "Browse",
@@ -27,9 +30,10 @@
     {
      "type": "choice",
      "attr": "colormap",
-     "width": 180,
      "options_source": "colormap_options",
-     "description": "Colormap of the 2-D histogram."
+     "description": "Colormap of the 2-D histogram.",
+     "weight": 1,
+     "min_chars": 8
     }
    ]
   }
