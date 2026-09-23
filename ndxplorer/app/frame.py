@@ -286,7 +286,8 @@ class NdxApp:
 
         from .docks import plot_boxes
 
-        boxes = self.plot_boxes = plot_boxes(box, self._corner_h)
+        row_h = emtk.get_frame_height()
+        boxes = self.plot_boxes = plot_boxes(box, self._corner_h, row_h)
         for name, key in (("plot_header", "header"), ("plot_corner", "corner")):
             emtk.begin_child(boxes[key])
             draw_form(self.specs[name], self.panel, self.forms[name], titles=False)
@@ -295,10 +296,10 @@ class NdxApp:
         # them the height they took (plot_boxes), and one is asked for now.
         rects = self.forms["plot_corner"].rects.values()
         top = boxes["corner"][1]
-        need = max((r[1] + r[3] - top for r in rects), default=0.0) + 4.0
+        need = max((r[1] + r[3] - top for r in rects), default=0.0) + 2.0
         if abs(need - self._corner_h) > 0.5:
             # a frame is due only when the layout it gives differs
-            self._corner_due = plot_boxes(box, need) != boxes
+            self._corner_due = plot_boxes(box, need, row_h) != boxes
             self._corner_h = need
         self.plots.draw(boxes)
 

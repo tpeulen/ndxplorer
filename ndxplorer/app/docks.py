@@ -45,8 +45,11 @@ LAYOUT_FILE = "ndxplorer_layout.json"
 #: Set) on one line. A split never gives either side more than half as floor.
 LEFT_FRACTION = 0.357
 LEFT_MIN = 405.0
-#: The Plot window's fixed parts, in logical pixels.
-ROW_H = 26.0
+#: The Plot window's fixed parts, in logical pixels. The path row is one
+#: field tall (emtk's frame height, passed by the app; this is its fallback),
+#: and a small gap parts it from the plots.
+ROW_H = 19.0
+ROW_GAP = 2.0
 #: The display corner (and the y marginal under it): its widest, its narrowest,
 #: and its share of a Plot window between the two.
 CORNER_W = 258.0
@@ -100,7 +103,7 @@ def add_feature_windows(app) -> None:
     docks.load()
 
 
-def plot_boxes(box: Rect, corner_h: float = 0.0) -> Dict[str, Rect]:
+def plot_boxes(box: Rect, corner_h: float = 0.0, row_h: float = ROW_H) -> Dict[str, Rect]:
     """The Plot window's parts, in its content *box*.
 
     The path row on top; under it the x marginal over the map, the display
@@ -109,11 +112,12 @@ def plot_boxes(box: Rect, corner_h: float = 0.0) -> Dict[str, Rect]:
 
     *corner_h* is the height the corner's controls took last frame: in a
     narrow window they wrap onto more lines, and the x marginal's row grows
-    to hold them (up to half the grid) rather than clip them.
+    to hold them (up to half the grid) rather than clip them. *row_h* is the
+    path row's height: one field (:func:`emtk.get_frame_height`).
     """
     x, y, w, h = box
-    header = (x, y, w, ROW_H)
-    grid_top = y + ROW_H + 2.0
+    header = (x, y, w, row_h)
+    grid_top = y + row_h + ROW_GAP
     grid_h = max(y + h - grid_top, 1.0)
     corner_w = min(CORNER_W, max(w * CORNER_FRACTION, min(CORNER_MIN, w * 0.45)))
     xm_h = min(max(90.0, round(h * XMARGINAL_FRACTION), float(corner_h)), grid_h * 0.5)
