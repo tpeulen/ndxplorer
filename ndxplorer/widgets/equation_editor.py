@@ -22,6 +22,7 @@ import yaml
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ..core.equation_graph import validate_equation
+from ..core.equation_table import BAD_MARK as _BAD, OK_MARK as _OK, summary, validate_rows
 
 # When ChiSurf is importable, ndXplorer uses its general, better-featured
 # equation editor (safe expression engine, functions/names reference, richer
@@ -55,10 +56,6 @@ def _names_to_mapping(provider):
 def _ndx_validator(expr, known, outputs):
     """ndXplorer validation for the chisurf editor: quoted names + outputs."""
     return validate_equation(expr, known_columns=known, known_outputs=outputs)
-
-
-_OK = "✓"    # ✓
-_BAD = "✗"   # ✗
 
 
 class _LocalEquationEditor(QtWidgets.QWidget):
@@ -174,24 +171,13 @@ class _LocalEquationEditor(QtWidgets.QWidget):
 
     # -- validation --------------------------------------------------------
     def _validate_all(self):
-        cols, consts, outs = self._known()
-        n_bad = 0
-        for row in range(self._table.rowCount()):
-            expr = self._expr_at(row)
-            name = self._name_at(row)
-            # An output can reference earlier outputs; pass all output names (the
-            # engine topologically orders, so forward refs are fine).
-            ok, msg = validate_equation(expr, cols, consts, outs)
-            if not name:
-                ok, msg = False, "missing output name"
-            self._set_status(row, ok, msg)
-            if not ok:
-                n_bad += 1
-        total = self._table.rowCount()
-        if n_bad:
-            self._status.setText(f"{total} equation(s), {n_bad} with problems")
-        else:
-            self._status.setText(f"{total} equation(s), all valid")
+        cols, consts, _outs = self._known()
+        rows = [{"output": self._name_at(r), "expression": self._expr_at(r)}
+                for r in range(self._table.rowCount())]
+        n_bad = validate_rows(rows, cols, consts)
+        for index, row in enumerate(rows):
+            self._set_status(index, row["ok"], row["message"])
+        self._status.setText(summary(len(rows), n_bad))
 
     def _set_status(self, row: int, ok: bool, msg: Optional[str]):
         item = self._table.item(row, 2)
