@@ -19,42 +19,42 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## global — applies to every scenario
 
-- [ ] Window title "ndX" (plus the file name once data is loaded)
-- [ ] Layout: a panel column on the left with tabs Plot controls / Parameters / Overlays, plus Equations and Gaussian Fit (hidden until the View menu shows them), and a "Plot" area on the right; the column is about ¼ of the width
-- [ ] Panel tabs can be rearranged (drag or split) and have a context menu (the ChiSurf DockArea)
-- [ ] Menu bar: File, Settings, View, Help
-- [ ] Status bar
-- [ ] Controls are disabled until data is loaded (all actions except Import / Select working path, all panels, Screenshot, Contrast, Data, Save parameters, weight, z)
-- [ ] Keyboard shortcuts Ctrl+O (Import Text files) and Ctrl+I (Analysis-Folder)
-- [ ] Opening a folder or file by dropping it on the Path field (or on the window) works like the CLI `--file` / `--folder`
-- [ ] CLI: `ndx --file`, `--folder`, `--test-data`, `--chisurf-rpc host:port`, `-v` / `--debug`, plus the subcommands `filter` and `image`
-- [ ] Every control keeps its tooltip (see the per-scenario items)
-- [ ] Qt quirk, do not copy: a fresh window holds a hidden 1000-row placeholder dataset (Tau (green), Proximity ratio, r Experimental (green)), so the first Import already asks the merge question
+- [ ] Window title "ndX" (plus the file name once data is loaded) — emtk app: the host titles the window "ndX"; no host API yet to retitle it with the file name
+- [x] Layout: a panel column on the left with tabs Plot controls / Parameters / Overlays, plus Equations and Gaussian Fit (hidden until the View menu shows them), and a "Plot" area on the right; the column is about ¼ of the width
+- [~] Panel tabs can be rearranged (drag or split) and have a context menu (the ChiSurf DockArea) — emtk app: fixed dock layout with tab strips (left: Plot controls/Parameters/Overlays + feature tabs; right: Plot + feature tabs); View > Plot controls hides the column
+- [x] Menu bar: File, Settings, View, Help
+- [x] Status bar — NdxApp.show_status, a line under the plots
+- [x] Controls are disabled until data is loaded (all actions except Import / Select working path, all panels, Screenshot, Contrast, Data, Save parameters, weight, z)
+- [x] Keyboard shortcuts Ctrl+O (Import Text files) and Ctrl+I (Analysis-Folder) — every MENUS shortcut, Ctrl = Command on macOS
+- [x] Opening a folder or file by dropping it on the Path field (or on the window) works like the CLI `--file` / `--folder` — a drop anywhere on the window (native and web hosts; the Tk host has no drop)
+- [~] CLI: `ndx --file`, `--folder`, `--test-data`, `--chisurf-rpc host:port`, `-v` / `--debug`, plus the subcommands `filter` and `image` — `--emtk` takes `--file` / `--folder`, `-v` / `--debug` and `--host native|tk`; `filter` / `image` are headless and unchanged; `--test-data` (hard-coded Windows paths) and `--chisurf-rpc` are Qt-window only for now
+- [x] Every control keeps its tooltip (see the per-scenario items) — each view.json section carries its Qt tooltip as `description`
+- [x] Qt quirk, do not copy: a fresh window holds a hidden 1000-row placeholder dataset (Tau (green), Proximity ratio, r Experimental (green)), so the first Import already asks the merge question
 
 ## startup_empty — Start-up, no data
 
-- [ ] Splash image ("NDXPLORER — Visualization and analysis for fluorescence") fills the plot area until data arrives
-- [ ] Axis combos are empty; bin defaults 81 (1-D) / 31 (2-D); ranges 0..1
-- [ ] Path field shows the placeholder "Drop folder here."
-- [ ] Marginal plot axes are visible but empty
-- [ ] File menu entries shown in the no-data state (Import stays usable)
+- [x] Splash image ("NDXPLORER — Visualization and analysis for fluorescence") fills the plot area until data arrives
+- [x] Axis combos are empty; bin defaults 81 (1-D) / 31 (2-D); ranges 0..1
+- [x] Path field shows the placeholder "Drop folder here."
+- [x] Marginal plot axes are visible but empty
+- [x] File menu entries shown in the no-data state (Import stays usable)
 
 ## open_mfd_folder — File > Import > Analysis-Folder (burst folder)
 
-- [ ] File > Import > Analysis-Folder (Ctrl+I) asks for a directory ("Burst analysis folder") and reads bi4_bur/*.bur together with the bg4/br4/by4/bv4/td4/2c4 companions merged by position
-- [ ] Equations add the derived columns (Sg, Sr, Sg/Sr, Proximity ratio, Fg, Fr, Fg/Fr, Fd/Fa, FRET efficiency, R_FRET, E_tau, …) from mfd.equations.yaml with the constants from the Parameters table
-- [ ] Default axes come from mfd.settings.json `default_axes`: x Tau (green), y Proximity ratio, z r Experimental (green), weight Number of Photons
-- [ ] Per-parameter axis settings (min/max/scale/bins) come from mfd.axis.json
-- [ ] 2-D histogram with the colormap (default viridis)
-- [ ] x marginal on top (blue, filled step), y marginal on the right (green step), with axis titles in the parameter colour
-- [ ] Path field shows the opened folder
-- [ ] Count fields show visible / total (12237 / 12237)
-- [ ] vmin / vmax fields (scientific format, e.g. 1.00e+00 / 2.01e+02)
-- [ ] Plot controls tab: foldable sections Playback (appears once data is loaded), Histogram (open), z axis, Draw Mask, Selection (open)
-- [ ] Histogram section, x row: parameter combo (editable), 1-D bins (81), 2-D bins (31), Normalized density check, Logarithmic axis check, Auto-scale check, "Set" (store as default range for this parameter)
-- [ ] Histogram section, y row: the same controls as x
-- [ ] x range min / max fields plus "Auto" (auto-range to the data); the same for y
-- [ ] "weight" check plus a parameter combo (enabled only while checked)
+- [x] File > Import > Analysis-Folder (Ctrl+I) asks for a directory ("Burst analysis folder") and reads bi4_bur/*.bur together with the bg4/br4/by4/bv4/td4/2c4 companions merged by position
+- [x] Equations add the derived columns (Sg, Sr, Sg/Sr, Proximity ratio, Fg, Fr, Fg/Fr, Fd/Fa, FRET efficiency, R_FRET, E_tau, …) from mfd.equations.yaml with the constants from the Parameters table
+- [x] Default axes come from mfd.settings.json `default_axes`: x Tau (green), y Proximity ratio, z r Experimental (green), weight Number of Photons
+- [x] Per-parameter axis settings (min/max/scale/bins) come from mfd.axis.json
+- [x] 2-D histogram with the colormap (default viridis)
+- [~] x marginal on top (blue, filled step), y marginal on the right (green step), with axis titles in the parameter colour — same plots and titles in emtk/ImPlot default colours (x, y, z = the first colours of ImPlot's colormap), per the user: default look, not Qt's
+- [x] Path field shows the opened folder (the folder it sits in, as Qt)
+- [x] Count fields show visible / total (12237 / 12237)
+- [x] vmin / vmax fields (scientific format, e.g. 1.00e+00 / 2.01e+02)
+- [x] Plot controls tab: foldable sections Playback (appears once data is loaded), Histogram (open), z axis, Draw Mask, Selection (open)
+- [x] Histogram section, x row: parameter combo (editable), 1-D bins (81), 2-D bins (31), Normalized density check, Logarithmic axis check, Auto-scale check, "Set" (store as default range for this parameter)
+- [x] Histogram section, y row: the same controls as x
+- [x] x range min / max fields plus "Auto" (auto-range to the data); the same for y
+- [x] "weight" check plus a parameter combo (enabled only while checked)
 
 ## file_dialog_analysis_folder — Analysis-Folder directory picker
 
@@ -144,17 +144,17 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## axes_fdfa_tau — Set x/y parameters: Fd/Fa vs Tau (green)
 
-- [ ] Choosing a parameter in the y combo redraws the 2-D map and the marginals
-- [ ] The stored axis settings for Fd/Fa apply on selection: logarithmic y, range 0.1..500, bins 81 / 31
-- [ ] The log axis shows log ticks on the marginal and the 2-D map
+- [x] Choosing a parameter in the y combo redraws the 2-D map and the marginals
+- [x] The stored axis settings for Fd/Fa apply on selection: logarithmic y, range 0.1..500, bins 81 / 31
+- [x] The log axis shows log ticks on the marginal and the 2-D map
 
 ## axes_log_norm_bins — Axis scale, normalisation, bins and ranges
 
-- [ ] 2-D bins x / y (1..999) re-bin the map
-- [ ] 1-D bins (1..999) re-bin the marginal
-- [ ] Normalized-density check on the y marginal
-- [ ] Manual x min / max
-- [ ] Logarithmic x axis check
+- [x] 2-D bins x / y (1..999) re-bin the map (spin boxes)
+- [x] 1-D bins (1..999) re-bin the marginal (spin boxes)
+- [x] Normalized-density check on the y marginal
+- [x] Manual x min / max
+- [x] Logarithmic x axis check (log ticks label 0.6..4 inside one decade, emtk 0821285)
 - [ ] Changing bins disables mask drawing and clears the mask (Qt behaviour)
 
 ## weights — Weighted histograms
@@ -164,13 +164,13 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## colour_log_contrast — Colormap, log counts, auto contrast, vmin/vmax
 
-- [ ] Colormap combo (the pyqtgraph map list: viridis, inferno, magma, plasma, cividis, turbo, CET-*…)
-- [ ] "log #" check for a log10 colour scale of the counts
-- [ ] "Contrast" button sets vmin / vmax automatically
-- [ ] vmin / vmax spin boxes (±1e10, "%.2e", debounced)
+- [x] Colormap combo (the pyqtgraph map list: viridis, inferno, magma, plasma, cividis, turbo, CET-*…)
+- [~] "log #" check for a log10 colour scale of the counts — toggling it re-derives vmin/vmax in log10 units; the Qt window keeps its linear limits over the log image (1..200 on values 0..2.3), which washes the map out
+- [x] "Contrast" button sets vmin / vmax automatically
+- [x] vmin / vmax spin boxes (±1e10, "%.2e", debounced) — arrows and wheel; applied on the next frame, which is the debounce
 - [ ] Buttons: "Screenshot", "Data", "Clear", "Update", "Contrast", "Export…"
-- [ ] Count fields visible / total
-- [ ] "inf" and "NaN" masking checks (on by default)
+- [x] Count fields visible / total
+- [x] "inf" and "NaN" masking checks (on by default)
 
 ## mask_nan_inf_off — NaN / inf masking off
 
@@ -477,5 +477,5 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## clear_plot — Clear
 
-- [ ] "Clear" (tooltip "Clear plot") empties the plots and the Path field (Qt quirk, do not copy: after Clear the map shows the hidden 1000-row placeholder dataset, two synthetic blobs, while the total still reads 12237)
-- [ ] "Update" (tooltip "Update plot") redraws
+- [x] "Clear" (tooltip "Clear plot") empties the plots and the Path field (Qt quirk, do not copy: after Clear the map shows the hidden 1000-row placeholder dataset, two synthetic blobs, while the total still reads 12237)
+- [x] "Update" (tooltip "Update plot") redraws
