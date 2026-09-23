@@ -257,7 +257,6 @@ class NdxApp:
                 self._draw_message(x, y, w, h)
             elif self.dialog is not None:
                 self._draw_dialog(x, y, w, h)
-        self.plots.draw_overlays(painter)
         if self.status:
             from emtk import style
             from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
@@ -358,10 +357,14 @@ class NdxApp:
         """A message box: the title, the text, OK."""
         import emtk
 
+        from emtk import style
+
         title, text = self.message
         dw, dh = min(520.0, w - 40.0), 150.0
         box = (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
         self.message_box = box
+        # Modal: the window behind is dimmed, the box itself is opaque.
+        emtk.get_window_draw_list().add_rect_filled((x, y), (x + w, y + h), style.MODAL_DIM_BG)
         emtk.begin(f"{title}##message", box)
         emtk.text(title)
         emtk.separator()

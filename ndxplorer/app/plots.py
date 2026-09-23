@@ -120,6 +120,8 @@ class PlotArea:
         """
         from emtk import implot
 
+        import emtk
+
         implot.push_style_var(implot.STYLE_VAR_PLOT_PADDING, (0.0, 0.0))
         try:
             self._draw_xmarginal(boxes["xmarginal"])
@@ -127,6 +129,9 @@ class PlotArea:
             self._draw_ymarginal(boxes["ymarginal"])
         finally:
             implot.pop_style_var()
+        # The axis titles, now: in the frame's paint order, so a dialog drawn
+        # later covers them.
+        self.draw_overlays(emtk.get_current_context().p)
 
     def _begin(self, title: str, box, flags_extra: int = 0) -> None:
         import emtk

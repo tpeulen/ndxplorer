@@ -468,3 +468,36 @@ def test_the_weight_parameter_is_usable_only_while_weight_is_ticked(model):
     assert not panel.enabled("weight_name")
     panel.weight_enabled = True
     assert panel.enabled("weight_name")
+
+
+def test_a_capture_runs_in_a_scratch_home(tmp_path, monkeypatch):
+    """Scenarios start from the shipped settings and never write ~/.ndxplorer."""
+    import os
+
+    from ndxplorer.app import capture
+
+    seen = {}
+
+    class Probe(capture.Replay):
+        def run(self):
+            seen["home"] = os.environ["HOME"]
+            return {}
+
+    monkeypatch.setattr(capture, "Replay", Probe)
+    real = os.environ["HOME"]
+    catalogue = {"datasets": {}, "setups": {}, "scenarios": [{"id": "x", "steps": []}]}
+    capture.capture_scenario("x", tmp_path, catalogue)
+    assert seen["home"] != real and os.environ["HOME"] == real
+    assert not os.path.exists(seen["home"])            # cleaned up
+
+
+def test_the_axis_titles_are_painted_inside_the_frame(app, source):
+    """In paint order, so a dialog drawn after the plots covers them."""
+    from emtk.testing import RecordingPainter
+
+    app.model.set_source(source)
+    painter = RecordingPainter()
+    app.message = ("Data Load Error", "nope")
+    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    order = [c[6] for c in painter.calls if c[0] == "text"]
+    assert order.index("E") < order.index("Data Load Error")

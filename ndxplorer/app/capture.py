@@ -400,14 +400,62 @@ def _ints(box, pad: int = 0) -> tuple:
     return (int(x) - pad, int(y) - pad, int(round(x + w)) + pad, int(round(y + h)) + pad)
 
 
+def _with_real_home(catalogue: dict) -> dict:
+    """The catalogue with ``~`` in dataset paths expanded against the real home,
+    before ``$HOME`` is moved to the scratch folder."""
+    import copy
+
+    catalogue = copy.deepcopy(catalogue)
+    for entry in catalogue.get("datasets", {}).values():
+        if isinstance(entry.get("path"), str):
+            entry["path"] = os.path.expanduser(entry["path"])
+    steps = [step for scenario in catalogue.get("scenarios", [])
+             for step in scenario.get("steps", [])]
+    steps += [step for setup in catalogue.get("setups", {}).values() for step in setup]
+    for step in steps:
+        if isinstance(step.get("path"), str) and step["path"].startswith("~"):
+            step["path"] = os.path.expanduser(step["path"])
+    return catalogue
+
+
 def load_catalogue(path: pathlib.Path = SCENARIOS) -> dict:
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
 
+class scratch_home:
+    """Run with ``$HOME`` pointing at an empty folder, restored afterwards.
+
+    ndXplorer keeps its settings in ``~/.ndxplorer`` and several scenarios write
+    there (Set default axis, Save constants, Performance Settings). A scenario
+    has to start from the shipped defaults -- as ``capture_qt.py`` arranges --
+    and must never touch the user's own settings. The scratch folder is seeded
+    with the shipped defaults on first use, by the app itself.
+    """
+
+    def __enter__(self):
+        import tempfile
+
+        self._previous = os.environ.get("HOME")
+        self._dir = tempfile.TemporaryDirectory(prefix="ndx-capture-home-")
+        os.environ["HOME"] = self._dir.name
+        return pathlib.Path(self._dir.name)
+
+    def __exit__(self, *exc):
+        if self._previous is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._previous
+        self._dir.cleanup()
+        return False
+
+
 def capture_scenario(scenario_id: str, out_dir=DEFAULT_OUT, catalogue: Optional[dict] = None,
                      size=WINDOW) -> List[pathlib.Path]:
     """Replay one scenario and write its shots; returns the files written.
+
+    Always in a scratch ``$HOME`` (:class:`scratch_home`): the shipped settings,
+    and the user's ``~/.ndxplorer`` untouched.
 
     Raises
     ------
@@ -418,11 +466,14 @@ def capture_scenario(scenario_id: str, out_dir=DEFAULT_OUT, catalogue: Optional[
     scenario = next((s for s in catalogue["scenarios"] if s["id"] == scenario_id), None)
     if scenario is None:
         raise KeyError(f"no scenario {scenario_id!r}")
-    replay = Replay(scenario, catalogue, size)
-    try:
-        shots = replay.run()
-    finally:
-        replay.app.close()
+    out_dir = pathlib.Path(out_dir).resolve()
+    catalogue = _with_real_home(catalogue)
+    with scratch_home():
+        replay = Replay(scenario, catalogue, size)
+        try:
+            shots = replay.run()
+        finally:
+            replay.app.close()
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written = []
