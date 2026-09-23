@@ -168,8 +168,8 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [~] "log #" check for a log10 colour scale of the counts — toggling it re-derives vmin/vmax in log10 units; the Qt window keeps its linear limits over the log image (1..200 on values 0..2.3), which washes the map out
 - [x] "Contrast" button sets vmin / vmax automatically
 - [x] vmin / vmax spin boxes (±1e10, "%.2e", debounced) — arrows and wheel; applied on the next frame, which is the debounce
-- [x] Buttons: "Screenshot", "Data", "Clear", "Update", "Contrast", "Export…"
-- [x] Count fields visible / total
+- [x] Buttons: "Screenshot", "Data", "Clear", "Update", "Contrast", "Export…" (emtk: Contrast and Update on the toolbar over the plots beside the colormap, log # and vmin/vmax; Screenshot, Data, Export… and Clear two by two in the corner between the marginals, or at the toolbar's end when the user drags the marginals too small for them)
+- [x] Count fields visible / total (emtk: "12237 / 12237" in the corner between the marginals)
 - [x] "inf" and "NaN" masking checks (on by default)
 
 ## mask_nan_inf_off — NaN / inf masking off
@@ -243,10 +243,10 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 - [x] "Axis" combo (blank plus every parameter; defaults to the Frame or mean-macro-time column)
 - [x] "Steps" (1..100000, default 100; one step per value on an index axis, capped at 1024)
-- [x] "Step" slider (0..steps-1); its tooltip shows the slice and the surviving count (emtk: the hover tooltip of the Step slider and its field)
+- [x] "Step" slider (0..steps-1); its tooltip shows the slice and the surviving count (emtk: one slider that writes the step on itself -- a double click types an exact step -- where there was a field beside a slider showing the same number; the tooltip is on its hover)
 - [~] Transport buttons: ◀◀ One step back, ◀ Play backward, ⏸ Stop, ▶ Play forward, ▶▶ One step forward (pressing the running direction again stops). emtk and Qt now both label Stop ■, because no font in the emtk atlas or a browser has ⏸ (it drew as a placeholder). Playing is timed by the frame loop (PlaybackViewModel.tick), not a QTimer, so it also runs in a browser.
 - [x] "Mode": Window / Integrate / Stack (Stack does no gating)
-- [~] "Speed" slider, 1..60 fps. The emtk app reads the rate from the user's settings file (~/.ndxplorer/mfd.settings.json, through settings.bundle), so the old frame_duration_ms 25 there shows as 40 fps. The Qt window reads only the packaged file (10 fps) and ignores the user's.
+- [~] "Speed" slider, 1..60 fps; in emtk one slider that writes "10 fps" on itself (double click to type a rate). The emtk app reads the rate from the user's settings file (~/.ndxplorer/mfd.settings.json, through settings.bundle), so the old frame_duration_ms 25 there shows as 40 fps. The Qt window reads only the packaged file (10 fps) and ignores the user's.
 - [x] Window and Integrate modes gate the plots to the current slice (87 of 12237 at step 5 of 20, the same as the Qt window)
 - [~] The panel is always there. The Qt window hides it until data is loaded; emtk draws it disabled instead, because the fold belongs to the core spec.
 

@@ -81,7 +81,8 @@ TARGETS: Dict[str, str] = {
     "widget:win.dockWidget_PlotControl": "left_dock",
     "widget:pc.widgetSelection": "panel:Selection",
     "widget:pc.widgetZ": "panel:z axis",
-    "widget:win.widget_6": "corner",
+    # widget_6's controls are on the toolbar and in the marginals' corner now
+    "widget:win.widget_6": "display_controls",
 }
 
 
@@ -214,6 +215,11 @@ class Replay:
             return frame
         if kind.startswith("panel:"):
             return self.panel_rect(kind[len("panel:"):])
+        if kind == "display_controls" and "header" in self.app.plot_boxes:
+            # the toolbar and the corner under its right end, as one picture
+            hx, hy, hw, hh = self.app.plot_boxes["header"]
+            cx, cy, cw, ch = self.app.plot_boxes["corner"]
+            return (hx, hy, hw, cy + ch - hy)
         if kind not in self.app.plot_boxes:
             raise Unsupported(f"the Plot window is not on screen for {target!r}")
         return self.app.plot_boxes[kind]
