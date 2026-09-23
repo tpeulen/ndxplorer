@@ -30,7 +30,7 @@ import numpy as np
 
 from ..core.data import DataManager, MaskState
 from ..core.data_source import DataSource
-from ..core.gates import GateRow, interval_rows, selections_from_rows
+from ..core.gates import GateList
 from ..core.histograms import auto_contrast_limits, colour_limits, display_counts
 from ..logging_config import logging
 from ..utils.axis_helpers import robust_axis_range, settings_for_axis
@@ -188,10 +188,9 @@ class ExplorerModel:
         self.z_dynamic = False
         self.z_range: Tuple[float, float] = (0.0, 1.0)
         self._z_range_for: Optional[tuple] = None
-        self.gates: List[GateRow] = []
-        #: Selections a gate row cannot rebuild (painted masks, drawn regions),
-        #: matched to their rows by :func:`~ndxplorer.core.gates.selections_from_rows`.
-        self.stored_selections: list = []
+        #: The Selection table: every gate, of every kind (intervals, 2-D
+        #: Gaussians, drawn regions, painted masks).
+        self.gates = GateList()
         self.selected_gate: Optional[int] = None
         #: The window, when there is one: its features take part in the mask.
         self.app = None
@@ -240,7 +239,7 @@ class ExplorerModel:
         """Show *source*: compute its equation columns, choose the axes, redraw."""
         self.manager.data_source = source          # computes the equation columns
         self.source = self.manager.data_source
-        self.gates = []
+        self.gates.clear()
         self.selected_gate = None
         self._apply_default_axes()
         self.invalidate()
@@ -253,7 +252,7 @@ class ExplorerModel:
         self.manager.equations = list(self.bundle.equations or [])
         self.path = ""
         self.working_path = ""
-        self.gates = []
+        self.gates.clear()
         self.selected_gate = None
         for axis in (self.x, self.y, self.z):
             axis.name = ""
@@ -370,14 +369,12 @@ class ExplorerModel:
     # ----------------------------------------------------------------- gates
     def add_rectangle(self, x_range, y_range) -> None:
         """A rectangle dragged on the map: an interval gate on x and one on y."""
-        rows = interval_rows(self.index_of(self.x.name), self.x.name, x_range,
-                             self.index_of(self.y.name), self.y.name, y_range)
-        self.gates.extend(rows)
+        self.gates.add_rectangle(self.index_of(self.x.name), self.x.name, x_range,
+                                 self.index_of(self.y.name), self.y.name, y_range)
         self.invalidate()
 
     def add_interval(self, name: str, lo: float, hi: float) -> None:
-        lo, hi = sorted((float(lo), float(hi)))
-        self.gates.append(GateRow(self.index_of(name), name, lo, hi))
+        self.gates.add_interval(self.index_of(name), name, lo, hi)
         self.invalidate()
 
     def z_select(self) -> None:
@@ -387,37 +384,23 @@ class ExplorerModel:
         self.add_interval(self.z.name, *self.z_range)
 
     def remove_gate(self, index: int) -> None:
-        if 0 <= index < len(self.gates):
-            del self.gates[index]
+        if self.gates.remove([index]):
             self.selected_gate = None
             self.invalidate()
 
     def clear_gates(self) -> None:
-        self.gates = []
+        self.gates.clear()
         self.selected_gate = None
         self.invalidate()
 
     def edit_gate(self, index: int, key: str, value: Any) -> None:
-        """A cell of the gate table changed."""
-        if not 0 <= index < len(self.gates):
-            return
-        gate = self.gates[index]
-        if key in ("invert", "enabled"):
-            setattr(gate, key, bool(value))
-        elif key in ("lower", "upper"):
-            try:
-                setattr(gate, key, float(value))
-            except (TypeError, ValueError):
-                return
-        elif key == "name":
-            gate.name = str(value)
-        else:
-            return
-        self.invalidate()
+        """A cell of the gate table changed (see :meth:`GateList.edit`)."""
+        if self.gates.edit(index, key, value):
+            self.invalidate()
 
     def gate_records(self) -> List[dict]:
         """The gate table's rows, one record each, keyed by position."""
-        return [dict(g.record(), row=i) for i, g in enumerate(self.gates)]
+        return self.gates.records()
 
     # ------------------------------------------------------------ recompute
     def invalidate(self) -> None:
@@ -434,7 +417,7 @@ class ExplorerModel:
         indices = (self.index_of(self.x.name), self.index_of(self.y.name),
                    self.index_of(self.z.name))
         state = MaskState(
-            selections=selections_from_rows(self.gates, stored=self.stored_selections),
+            selections=self.gates.selections(),
             axis_indices=tuple(max(i, 0) for i in indices),
             mask_inf=self.mask_inf,
             mask_nan=self.mask_nan,

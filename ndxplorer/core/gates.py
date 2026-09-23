@@ -1,21 +1,21 @@
 """The gate list as plain data, and the selections it stands for.
 
-The Selection table is a list of rows -- a name, a column, two bounds, an
-*invert* and an *enable* flag, and for the gates that are not intervals a
-small metadata record saying what they are. Which :class:`DataSelection` a row
-means used to be decided inside the Qt table's ``get_selections``, reading cell
-widgets, item roles and JSON stashed in ``Qt.UserRole``. That made the answer
-to "which points are shown" depend on a ``QTableWidget``.
+The Selection table is a list of rows. Each row has a name, a column, two
+bounds, an *invert* flag and an *enable* flag. A gate that is not an interval
+also carries what it is: the Gaussian's parameters in ``meta``, or the painted
+mask or drawn region object itself in ``selection``.
 
-Here it is decided from a :class:`GateRow`: the Qt table reads its cells into
-rows and hands them over, and the emtk app keeps its gates as rows to begin
-with. Both then get their selections from :func:`selections_from_rows`.
+:class:`GateList` is that list, and the one source of truth for both GUIs. The
+emtk app's gate table is a view spec over :meth:`GateList.records`. The Qt
+window's ``QTableWidget`` is rebuilt from the list, and it writes its edits
+back through :meth:`GateList.edit`. Which points are shown is then
+:meth:`GateList.selections`, and no widget is read to answer it.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 from ..logging_config import logging
 from .data_source import (
@@ -25,11 +25,10 @@ from .data_source import (
     RectangularDataSelection,
 )
 
-__all__ = ["GateRow", "interval_rows", "selections_from_rows"]
+__all__ = ["GateRow", "GateList", "interval_rows", "selections_from_rows", "KINDS"]
 
-#: Cell texts that stand for "no number" in the bound columns of a gate that is
-#: not an interval (a painted mask, a 2-D Gaussian).
-_PLACEHOLDERS = ("Bitmap", "Mask", "G2D", "---")
+#: The four kinds of gate the table holds.
+KINDS = ("Interval", "G2D", "Region", "Mask")
 
 
 @dataclass
@@ -49,8 +48,12 @@ class GateRow:
     enabled : bool
         Whether the gate takes part at all.
     meta : dict or None
-        ``{"type": "G2D" | "Region" | "Mask", ...}`` for a gate that is not an
-        interval; ``None`` for an interval.
+        ``{"type": "G2D", "idx1", "idx2", "mu", "cov", "sigma", "log_x",
+        "log_y"}`` for a 2-D Gaussian; ``None`` otherwise.
+    selection : DataSelection or None
+        The painted mask (:class:`MaskDataSelection`) or drawn region
+        (``RegionDataSelection``) a row of that kind *is*. No cell can hold a
+        bitmap or a polygon, so the row keeps the object.
     """
 
     parameter_idx: int
@@ -60,38 +63,46 @@ class GateRow:
     invert: bool = False
     enabled: bool = True
     meta: Optional[Dict[str, Any]] = None
+    selection: Optional[DataSelection] = None
 
     @property
     def kind(self) -> str:
-        """``"Interval"``, or the ``type`` of the metadata."""
+        """``"Interval"``, ``"G2D"``, ``"Region"`` or ``"Mask"``."""
+        if isinstance(self.selection, MaskDataSelection):
+            return "Mask"
+        if self.selection is not None and hasattr(self.selection, "roi"):
+            return "Region"
         if isinstance(self.meta, dict) and self.meta.get("type"):
             return str(self.meta["type"])
         return "Interval"
 
+    @property
+    def is_interval(self) -> bool:
+        return self.kind == "Interval"
+
+    def bound_texts(self) -> tuple:
+        """What the Min and Max cells show for a gate without bounds."""
+        kind = self.kind
+        if kind == "Mask":
+            return ("Bitmap", "Bitmap")
+        if kind == "Region":
+            return (str(getattr(self.selection, "shape", "region")), "shape")
+        if kind == "G2D":
+            sigma = float((self.meta or {}).get("sigma", 1.0))
+            return ("G2D", f"{sigma:g} σ")
+        return (self.lower, self.upper)
+
     def record(self) -> dict:
         """The row as a table record: the fields a gate table shows."""
+        lower, upper = self.bound_texts()
         return {
             "name": self.name,
-            "lower": self.lower,
-            "upper": self.upper,
+            "lower": lower,
+            "upper": upper,
             "invert": self.invert,
             "enabled": self.enabled,
+            "kind": self.kind,
         }
-
-
-def parse_bound(text) -> float:
-    """A bound cell's value; ``0.0`` for a placeholder or anything unreadable."""
-    if text is None:
-        return 0.0
-    if isinstance(text, (int, float)):
-        return float(text)
-    text = str(text).strip()
-    if text in _PLACEHOLDERS:
-        return 0.0
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
 
 
 def interval_rows(x_idx: int, x_name: str, x_range, y_idx: int, y_name: str,
@@ -107,88 +118,53 @@ def interval_rows(x_idx: int, x_name: str, x_range, y_idx: int, y_name: str,
     return rows
 
 
-def _kind_from_text(row: GateRow, bound_texts: Sequence[str]) -> Optional[str]:
-    """The kind of a row whose metadata was lost, from what its cells say."""
-    if any("Bitmap" in str(t) for t in bound_texts) or "Mask" in row.name:
-        return "Mask"
-    if "G2D" in row.name:
-        return "G2D"
-    return None
+def gaussian_meta(idx1: int, idx2: int, mu, cov, sigma: float = 1.0, log_x: bool = False,
+                  log_y: bool = False) -> dict:
+    """The metadata record of a 2-D Gaussian gate."""
+    return {
+        "type": "G2D",
+        "idx1": int(idx1),
+        "idx2": int(idx2),
+        "mu": [float(mu[0]), float(mu[1])],
+        "cov": [[float(cov[0][0]), float(cov[0][1])], [float(cov[1][0]), float(cov[1][1])]],
+        "sigma": float(sigma),
+        "log_x": bool(log_x),
+        "log_y": bool(log_y),
+    }
 
 
-def selections_from_rows(
-    rows: Iterable[GateRow],
-    stored: Sequence[DataSelection] = (),
-    bound_texts: Optional[Sequence[Sequence[str]]] = None,
-) -> List[DataSelection]:
-    """The selections a list of gate rows stands for.
+def selections_from_rows(rows: Iterable[GateRow]) -> List[DataSelection]:
+    """The selections a list of gate rows stands for, one per row.
 
-    Parameters
-    ----------
-    rows : iterable of GateRow
-        The table, top to bottom.
-    stored : sequence of DataSelection
-        Selections that cannot be rebuilt from a row -- painted masks and drawn
-        regions carry their shape, which no cell holds. A row of that kind is
-        matched to one of these (by ``selection_id``, then by columns and
-        name) and the stored object is returned with the row's flags applied.
-    bound_texts : sequence of (str, str), optional
-        The bound cells' text per row, used only to recognise a mask or a
-        Gaussian row whose metadata is missing.
-
-    Returns
-    -------
-    list of DataSelection
-        One per row that could be resolved. A mask, region or Gaussian row that
-        cannot be resolved is left out -- never reinterpreted as an interval,
-        which would gate on bounds nobody set.
+    A mask or region row returns its own object with the row's flags and name
+    applied. A Gaussian row is rebuilt from its metadata.
     """
     selections: List[DataSelection] = []
-    for position, row in enumerate(rows):
-        meta = row.meta if isinstance(row.meta, dict) else None
-        kind = meta.get("type") if meta else None
-        if kind is None and bound_texts is not None and position < len(bound_texts):
-            kind = _kind_from_text(row, bound_texts[position])
-
+    for row in rows:
+        kind = row.kind
+        if kind in ("Mask", "Region"):
+            sel = row.selection
+            sel.enabled, sel.invert, sel.name = row.enabled, row.invert, row.name
+            selections.append(sel)
+            continue
         if kind == "G2D":
+            meta = row.meta
             try:
                 selections.append(Gaussian2DSelection(
-                    parameter_idx1=int(meta.get("idx1", row.parameter_idx)) if meta else row.parameter_idx,
-                    parameter_idx2=int(meta.get("idx2", row.parameter_idx)) if meta else row.parameter_idx,
-                    mu=meta.get("mu", [0.0, 0.0]) if meta else [0.0, 0.0],
-                    cov=meta.get("cov", [[1.0, 0.0], [0.0, 1.0]]) if meta else [[1.0, 0.0], [0.0, 1.0]],
-                    sigma=float(meta.get("sigma", 1.0)) if meta else 1.0,
+                    parameter_idx1=int(meta.get("idx1", row.parameter_idx)),
+                    parameter_idx2=int(meta.get("idx2", row.parameter_idx)),
+                    mu=meta.get("mu", [0.0, 0.0]),
+                    cov=meta.get("cov", [[1.0, 0.0], [0.0, 1.0]]),
+                    sigma=float(meta.get("sigma", 1.0)),
                     invert=row.invert,
                     enabled=row.enabled,
                     name=row.name,
-                    log_x=bool(meta.get("log_x", False)) if meta else False,
-                    log_y=bool(meta.get("log_y", False)) if meta else False,
+                    log_x=bool(meta.get("log_x", False)),
+                    log_y=bool(meta.get("log_y", False)),
                 ))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - a bad record drops only its row
                 logging.error("Error recreating G2D selection '%s': %s", row.name, exc)
             continue
-
-        if kind == "Region":
-            sel_id = meta.get("selection_id") if meta else None
-            recovered = next((s for s in stored
-                              if getattr(s, "selection_id", None) == sel_id and hasattr(s, "roi")),
-                             None)
-            if recovered is None:
-                logging.warning("Region selection '%s' has no stored region", row.name)
-                continue
-            recovered.enabled, recovered.invert, recovered.name = row.enabled, row.invert, row.name
-            selections.append(recovered)
-            continue
-
-        if kind == "Mask":
-            recovered = _stored_mask(row, meta, stored)
-            if recovered is None:
-                logging.warning("MaskDataSelection object NOT FOUND for '%s'", row.name)
-                continue
-            recovered.enabled, recovered.invert, recovered.name = row.enabled, row.invert, row.name
-            selections.append(recovered)
-            continue
-
         selections.append(RectangularDataSelection(
             parameter_idx=row.parameter_idx,
             lower=row.lower,
@@ -200,21 +176,159 @@ def selections_from_rows(
     return selections
 
 
-def _stored_mask(row: GateRow, meta: Optional[dict],
-                 stored: Sequence[DataSelection]) -> Optional[MaskDataSelection]:
-    """The stored mask a row refers to: by id, else by columns and name."""
-    masks = [s for s in stored if isinstance(s, MaskDataSelection)]
-    sel_id = meta.get("selection_id") if meta else None
-    if sel_id:
-        for mask in masks:
-            if getattr(mask, "selection_id", None) == sel_id:
-                return mask
-    idx1 = int(meta.get("idx1", -1)) if meta else -1
-    idx2 = int(meta.get("idx2", -1)) if meta else -1
-    name = row.name
-    for mask in masks:
-        idx_match = (mask.idx1 == idx1 and mask.idx2 == idx2) or meta is None
-        name_match = mask.name == name or name.startswith(mask.name) or mask.name.startswith(name)
-        if idx_match and (name_match or len(masks) == 1):
-            return mask
-    return None
+class GateList:
+    """The Selection table's rows: what both GUIs show and gate by.
+
+    It behaves as a sequence of :class:`GateRow` (``len``, indexing, iteration,
+    ``del``). Every change goes through a method, which bumps
+    :attr:`revision`. A view redraws when the revision moves, and a plot
+    recomputes when it does.
+
+    Parameters
+    ----------
+    rows : iterable of GateRow, optional
+    """
+
+    def __init__(self, rows: Iterable[GateRow] = ()) -> None:
+        self.rows: List[GateRow] = list(rows)
+        self.revision = 0
+
+    # ------------------------------------------------------------ sequence
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __iter__(self) -> Iterator[GateRow]:
+        return iter(self.rows)
+
+    def __getitem__(self, index):
+        return self.rows[index]
+
+    def __delitem__(self, index: int) -> None:
+        self.remove([index])
+
+    def __bool__(self) -> bool:
+        return bool(self.rows)
+
+    def _changed(self) -> None:
+        self.revision += 1
+
+    # ---------------------------------------------------------------- adding
+    def append(self, row: GateRow) -> GateRow:
+        self.rows.append(row)
+        self._changed()
+        return row
+
+    def extend(self, rows: Iterable[GateRow]) -> None:
+        self.rows.extend(rows)
+        self._changed()
+
+    def add_interval(self, idx: int, name: str, lower: float, upper: float,
+                     invert: bool = False, enabled: bool = True) -> GateRow:
+        """An interval gate on one column, its bounds ordered."""
+        lo, hi = sorted((float(lower), float(upper)))
+        return self.append(GateRow(int(idx), str(name), lo, hi, bool(invert), bool(enabled)))
+
+    def add_rectangle(self, x_idx: int, x_name: str, x_range, y_idx: int, y_name: str,
+                      y_range) -> List[GateRow]:
+        """A rectangle on the 2-D map: an interval on x and one on y."""
+        rows = interval_rows(x_idx, x_name, x_range, y_idx, y_name, y_range)
+        self.extend(rows)
+        return rows
+
+    def add_gaussian(self, idx1: int, idx2: int, mu, cov, sigma: float = 1.0,
+                     invert: bool = False, enabled: bool = True, name: str = "",
+                     log_x: bool = False, log_y: bool = False) -> GateRow:
+        """A 2-D Gaussian (elliptical) gate."""
+        meta = gaussian_meta(idx1, idx2, mu, cov, sigma, log_x, log_y)
+        return self.append(GateRow(int(idx1), str(name) or "G2D", invert=bool(invert),
+                                   enabled=bool(enabled), meta=meta))
+
+    def add_selection(self, selection: DataSelection) -> GateRow:
+        """A row for a selection object of any kind.
+
+        A mask or region is kept as the row's :attr:`GateRow.selection`. An
+        interval or Gaussian object becomes the plain row it stands for.
+        """
+        invert = bool(getattr(selection, "invert", False))
+        enabled = bool(getattr(selection, "enabled", True))
+        name = str(getattr(selection, "name", "") or "")
+        if isinstance(selection, MaskDataSelection) or hasattr(selection, "roi"):
+            return self.append(GateRow(int(selection.idx1), name or "Mask", invert=invert,
+                                       enabled=enabled, selection=selection))
+        if isinstance(selection, Gaussian2DSelection):
+            return self.add_gaussian(selection.parameter_idx1, selection.parameter_idx2,
+                                     selection.mu, selection.cov, selection.sigma, invert,
+                                     enabled, name, getattr(selection, "log_x", False),
+                                     getattr(selection, "log_y", False))
+        return self.add_interval(selection.parameter_idx, name, selection.lower,
+                                 selection.upper, invert, enabled)
+
+    # -------------------------------------------------------------- changing
+    def remove(self, indices: Iterable[int]) -> int:
+        """Remove the rows at *indices*; returns how many went."""
+        drop = {int(i) for i in indices if 0 <= int(i) < len(self.rows)}
+        if not drop:
+            return 0
+        self.rows = [row for i, row in enumerate(self.rows) if i not in drop]
+        self._changed()
+        return len(drop)
+
+    def clear(self) -> None:
+        if self.rows:
+            self.rows = []
+        self._changed()
+
+    def edit(self, index: int, key: str, value: Any) -> bool:
+        """A cell of the table changed; returns whether the gate did.
+
+        ``invert``/``enabled`` take a bool and ``name`` a string. ``lower``/``upper``
+        take a number, and only on an interval. As in the Qt table, a bound
+        typed past its partner moves the partner along. Anything else is
+        refused, and the row is left as it was.
+        """
+        if not 0 <= index < len(self.rows):
+            return False
+        row = self.rows[index]
+        if key in ("invert", "enabled"):
+            value = bool(value)
+            if getattr(row, key) == value:
+                return False
+            setattr(row, key, value)
+        elif key == "name":
+            if row.name == str(value):
+                return False
+            row.name = str(value)
+        elif key in ("lower", "upper"):
+            if not row.is_interval:
+                return False
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return False
+            if value != value:  # NaN
+                return False
+            if getattr(row, key) == value:
+                return False
+            setattr(row, key, value)
+            if key == "lower" and value > row.upper:
+                row.upper = value
+            elif key == "upper" and value < row.lower:
+                row.lower = value
+        else:
+            return False
+        self._changed()
+        return True
+
+    # ---------------------------------------------------------------- reading
+    def selections(self) -> List[DataSelection]:
+        """The selections the rows stand for, top to bottom."""
+        return selections_from_rows(self.rows)
+
+    def records(self) -> List[dict]:
+        """The table's rows as records, each keyed by its position (``row``)."""
+        return [dict(r.record(), row=i) for i, r in enumerate(self.rows)]
+
+    def count(self, kind: str) -> int:
+        """How many rows of *kind* there are (for numbering new ones)."""
+        return sum(1 for r in self.rows if r.kind == kind)
+

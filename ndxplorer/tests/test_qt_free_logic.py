@@ -22,7 +22,7 @@ from ndxplorer.core.data_source import (
     MaskDataSelection,
     RectangularDataSelection,
 )
-from ndxplorer.core.gates import GateRow, interval_rows, parse_bound, selections_from_rows
+from ndxplorer.core.gates import GateList, GateRow, interval_rows, selections_from_rows
 from ndxplorer.core.histograms import auto_contrast_limits, colour_limits, display_counts
 from ndxplorer.plotting import colormap_lut
 from ndxplorer.utils.axis_helpers import settings_for_axis
@@ -70,28 +70,50 @@ def test_a_gaussian_row_is_rebuilt_from_its_metadata():
     assert sel.sigma == 2.0 and sel.parameter_idx2 == 1
 
 
-def test_a_mask_row_without_its_stored_mask_is_dropped_not_made_an_interval():
-    assert selections_from_rows([GateRow(0, "Mask", meta={"type": "Mask"})]) == []
-
-
-def test_a_mask_row_takes_its_flags_onto_the_stored_mask():
-    mask = MaskDataSelection(0, 1, np.ones((2, 2), bool), np.array([0.0, 1, 2]),
+def _mask():
+    return MaskDataSelection(0, 1, np.ones((2, 2), bool), np.array([0.0, 1, 2]),
                              np.array([0.0, 1, 2]), name="Mask")
-    mask.selection_id = "abc"
-    rows = [GateRow(0, "Mask 1", invert=True, meta={"type": "Mask", "selection_id": "abc"})]
-    (sel,) = selections_from_rows(rows, stored=[mask])
+
+
+def test_a_mask_row_is_its_mask_with_the_rows_flags():
+    mask = _mask()
+    gates = GateList()
+    row = gates.add_selection(mask)
+    assert row.kind == "Mask" and row.record()["lower"] == "Bitmap"
+    gates.edit(0, "invert", True)
+    gates.edit(0, "name", "Mask 1")
+    (sel,) = gates.selections()
     assert sel is mask and mask.invert and mask.name == "Mask 1"
 
 
-def test_a_row_whose_metadata_was_lost_is_recognised_from_its_cells():
-    rows = [GateRow(0, "painted")]
-    assert selections_from_rows(rows, bound_texts=[("Bitmap", "Bitmap")]) == []
+def test_the_list_holds_all_four_kinds():
+    class Region:  # a drawn region: anything with a roi
+        roi, idx1, idx2, shape, name = object(), 0, 1, "polygon", "poly"
+        invert, enabled = False, True
+
+    gates = GateList()
+    gates.add_interval(0, "a", 3.0, 1.0)
+    gates.add_gaussian(0, 1, (1, 2), [[1, 0], [0, 1]], sigma=2.0, name="G2D 1")
+    gates.add_selection(Region())
+    gates.add_selection(_mask())
+    assert [r.kind for r in gates] == ["Interval", "G2D", "Region", "Mask"]
+    assert (gates[0].lower, gates[0].upper) == (1.0, 3.0)
+    assert [r["row"] for r in gates.records()] == [0, 1, 2, 3]
+    assert len(gates.selections()) == 4
 
 
-@pytest.mark.parametrize("text, value", [("1.5", 1.5), ("G2D", 0.0), ("", 0.0), (None, 0.0),
-                                         (2, 2.0), ("junk", 0.0)])
-def test_bounds_read_from_cells(text, value):
-    assert parse_bound(text) == value
+def test_edits_follow_the_qt_tables_rules():
+    gates = GateList()
+    gates.add_interval(0, "a", 1.0, 2.0)
+    gates.add_gaussian(0, 1, (0, 0), [[1, 0], [0, 1]])
+    revision = gates.revision
+    assert gates.edit(0, "lower", 5.0)            # typed past the upper bound
+    assert (gates[0].lower, gates[0].upper) == (5.0, 5.0)
+    assert not gates.edit(0, "upper", "junk")     # not a number: refused
+    assert not gates.edit(1, "lower", 1.0)        # a Gaussian has no bounds
+    assert not gates.edit(7, "invert", True)
+    assert gates.revision == revision + 1
+    assert gates.remove([0, 1]) == 2 and len(gates) == 0
 
 
 def test_the_rows_gate_the_data():
