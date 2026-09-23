@@ -1,0 +1,11 @@
+{
+ "title": "UMAP Computation Progress",
+ "sections": [
+  {"type": "custom", "key": "code_editor", "target": "log_text", "options": {"height": 330, "read_only": true}},
+  {"type": "progress", "attr": "progress_fraction", "text_source": "status"},
+  {"type": "button_row", "buttons": [
+   {"label": "Cancel", "action": "cancel", "hidden_when": {"attr": "running", "equals": "false"}},
+   {"label": "Close", "action": "close", "hidden_when": {"attr": "running", "equals": "true"}}
+  ]}
+ ]
+}

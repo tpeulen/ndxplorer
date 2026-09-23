@@ -1,0 +1,76 @@
+{
+ "title": "Find structure",
+ "description": "PCA, UMAP, HDBSCAN and K-means over the columns you choose: projections add PC_n / UMAP_n columns, labellings add Cluster Label.",
+ "sections": [
+  {"type": "row", "n_col": 2, "sections": [
+   {"type": "choice", "attr": "method", "label": "Method:", "options_source": "method_options",
+    "description": "Which question to ask of the chosen columns."},
+   {"type": "button_row", "width": 140, "buttons": [
+    {"label": "Columns", "label_source": "columns_label", "action": "choose_columns",
+     "description": "Choose which parameters the method sees. Strongly recommended: without a choice it falls back to the current x/y/z axes."}
+   ]}
+  ]},
+  {"type": "info", "source": "blurb"},
+  {"type": "panel", "hidden_when": {"attr": "method", "not_equals": "pca"}, "sections": [
+   {"type": "value", "attr": "pca_n_components", "label": "Components:", "kind": "int",
+    "minimum": 2, "maximum": 10, "style": "spin",
+    "description": "Components to keep. Two is usually enough to plot; more is useful when the first two explain little of the variance."},
+   {"type": "toggle", "attr": "pca_standardize", "label": "Standardise columns",
+    "description": "Scale each column to unit variance first. Leave this on unless the columns genuinely share a scale."}
+  ]},
+  {"type": "panel", "hidden_when": {"attr": "method", "not_equals": "umap"}, "sections": [
+   {"type": "value", "attr": "umap_n_neighbors", "label": "Neighbours:", "kind": "int",
+    "minimum": 2, "maximum": 100, "style": "spin",
+    "description": "Size of the local neighbourhood. Larger = more global structure, smaller = more local detail."},
+   {"type": "value", "attr": "umap_min_dist", "label": "Min. distance:", "kind": "float",
+    "minimum": 0.0, "maximum": 1.0, "decimals": 2, "step": 0.01, "style": "spin",
+    "description": "Minimum spacing of embedded points. Smaller = tighter clumps."},
+   {"type": "value", "attr": "umap_n_components", "label": "Components:", "kind": "int",
+    "minimum": 2, "maximum": 3, "style": "spin", "description": "2 to plot directly, 3 for more room."},
+   {"type": "choice", "attr": "umap_metric", "label": "Metric:", "options_source": "metric_options",
+    "description": "Distance in the original space."},
+   {"type": "toggle", "attr": "umap_advanced", "label": "Advanced",
+    "description": "Settings that steer convergence rather than the result's meaning."}
+  ]},
+  {"type": "panel", "hidden_when": {"attr": "umap_advanced_shown", "equals": "false"}, "sections": [
+   {"type": "value", "attr": "umap_n_jobs", "label": "Parallel jobs:", "kind": "int",
+    "minimum": -1, "maximum": 64, "style": "spin", "special_text": "All cores",
+    "description": "Threads UMAP may use; -1 uses all cores."},
+   {"type": "value", "attr": "umap_learning_rate", "label": "Learning rate:", "kind": "float",
+    "minimum": 0.1, "maximum": 10.0, "decimals": 2, "step": 0.1, "style": "spin"},
+   {"type": "choice", "attr": "umap_init", "label": "Initialisation:", "options_source": "init_options"},
+   {"type": "value", "attr": "umap_spread", "label": "Spread:", "kind": "float",
+    "minimum": 0.1, "maximum": 5.0, "decimals": 2, "step": 0.1, "style": "spin"},
+   {"type": "value", "attr": "umap_n_epochs", "label": "Epochs:", "kind": "int",
+    "minimum": 0, "maximum": 2000, "style": "spin", "special_text": "Auto",
+    "description": "Optimisation epochs; Auto lets UMAP choose from the data size."}
+  ]},
+  {"type": "panel", "hidden_when": {"attr": "method", "not_equals": "hdbscan"}, "sections": [
+   {"type": "value", "attr": "min_samples", "label": "Min. samples:", "kind": "int",
+    "minimum": 1, "maximum": 99999, "style": "spin",
+    "description": "How conservative the density estimate is. Larger leaves more points unlabelled as noise."},
+   {"type": "value", "attr": "min_cluster_size", "label": "Min. cluster size:", "kind": "int",
+    "minimum": 1, "maximum": 99999, "style": "spin",
+    "description": "Smallest group that counts as a cluster rather than noise."}
+  ]},
+  {"type": "panel", "hidden_when": {"attr": "method", "not_equals": "kmeans"}, "sections": [
+   {"type": "value", "attr": "n_clusters", "label": "Clusters:", "kind": "int",
+    "minimum": 1, "maximum": 20, "style": "spin",
+    "description": "Every point is assigned to one of exactly this many groups, whether or not that many populations exist."}
+  ]},
+  {"type": "button_row", "buttons": [
+   {"label": "▶ Run", "action": "run", "hidden_when": {"attr": "running", "equals": "true"},
+    "description": "Run the method on the chosen columns."},
+   {"label": "■ Cancel", "label_source": "cancel_label", "action": "cancel",
+    "hidden_when": {"attr": "running", "equals": "false"}, "description": "Stop the running method."},
+   {"label": "Plot", "action": "plot_umap", "hidden_when": {"attr": "method", "not_equals": "umap"},
+    "description": "Show the projection in its own window."},
+   {"label": "Save", "action": "save", "hidden_when": {"attr": "is_labelling", "equals": "false"},
+    "description": "Write the cluster assignment to a folder."}
+  ]},
+  {"type": "info", "source": "result_text", "hidden_when": {"attr": "has_result", "equals": "false"}},
+  {"type": "panel", "hidden_when": {"attr": "show_progress", "equals": "false"}, "sections": [
+   {"type": "progress", "attr": "progress_fraction", "text_source": "progress_text"}
+  ]}
+ ]
+}

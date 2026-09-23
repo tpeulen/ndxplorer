@@ -1,0 +1,28 @@
+{
+ "title": "GMM Settings",
+ "sections": [
+  {"type": "value", "attr": "tol", "label": "Tolerance (tol):", "kind": "float", "minimum": 1e-12,
+   "maximum": 1.0, "decimals": 8, "step": 0.001, "style": "spin",
+   "description": "EM stops when the lower bound improves by less than this."},
+  {"type": "value", "attr": "reg_covar", "label": "Reg. covar:", "kind": "float", "minimum": 0.0,
+   "maximum": 1.0, "decimals": 12, "step": 1e-6, "style": "spin",
+   "description": "Added to the covariance diagonals, so no component collapses."},
+  {"type": "value", "attr": "max_iter", "label": "Max iterations:", "kind": "int", "minimum": 1,
+   "maximum": 10000, "style": "spin"},
+  {"type": "value", "attr": "verbose", "label": "Verbose:", "kind": "int", "minimum": 0,
+   "maximum": 10, "style": "spin"},
+  {"type": "value", "attr": "weight_floor", "label": "Weight floor:", "kind": "float",
+   "minimum": 0.0, "maximum": 1.0, "decimals": 8, "step": 0.0001, "style": "spin",
+   "description": "Smallest weight a component keeps; 0 disables the floor."},
+  {"type": "value", "attr": "local_window_bins", "label": "Local window (bins):", "kind": "int",
+   "minimum": 1, "maximum": 200, "style": "spin",
+   "description": "Half-width, in bins, of the window a clicked Gaussian's width is measured in."},
+  {"type": "toggle", "attr": "fix_new_means", "label": "Fix new means by default",
+   "description": "Hold the centre of a Gaussian added by a click on the map."},
+  {"type": "button_row", "buttons": [
+   {"label": "OK", "action": "ok", "description": "Save and close."},
+   {"label": "Save", "action": "save", "description": "Save the settings to your ndX user folder without closing."},
+   {"label": "Cancel", "action": "cancel"}
+  ]}
+ ]
+}

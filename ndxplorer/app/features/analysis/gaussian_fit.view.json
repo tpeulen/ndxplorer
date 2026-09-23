@@ -1,0 +1,49 @@
+{
+ "title": "Gaussian Fit",
+ "sections": [
+  {"type": "row", "n_col": 5, "sections": [
+   {"type": "button_row", "buttons": [
+    {"label": "Fit", "action": "fit", "description": "Fit the Gaussians to the gated points shown on the map."},
+    {"label": "Clear", "action": "clear", "description": "Remove every Gaussian."},
+    {"label": "Select", "action": "select", "description": "Turn the selected Gaussian (or the only one) into an elliptical gate at Selection σ."}
+   ]},
+   {"type": "value", "attr": "sigma", "label": "Selection σ:", "kind": "float", "minimum": 0.1,
+    "maximum": 4.0, "step": 0.2, "decimals": 2, "style": "spin", "width": 70,
+    "description": "Number of sigmas used for Gaussian burst selection (1.0 = 1σ)."},
+   {"type": "button_row", "width": 80, "buttons": [
+    {"label": "Settings", "action": "settings", "description": "Configure the EM and save it to your user settings."}
+   ]}
+  ]},
+  {"type": "panel", "title": "Gaussians", "collapsible": true, "sections": [
+   {"type": "button_row", "width": 160, "buttons": [
+    {"label": "add", "action": "add_component", "description": "Add a Gaussian in the middle of the map."},
+    {"label": "del", "action": "remove_component", "description": "Remove the selected Gaussian (or the last)."}
+   ]},
+   {"type": "custom", "key": "data_table", "options": {
+    "source": "parameter_rows", "row_key": "key", "height": 300,
+    "selected_call": "select_parameter", "edited_call": "edit_parameter", "delete_call": "delete_parameter",
+    "columns": [
+     {"key": "name", "title": "Name", "tooltip": "Component parameter: centre x, y, widths σx, σy, correlation ρ and weight w."},
+     {"key": "value", "title": "Value", "editable": true, "format": "%.6g"},
+     {"key": "fixed", "title": "Fixed", "width": 54, "editable": true, "tooltip": "Hold this parameter in the fit."},
+     {"key": "lo", "title": "Lo", "width": 52, "editable": true},
+     {"key": "hi", "title": "Hi", "width": 52, "editable": true},
+     {"key": "bounds", "title": "Bounds", "width": 54, "editable": true, "tooltip": "Keep the value within Lo..Hi."},
+     {"key": "link", "title": "Link", "width": 70, "editable": true,
+      "tooltip": "Follow another parameter: type its name (x_2, sd_x_1, or 'Group: name' of another table); clear to unlink."}
+    ]}}
+  ]},
+  {"type": "row", "n_col": 4, "sections": [
+   {"type": "toggle", "attr": "select_point", "label": "Select point",
+    "description": "Clicks on the map add a Gaussian there."},
+   {"type": "toggle", "attr": "show_marginals", "label": "Marginals",
+    "description": "Draw each Gaussian on the x and y marginals."},
+   {"type": "toggle", "attr": "log_gauss", "label": "Log Gauss",
+    "description": "Fit and draw the Gaussians in log scale on both axes (positive values only); off fits in the axes' own scale."},
+   {"type": "button_row", "buttons": [
+    {"label": "Save", "action": "save", "description": "Save the Gaussians with the histogram and model (.json and .csv files)."},
+    {"label": "Load", "action": "load", "description": "Load Gaussians from a .json or .csv file."}
+   ]}
+  ]}
+ ]
+}

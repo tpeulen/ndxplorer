@@ -1,0 +1,74 @@
+{
+ "title": "Select Columns for Clustering",
+ "sections": [
+  {
+   "type": "panel",
+   "sections": [
+    {
+     "type": "info",
+     "text": "Select columns to use for clustering:"
+    },
+    {
+     "type": "info",
+     "text": "Navigation: Up/Down, PageUp/PageDown and Home/End move the selection; a click on a box toggles it."
+    }
+   ]
+  },
+  {
+   "type": "value",
+   "attr": "filter",
+   "label": "Filter:",
+   "kind": "str",
+   "placeholder": "Enter text to filter columns",
+   "description": "Show only the columns whose name contains this text."
+  },
+  {
+   "type": "custom",
+   "key": "data_table",
+   "options": {
+    "source": "column_rows",
+    "row_key": "name",
+    "height": 230,
+    "edited_call": "toggle_column",
+    "columns": [
+     {
+      "key": "use",
+      "title": "Use",
+      "width": 44,
+      "editable": true
+     },
+     {
+      "key": "name",
+      "title": "Column"
+     }
+    ]
+   }
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "☑ Select All",
+     "action": "select_all"
+    },
+    {
+     "label": "☐ Deselect All",
+     "action": "deselect_all"
+    }
+   ]
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "OK",
+     "action": "ok"
+    },
+    {
+     "label": "Cancel",
+     "action": "cancel"
+    }
+   ]
+  }
+ ]
+}
