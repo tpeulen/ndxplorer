@@ -1071,8 +1071,10 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             # 1. Create the actual selection object first
             # Generate a unique name for multiple bitmap selections
-            existing_mask_count = sum(1 for sel in self.plot_control._selections 
-                                    if isinstance(sel, MaskDataSelection) and sel.idx1 == x_idx_param and sel.idx2 == y_idx_param)
+            existing_mask_count = sum(
+                1 for gate in self.plot_control.gates
+                if gate.kind == "Mask" and gate.selection.idx1 == x_idx_param
+                and gate.selection.idx2 == y_idx_param)
             mask_number = existing_mask_count + 1
             selection_name = f"Bitmap {mask_number} ({x_param}, {y_param})"
             
@@ -1087,20 +1089,9 @@ class NDXplorer(QtWidgets.QMainWindow):
             
             logging.info(f"  Created MaskDataSelection with id={selection.selection_id}")
             
-            # 2. Add it to the internal selections list
-            self.plot_control._selections.append(selection)
-            
-            # 3. Add the UI representation (which triggers the update)
-            self.plot_control.addMaskSelection(
-                name=selection.name,
-                mask=binary_mask,
-                edges1=xedges,
-                edges2=yedges,
-                idx1=x_idx_param,
-                idx2=y_idx_param,
-                selection_id=selection.selection_id
-            )
-            
+            # 2. The gate list keeps the mask object as its row.
+            self.plot_control.add_selection_object(selection)
+
             # Request update
             self.request_plot_update()
             
@@ -1338,8 +1329,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             span_y = abs(float(y_range[1]) - float(y_range[0]))
             radius = max(min(span_x, span_y) / 20.0, 1e-12)
 
-        count = sum(1 for sel in self.plot_control._selections
-                    if getattr(sel, "roi", None) is not None)
+        count = self.plot_control.gates.count("Region")
         selection, reason = pick_population(
             np.asarray(data), (idx1, idx2), float(x), float(y),
             radius=float(radius), name=name or f"Population {count + 1}",
@@ -1347,8 +1337,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         if selection is None:
             return reason
 
-        self.plot_control._selections.append(selection)
-        self.plot_control.addRegionSelection(selection)
+        self.plot_control.add_selection_object(selection)
         self.request_plot_update()
         return ""
 

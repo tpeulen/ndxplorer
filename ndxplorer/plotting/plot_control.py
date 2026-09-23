@@ -226,7 +226,10 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
     def __init__(self, parent=None):
         super(SurfacePlotWidget, self).__init__()
         self.parent = parent
-        self._selections = list()  # Instance-level selections list
+        from ..core.gates import GateList
+
+        #: The Selection table's rows; the widget is a view of them.
+        self.gates = GateList()
         self.axis_settings = dict()  # Instance-level axis settings
         logging.log(0, "Initializing SurfacePlotWidget")
         #########################
@@ -910,14 +913,13 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     def onClearSelection(self):
         logging.log(0, "onClearSelection")
-        self.tableWidget.setRowCount(0)
-        self._selections.clear()  # Clear instance-level selections
-        # Clear frame histogram cache when selections change
+        self.gates.clear()
+        self._refresh_gate_table()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.request_plot_update(skip_clustering=True)
         self.parent._preserve_contrast = False
-        
+
         # Add delayed marginal plot update to ensure proper rendering
         QtCore.QTimer.singleShot(100, self._delayed_marginal_update_after_clear)
 
@@ -967,7 +969,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         the analysis afterwards ran over a different set of points than the one
         the file described.
         """
-        from ..core.region_selection import RegionDataSelection, load_selections
+        from ..core.region_selection import load_selections
 
         fn = QtWidgets.QFileDialog.getOpenFileName(
             None,
@@ -978,13 +980,8 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         if not fn:
             return
         for selection in load_selections(fn, axes=self._selection_axes()):
-            if isinstance(selection, RegionDataSelection):
-                self.add_region_selection(selection)
-            else:
-                self.addSelection(
-                    selection.parameter_idx, selection.lower, selection.upper,
-                    selection.invert, selection.enabled, selection.name,
-                )
+            self.gates.add_selection(selection)
+        self._gates_changed()
         logging.log(0, f"Selections loaded from file: {fn}")
 
     def on_auto_range_x(self):
@@ -1026,558 +1023,150 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
     # Keep the old method name for backward compatibility
     onAutoRangeZ = on_auto_range_z
 
+    # ==================== The gate table ====================
+    #
+    # ``self.gates`` (:class:`ndxplorer.core.gates.GateList`) is the Selection
+    # table; the emtk app keeps the same list. The QTableWidget is a view of
+    # it, rebuilt whenever rows come or go, and every edit in it is written
+    # back through ``GateList.edit`` -- nothing reads the widget to find out
+    # which points are shown.
+
+    def _gates_changed(self, immediate: bool = False) -> None:
+        """Rows came or went: rebuild the table and redraw."""
+        self._refresh_gate_table()
+        self.parent._preserve_contrast = True
+        try:
+            if immediate:
+                self.parent.update_plots(skip_clustering=True)
+            else:
+                self.parent.request_plot_update(skip_clustering=True)
+        finally:
+            self.parent._preserve_contrast = False
+
+    def _refresh_gate_table(self) -> None:
+        """Rebuild the QTableWidget from :attr:`gates`."""
+        table = self.tableWidget
+        editable = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable
+        fixed = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled
+        self._block_selection_item_changed = True
+        try:
+            table.setRowCount(0)
+            table.setRowCount(len(self.gates))
+            for r, gate in enumerate(self.gates):
+                item0 = QtWidgets.QTableWidgetItem(str(gate.name))
+                item0.setFlags(fixed if gate.kind == "G2D" else editable)
+                table.setItem(r, 0, item0)
+                for column, value in ((1, gate.bound_texts()[0]), (2, gate.bound_texts()[1])):
+                    cell = QtWidgets.QTableWidgetItem(str(value))
+                    cell.setFlags(editable if gate.is_interval else QtCore.Qt.ItemIsEnabled)
+                    cell.setTextAlignment(QtCore.Qt.AlignCenter)
+                    table.setItem(r, column, cell)
+                for column, key in ((3, "invert"), (4, "enabled")):
+                    box = QtWidgets.QCheckBox(table)
+                    box.setChecked(bool(getattr(gate, key)))
+                    box.stateChanged.connect(
+                        lambda state, r=r, key=key: self._on_gate_flag(r, key, state))
+                    table.setCellWidget(r, column, box)
+        finally:
+            self._block_selection_item_changed = False
+
+    def _on_gate_flag(self, row: int, key: str, state) -> None:
+        """An Invert or Enable check box was toggled."""
+        if self.gates.edit(row, key, bool(state)):
+            self.actionUpdatePlots.trigger()
+
     def onSelectionTableClicked(self):
+        """A double click on a row removes it."""
         logging.log(0, "onSelectionTableClicked")
         row = self.tableWidget.currentRow()
         if row < 0:
             return
-        self.tableWidget.removeRow(row)
-        # Clear frame histogram cache when selections change
-        # Redraw immediately (matching the selection-edit path) so removing a
-        # selection updates the plot right away. The debounced request_plot_update
-        # could leave the plot showing the removed selection until the next event.
-        try:
-            self.parent._preserve_contrast = True
-            self.parent.update_plots(skip_clustering=True)
-        finally:
-            self.parent._preserve_contrast = False
+        if self.gates.remove([row]):
+            # Redraw immediately so the removed gate is not shown a moment longer.
+            self._gates_changed(immediate=True)
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
-        # Clear frame histogram cache when selections change
-        
-        # Ensure xmin < xmax
-        if xmin > xmax:
-            xmin, xmax = xmax, xmin
-            logging.log(0, f"Swapped xmin and xmax to ensure min-max ordering: ({xmin}, {xmax})")
-
-        table = self.tableWidget
-        row = table.rowCount()
-        table.setRowCount(row + 1)
-
-        tmp = QtWidgets.QTableWidgetItem("%s" % name)
-        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
-        tmp.setData(1, idx)
-        table.setItem(row, 0, tmp)
-
-        tmp = QtWidgets.QTableWidgetItem()
-        tmp.setText(str(xmin))
-        tmp.setData(0, float(xmin))
-        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
-        font = QtGui.QFont()
-        font.setPointSize(10)
-        tmp.setFont(font)
-        tmp.setTextAlignment(QtCore.Qt.AlignCenter)
-        table.setItem(row, 1, tmp)
-
-        tmp = QtWidgets.QTableWidgetItem()
-        tmp.setText(str(xmax))
-        tmp.setData(0, float(xmax))
-        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
-        font = QtGui.QFont()
-        font.setPointSize(10)
-        tmp.setFont(font)
-        tmp.setTextAlignment(QtCore.Qt.AlignCenter)
-        table.setItem(row, 2, tmp)
-
-        cb_invert_x = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 3, cb_invert_x)
-        cb_invert_x.setChecked(invert)
-
-        cb_enable_x = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 4, cb_enable_x)
-        cb_enable_x.setChecked(enabled)
-        # Fast path for 2D rectangle selection: use batched update to keep UI snappy
-        # - request_plot_update() batches rapid selections (40ms timer)
-        # - skip_clustering=True avoids expensive clustering recomputation
-        # - Cache system naturally detects selection changes and recomputes only when needed
-        self.parent.request_plot_update(skip_clustering=True)
-
-        # Actions for selection checkbox
-        cb_enable_x.stateChanged.connect(self.actionUpdatePlots.trigger)
-        cb_invert_x.stateChanged.connect(self.actionUpdatePlots.trigger)
+        """Add an interval gate on column *idx* (bounds are ordered)."""
+        self.gates.add_interval(idx, name, xmin, xmax, invert, enabled)
+        self._gates_changed()
         logging.log(0, f"Added selection for parameter index {idx} with range ({xmin}, {xmax}), invert={invert}, enabled={enabled}")
 
     def addGaussianSelection(self, idx1, idx2, mu, cov, sigma=1.0, invert=False, enabled=True, name="", log_x=False, log_y=False):
-        table = self.tableWidget
-        row = table.rowCount()
-        table.setRowCount(row + 1)
+        """Add a 2-D Gaussian (elliptical) gate."""
+        self.gates.add_gaussian(idx1, idx2, mu, cov, sigma, invert, enabled, name, log_x, log_y)
+        self._gates_changed()
+        logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}")
 
-        # Column 0: name with metadata
-        meta = {
-            "type": "G2D",
-            "idx1": int(idx1),
-            "idx2": int(idx2),
-            "mu": [float(mu[0]), float(mu[1])],
-            "cov": [
-                [float(cov[0][0]), float(cov[0][1])],
-                [float(cov[1][0]), float(cov[1][1])]
-            ],
-            "sigma": float(sigma),
-            "log_x": bool(log_x),
-            "log_y": bool(log_y)
-        }
-        item0 = QtWidgets.QTableWidgetItem("%s" % name)
-        item0.setFlags(QtCore.Qt.ItemIsEnabled)
-        # Keep legacy index role for compatibility (store idx1)
-        item0.setData(1, int(idx1))
-        try:
-            item0.setData(32, json.dumps(meta))  # Qt.UserRole
-        except Exception:
-            item0.setData(1, int(idx1))
-        table.setItem(row, 0, item0)
+    def add_selection_object(self, selection):
+        """Add a gate of any kind from its selection object.
 
-        # Columns 1 and 2: placeholders (not used by G2D), keep numeric values to avoid parsing errors
-        it1 = QtWidgets.QTableWidgetItem()
-        it1.setText(str(0.0))
-        it1.setData(0, float(0.0))
-        it1.setFlags(QtCore.Qt.ItemIsEnabled)
-        it1.setTextAlignment(QtCore.Qt.AlignCenter)
-        table.setItem(row, 1, it1)
-
-        it2 = QtWidgets.QTableWidgetItem()
-        it2.setText(str(0.0))
-        it2.setData(0, float(0.0))
-        it2.setFlags(QtCore.Qt.ItemIsEnabled)
-        it2.setTextAlignment(QtCore.Qt.AlignCenter)
-        table.setItem(row, 2, it2)
-
-        # Invert and Enabled checkboxes
-        cb_invert = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 3, cb_invert)
-        cb_invert.setChecked(bool(invert))
-
-        cb_enable = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 4, cb_enable)
-        cb_enable.setChecked(bool(enabled))
-
-        # Fast path for 2D Gaussian selection: use batched update to keep UI snappy
-        # - request_plot_update() batches rapid selections (40ms timer)
-        # - skip_clustering=True avoids expensive clustering recomputation
-        # - Cache system naturally detects selection changes and recomputes only when needed
-        self.parent.request_plot_update(skip_clustering=True)
-        cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
-        cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
-        logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}, invert={invert}, enabled={enabled}, log_x={log_x}, log_y={log_y}")
-
-    def addRegionSelection(self, selection, invert: bool = False, enabled: bool = True):
-        """Add a region-backed gate to the table.
-
-        The row carries only the ``selection_id``; the gate itself stays in
-        ``_selections``. That is deliberate and matches how the table already
-        rebuilds a ``Region`` row — a region can be a polygon or a composite,
-        and round-tripping one through table metadata would flatten it to
-        whatever the metadata schema happened to cover.
-
-        Parameters
-        ----------
-        selection : RegionDataSelection
-            Already appended to ``_selections`` by the caller.
-        invert, enabled : bool
-            Initial flag states.
+        A painted mask (:class:`~ndxplorer.core.data_source.MaskDataSelection`)
+        or a drawn region (:class:`~ndxplorer.core.region_selection.RegionDataSelection`)
+        is kept by its row, since no cell can hold a bitmap or a polygon.
         """
-        table = self.tableWidget
-        row = table.rowCount()
-        table.setRowCount(row + 1)
-
-        meta = {
-            "type": "Region",
-            "idx1": int(selection.idx1),
-            "idx2": int(selection.idx2),
-            "selection_id": selection.selection_id,
-        }
-        item0 = QtWidgets.QTableWidgetItem(str(selection.name))
-        item0.setFlags(QtCore.Qt.ItemIsEnabled)
-        item0.setData(1, int(selection.idx1))
-        try:
-            item0.setData(32, json.dumps(meta))  # Qt.UserRole
-        except Exception:
-            item0.setData(1, int(selection.idx1))
-        table.setItem(row, 0, item0)
-
-        for column in (1, 2):
-            placeholder = QtWidgets.QTableWidgetItem()
-            placeholder.setText(str(0.0))
-            placeholder.setData(0, float(0.0))
-            placeholder.setFlags(QtCore.Qt.ItemIsEnabled)
-            placeholder.setTextAlignment(QtCore.Qt.AlignCenter)
-            table.setItem(row, column, placeholder)
-
-        cb_invert = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 3, cb_invert)
-        cb_invert.setChecked(bool(invert))
-
-        cb_enable = QtWidgets.QCheckBox(table)
-        table.setCellWidget(row, 4, cb_enable)
-        cb_enable.setChecked(bool(enabled))
-
-        self.parent.request_plot_update(skip_clustering=True)
-        cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
-        cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
-        logging.log(0, f"Added region selection {selection.name!r} for idxs "
-                       f"({selection.idx1}, {selection.idx2})")
-
-    def addMaskSelection(self, name, mask, edges1, edges2, idx1, idx2, invert=False, enabled=True, selection_id=None):
-        """Add a mask-based selection to the table."""
-        table = self.tableWidget
-        row = table.rowCount()
-        
-        try:
-            self._block_selection_item_changed = True
-            table.setRowCount(row + 1)
-
-            # Metadata for MaskDataSelection
-            meta = {
-                "type": "Mask",
-                "name": str(name),
-                "idx1": int(idx1),
-                "idx2": int(idx2),
-                "invert": bool(invert),
-                "enabled": bool(enabled),
-                "selection_id": str(selection_id) if selection_id else None
-            }
-
-            item0 = QtWidgets.QTableWidgetItem(str(name))
-            item0.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEditable)
-            # Store index for compatibility
-            item0.setData(1, int(idx1))
-            try:
-                # Store metadata redundantly in UserRole AND role 32
-                meta_json = json.dumps(meta)
-                item0.setData(QtCore.Qt.UserRole, meta_json)
-                item0.setData(32, meta_json)
-            except Exception as e:
-                logging.debug(f"Failed to set metadata for mask selection: {e}")
-            table.setItem(row, 0, item0)
-
-            # Placeholders for columns 1 and 2
-            for col in [1, 2]:
-                tmp = QtWidgets.QTableWidgetItem("Bitmap")
-                # Do NOT set data role 0 to 0.0, so onSelectionItemChanged knows it's text
-                tmp.setFlags(QtCore.Qt.ItemIsEnabled)
-                tmp.setTextAlignment(QtCore.Qt.AlignCenter)
-                table.setItem(row, col, tmp)
-
-            # Invert and Enabled checkboxes
-            cb_invert = QtWidgets.QCheckBox(table)
-            table.setCellWidget(row, 3, cb_invert)
-            cb_invert.setChecked(bool(invert))
-
-            cb_enable = QtWidgets.QCheckBox(table)
-            table.setCellWidget(row, 4, cb_enable)
-            cb_enable.setChecked(bool(enabled))
-
-            # Re-trigger plot update
-            self.parent.request_plot_update(skip_clustering=True)
-            cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
-            cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
-            logging.info(f"Added mask selection UI row: {name} (id={selection_id})")
-        finally:
-            self._block_selection_item_changed = False
-
-    def add_region_selection(self, selection):
-        """Add a ChiSurf-region gate as a row in the selection table.
-
-        The region itself is kept in ``self._selections`` and the row carries its
-        ``selection_id``, the same way a painted mask is handled: a table cell
-        cannot hold a polygon, so the row is a handle and the object is the
-        truth.
-
-        Parameters
-        ----------
-        selection : ndxplorer.core.region_selection.RegionDataSelection
-        """
-        table = self.tableWidget
-        row = table.rowCount()
-        try:
-            self._block_selection_item_changed = True
-            table.setRowCount(row + 1)
-            self._selections.append(selection)
-
-            meta = {
-                "type": "Region",
-                "name": str(selection.name),
-                "idx1": int(selection.idx1),
-                "idx2": int(selection.idx2),
-                "invert": bool(selection.invert),
-                "enabled": bool(selection.enabled),
-                "selection_id": str(selection.selection_id),
-            }
-            item0 = QtWidgets.QTableWidgetItem(str(selection.name))
-            item0.setFlags(
-                QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEditable
-            )
-            item0.setData(1, int(selection.idx1))
-            meta_json = json.dumps(meta)
-            item0.setData(QtCore.Qt.UserRole, meta_json)
-            item0.setData(32, meta_json)
-            table.setItem(row, 0, item0)
-
-            # The bounds columns describe the shape rather than a range: a
-            # polygon has no "lower" and "upper" to type into.
-            for col, text in ((1, selection.shape), (2, "shape")):
-                cell = QtWidgets.QTableWidgetItem(text)
-                cell.setFlags(QtCore.Qt.ItemIsEnabled)
-                cell.setTextAlignment(QtCore.Qt.AlignCenter)
-                table.setItem(row, col, cell)
-
-            cb_invert = QtWidgets.QCheckBox(table)
-            table.setCellWidget(row, 3, cb_invert)
-            cb_invert.setChecked(bool(selection.invert))
-            cb_enable = QtWidgets.QCheckBox(table)
-            table.setCellWidget(row, 4, cb_enable)
-            cb_enable.setChecked(bool(selection.enabled))
-            cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
-            cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
-
-            self.parent.request_plot_update(skip_clustering=True)
-            logging.info(f"Added region selection row: {selection.name} ({selection.shape})")
-        finally:
-            self._block_selection_item_changed = False
+        self.gates.add_selection(selection)
+        self._gates_changed()
+        logging.info(f"Added selection row: {getattr(selection, 'name', '')}")
 
     def onAddSelection(self):
         idx, name = self.p3
         xsel = self.parent.selection_z.get_range()
         xmin = float(min(xsel))
         xmax = float(max(xsel))
-        self.addSelection(idx, xmin, xmax, False, True, name)
+        self.gates.add_interval(idx, name, xmin, xmax)
+        self._refresh_gate_table()
         logging.log(0, f"onAddSelection: Added selection for {name} with range ({xmin}, {xmax})")
-        
+
         # A selection drawn during playback describes the slice it was drawn on.
         self._add_playback_selection_if_needed()
-        
+
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.update_plots()
         self.parent._preserve_contrast = False
+
     def get_selections(self):
-        """The table's gates as selections: its rows read as plain data.
-
-        What a row means is decided by :func:`ndxplorer.core.gates.selections_from_rows`,
-        which the emtk app uses too; this only reads the cells.
-        """
-        from ..core.gates import GateRow, selections_from_rows
-
-        table = self.tableWidget
-        rows, texts = [], []
-        for r in range(int(table.rowCount())):
-            item0 = table.item(r, 0)
-            if item0 is None:
-                continue
-            lower_item = table.item(r, 1)
-            upper_item = table.item(r, 2)
-            cb_invert = table.cellWidget(r, 3)
-            cb_enable = table.cellWidget(r, 4)
-            rows.append(GateRow(
-                parameter_idx=int(item0.data(1)),
-                name=str(item0.text()),
-                lower=self._cell_bound(lower_item),
-                upper=self._cell_bound(upper_item),
-                invert=cb_invert.isChecked() if cb_invert else False,
-                enabled=cb_enable.isChecked() if cb_enable else True,
-                meta=self._row_meta(item0),
-            ))
-            texts.append((lower_item.text() if lower_item else "",
-                          upper_item.text() if upper_item else ""))
-        selections = selections_from_rows(rows, stored=self._selections, bound_texts=texts)
-        logging.debug(f"get_selections: Returning {len(selections)} valid selection objects")
-        return selections
-
-    @staticmethod
-    def _cell_bound(item) -> float:
-        """A bound cell's number: the stored value, else the text."""
-        from ..core.gates import parse_bound
-
-        if item is None:
-            return 0.0
-        value = item.data(0)
-        if value is not None:
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                pass
-        return parse_bound(item.text())
-
-    @staticmethod
-    def _row_meta(item0):
-        """The metadata record a non-interval row stashes in its first cell."""
-        for role in (QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10, QtCore.Qt.UserRole + 100):
-            raw = item0.data(role)
-            if not raw:
-                continue
-            try:
-                meta = raw if isinstance(raw, dict) else json.loads(str(raw))
-            except Exception:
-                continue
-            if isinstance(meta, dict) and "type" in meta:
-                return meta
-        return None
+        """The gates as selections, read from :attr:`gates` (not from the widget)."""
+        return self.gates.selections()
 
     def onSelectionItemChanged(self, item: QtWidgets.QTableWidgetItem):
-        """Allow inline editing of rectangular selection bounds and names.
-        - Column 0: name (editable)
-        - Column 1: lower bound (editable for rectangular selections)
-        - Column 2: upper bound (editable for rectangular selections)
-        Changing values triggers plot updates.
+        """A name or a bound was typed into the table: write it into the gate.
+
+        Column 0 is the name; columns 1 and 2 are the bounds, which only an
+        interval has. An edit the gate refuses (not a number, a bound on a mask)
+        is put back; one typed past its partner moves the partner, as
+        :meth:`GateList.edit` does.
         """
         if getattr(self, "_block_selection_item_changed", False):
             return
-        table = self.tableWidget
-        row = item.row()
-        col = item.column()
-        
-        # Guard against invalid row/col or missing items
-        if row < 0 or col < 0:
+        row, col = item.row(), item.column()
+        key = {0: "name", 1: "lower", 2: "upper"}.get(col)
+        if key is None or not 0 <= row < len(self.gates):
             return
-            
-        # Get metadata from column 0 to check if this is a special selection type
-        item0 = table.item(row, 0)
-        if item0 is None:
+        if key != "name" and hasattr(self.parent, 'is_data_ready') and not self.parent.is_data_ready():
+            logging.info("Selection edit ignored: load data before editing selections.")
+            self._refresh_gate_table()
             return
-            
-        name = item0.text()
-        meta = None
-        try:
-            # Try multiple roles for metadata
-            for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10]:
-                meta_raw = item0.data(role)
-                if meta_raw:
-                    try:
-                        if isinstance(meta_raw, dict):
-                            meta = meta_raw
-                        else:
-                            meta = json.loads(str(meta_raw))
-                        if meta and isinstance(meta, dict) and "type" in meta: 
-                            break
-                    except Exception:
-                        continue
-        except Exception:
-            meta = None
-        
-        sel_type = meta.get("type") if isinstance(meta, dict) else None
-        
-        # Fallback identification based on name if metadata missing
-        if sel_type is None:
-            if name.startswith("Mask") or "Bitmap" in name:
-                sel_type = "Mask"
-            elif name.startswith("G2D"):
-                sel_type = "G2D"
-                
-        is_special = sel_type in ("G2D", "Mask")
-
-        # Name edits: trigger update only
-        if col == 0:
-            # Preserve contrast during selection operations
+        changed = self.gates.edit(row, key, item.text().strip())
+        # Show what the gate holds now: the refused text reverts, a moved
+        # partner bound appears.
+        self._refresh_gate_table()
+        if changed:
             self.parent._preserve_contrast = True
             self.parent.update_plots()
             self.parent._preserve_contrast = False
-            return
-
-        # Only columns 1 and 2 are numeric bounds for rectangular selections
-        if col not in (1, 2):
-            return
-            
-        if is_special:
-            # Revert to stored value or placeholder if accidentally made editable
-            try:
-                self._block_selection_item_changed = True
-                if sel_type == "Mask":
-                    item.setText("Bitmap")
-                    item.setData(0, None) # Clear any accidental numeric data
-                elif sel_type == "G2D":
-                    # For G2D, we typically show 0.0 as placeholder
-                    val_data = item.data(0)
-                    try:
-                        val = float(val_data) if val_data is not None else 0.0
-                        item.setText(str(val))
-                    except (ValueError, TypeError):
-                        item.setText("0.0")
-                else:
-                    item.setText(str(item.data(0) or "---"))
-            finally:
-                self._block_selection_item_changed = False
-            return
-
-        # Parse the edited text as float for normal rectangular selections
-        txt = item.text().strip()
-        try:
-            val = float(txt)
-        except Exception:
-            # Revert to previous value stored in data role 0
-            try:
-                self._block_selection_item_changed = True
-                prev_data = item.data(0)
-                if prev_data is not None:
-                    try:
-                        prev = float(prev_data)
-                        item.setText(str(prev))
-                    except (ValueError, TypeError):
-                        item.setText(str(prev_data))
-                else:
-                    item.setText("0.0")
-            finally:
-                self._block_selection_item_changed = False
-            return
-
-        # Commit the numeric value
-        try:
-            self._block_selection_item_changed = True
-            item.setData(0, float(val))
-            # Enforce ordering lower <= upper by adjusting the sibling cell
-            lower_item = table.item(row, 1)
-            upper_item = table.item(row, 2)
-            try:
-                lower = float(lower_item.data(0)) if lower_item is not None else float("nan")
-            except Exception:
-                lower = float("nan")
-            try:
-                upper = float(upper_item.data(0)) if upper_item is not None else float("nan")
-            except Exception:
-                upper = float("nan")
-
-            if col == 1 and not math.isnan(upper) and val > upper:
-                upper_item.setData(0, float(val))
-                upper_item.setText(str(float(val)))
-            elif col == 2 and not math.isnan(lower) and val < lower:
-                lower_item.setData(0, float(val))
-                lower_item.setText(str(float(val)))
-        finally:
-            self._block_selection_item_changed = False
-
-        # Trigger plot update (only when data is ready)
-        if hasattr(self.parent, 'is_data_ready') and not self.parent.is_data_ready():
-            # If data isn't ready, revert numeric edits and skip replot
-            if col in (1, 2):
-                try:
-                    self._block_selection_item_changed = True
-                    prev = float(item.data(0)) if item.data(0) is not None else 0.0
-                    item.setText(str(prev))
-                finally:
-                    self._block_selection_item_changed = False
-                logging.info("Selection edit ignored: load data before editing selections.")
-            # For name edits (col 0), accept but skip replot
-            return
-        # Preserve contrast during selection operations
-        self.parent._preserve_contrast = True
-        self.parent.update_plots()
-        self.parent._preserve_contrast = False
 
     def onDeleteSelectionRows(self):
         """Delete selected selection rows using the Delete key."""
-        table = self.tableWidget
-        sel_model = table.selectionModel()
+        sel_model = self.tableWidget.selectionModel()
         if sel_model is None:
             return
-        rows = sorted({idx.row() for idx in sel_model.selectedIndexes()}, reverse=True)
-        if not rows:
-            return
-        for r in rows:
-            if 0 <= r < table.rowCount():
-                table.removeRow(r)
-        # Invalidate cached histograms so the redraw reflects the removed selection.
-        # Preserve contrast during selection operations
-        self.parent._preserve_contrast = True
-        self.parent.update_plots()
-        self.parent._preserve_contrast = False
+        rows = {idx.row() for idx in sel_model.selectedIndexes()}
+        if self.gates.remove(rows):
+            self._refresh_gate_table()
+            self.parent._preserve_contrast = True
+            self.parent.update_plots()
+            self.parent._preserve_contrast = False
 
     def onSelectionTableContextMenu(self, position):
         """Show context menu for selection table."""
@@ -1649,45 +1238,17 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     def _perform_pending_single_click_edit(self):
         """If there is a pending single-click index, start editing it.
-        Only allow editing of rectangular selection fields:
-        - Column 0 (name) editable
-        - Columns 1 and 2 (lower/upper) editable
-        - For Gaussian2D rows, columns 1 and 2 are not editable.
+
+        The name can be edited on every gate but a Gaussian; the bounds only on
+        an interval (the cell flags say so, set by ``_refresh_gate_table``).
         """
         index = getattr(self, "_pending_edit_index", None)
         self._pending_edit_index = None
         if index is None or not index.isValid():
             return
-        row = index.row()
-        col = index.column()
-
-        # Determine if this row is G2D
-        item0 = self.tableWidget.item(row, 0)
-        meta = None
-        try:
-            meta_raw = item0.data(32)
-            if meta_raw:
-                meta = json.loads(meta_raw)
-        except Exception:
-            meta = None
-        is_g2d = isinstance(meta, dict) and meta.get("type") == "G2D"
-
-        # Permissions: name (col 0) always allowed for rectangular; G2D name not editable per flags
-        if col == 0:
-            # Try to edit if the item is editable by flags
-            it = self.tableWidget.item(row, col)
-            if it is not None and (it.flags() & QtCore.Qt.ItemIsEditable):
-                self.tableWidget.edit(index)
-            return
-
-        # Bounds columns 1 and 2: only for rectangular selections
-        if col in (1, 2) and not is_g2d:
-            it = self.tableWidget.item(row, col)
-            if it is not None and (it.flags() & QtCore.Qt.ItemIsEditable):
-                self.tableWidget.edit(index)
-            return
-        # Otherwise, do nothing (non-editable)
-        return
+        it = self.tableWidget.item(index.row(), index.column())
+        if it is not None and index.column() in (0, 1, 2) and (it.flags() & QtCore.Qt.ItemIsEditable):
+            self.tableWidget.edit(index)
 
     # ==================== Playback ====================
     #
