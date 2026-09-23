@@ -18,6 +18,11 @@ names refer to columns or constants (e.g. ``"'Fg' / 'Fr'"``,
 4. **Evaluate on the store's columns** — each referenced column is read out of
    the :class:`tttrlib.DataStore` once as float64 and the compiled expression
    runs on those arrays; the output is written back into the store.
+5. **Vector constants** (:mod:`.vector_constants`) — ``'gamma'`` naming a
+   vector is evaluated per burst: each burst's population's element, or the
+   mix weighted by its assignment probabilities, or the global value for a
+   burst in no population. ``'gamma[HF]'`` is one element, a plain scalar. A
+   changed element recomputes what reads its vector.
 
 :func:`compute_values_ast` writes into the store in place and returns the list
 of output columns it (re)computed.
@@ -294,19 +299,28 @@ class EquationGraph:
         constants: Dict[str, float],
         changed_constants: Optional[Set[str]] = None,
         targets: Optional[Sequence[str]] = None,
+        vectors: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """Evaluate (a subset of) the graph into ``store``; return outputs written.
 
         An output column that exists is rewritten in place, keeping its
         position; a new one is appended. Outputs are float64, so a chain of
         equations carries full precision. ``targets`` narrows the work to the
-        columns those names depend on.
+        columns those names depend on. ``vectors`` (``name ->``
+        :class:`~.vector_constants.PopulationVector`) are the constants that
+        are evaluated per burst.
         """
         from .data_source import float_column
+        from .vector_constants import split_element
+
+        vec_map = {str(k).lower(): v for k, v in (vectors or {}).items()}
 
         # Which outputs to (re)compute.
         if changed_constants:
             changed_lower = {str(x).lower() for x in changed_constants}
+            # An element changed -> its vector did.
+            changed_lower |= {split_element(x)[0] for x in changed_lower
+                              if split_element(x) is not None}
             affected = {
                 str(e.out_key).lower()
                 for e in self._ordered
@@ -354,6 +368,12 @@ class EquationGraph:
             arr_cache[actual] = arr
             return arr
 
+        def _optional_column(ref: str) -> Optional[np.ndarray]:
+            try:
+                return _column_array(ref)
+            except KeyError:
+                return None
+
         computed: List[str] = []
         for e in self._ordered:
             okl = str(e.out_key).lower()
@@ -362,7 +382,10 @@ class EquationGraph:
             try:
                 ns = {}
                 for i, ref in enumerate(e.refs):
-                    if ref in e.const_refs and ref.lower() in const_map:
+                    if ref in e.const_refs and ref.lower() in vec_map:
+                        ns[f"_r{i}"] = vec_map[ref.lower()].per_burst(
+                            _optional_column, n_rows)
+                    elif ref in e.const_refs and ref.lower() in const_map:
                         ns[f"_r{i}"] = constants[const_map[ref.lower()]]
                     else:
                         ns[f"_r{i}"] = _column_array(ref)
@@ -408,15 +431,41 @@ def compute_values_ast(
     """Evaluate `equations` into the columns of `store`; return the outputs written."""
     equations = equations or []
     columns = [store.column(i).name() for i in range(store.n_columns())]
-    key = _graph_key(equations, columns, constants.keys())
+    vectors = constant_vectors(constants)
+    keys = list(constants.keys()) + [k for k in vectors if k not in constants]
+    key = _graph_key(equations, columns, keys)
     graph = _GRAPH_CACHE.get(key)
     if graph is None:
-        graph = EquationGraph(equations, columns, list(constants.keys()))
+        graph = EquationGraph(equations, columns, keys)
         with _GRAPH_LOCK:
             _GRAPH_CACHE[key] = graph
     return graph.compute(
-        store, constants, changed_constants=changed_constants, targets=targets
+        store, constants, changed_constants=changed_constants, targets=targets,
+        vectors=vectors,
     )
 
 
-__all__ = ["EquationGraph", "compute_values_ast", "validate_equation"]
+def constant_vectors(constants) -> Dict[str, Any]:
+    """The vector constants of a constants mapping (``{}`` when all are scalars).
+
+    A mapping that knows its vectors (``vector_values()``: the Parameters tab's
+    group, with each vector's population axis) says so; a plain dict is read
+    by its element names (``gamma[HF]``) on the default axis.
+    """
+    known = getattr(constants, "vector_values", None)
+    if callable(known):
+        return dict(known())
+    from .vector_constants import split_element, vectors_from_values
+
+    if not any(split_element(k) is not None for k in constants.keys()):
+        return {}
+    numbers = {}
+    for k, v in constants.items():
+        try:
+            numbers[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return vectors_from_values(numbers)
+
+
+__all__ = ["EquationGraph", "compute_values_ast", "constant_vectors", "validate_equation"]
