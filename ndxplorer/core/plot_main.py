@@ -1401,7 +1401,17 @@ class NDXplorer(QtWidgets.QMainWindow):
         dialog.exec_()
         
     def onShowUMAP(self) -> None:
-        umap_helpers.on_show_umap(self)
+        """View > UMAP: the Find structure dialog, on UMAP.
+
+        This called ``umap_helpers.on_show_umap``, which never existed, so the
+        entry raised AttributeError and nothing opened.
+        """
+        clustering_helpers.ensure_dialog(self)
+        dialog = self.clustering_dialog
+        dialog.on_clustering_method_changed("umap")
+        clustering_helpers.update_dialog(self, force=True)
+        dialog.show()
+        dialog.raise_()
 
     def onShowReportWizard(self):
         """Open the Report Tool dialog."""
