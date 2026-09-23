@@ -95,10 +95,22 @@ $PY tools/parity/capture_qt.py --app-root /tmp/ndx_qt
 | `canvas_click` | `at`, (`button`) | Left click (for example Gaussian point mode) or right click (context menu). |
 | `menu_choice` | `text` | The next context menu returns this entry, as a click on it would. |
 | `file_answer` / `dialog_result` / `question_answer` | | What the next file dialog / `exec_()` / question box answers. |
+| `dialog_results` / `question_answers` | `values` | Queues: the next `exec_()` calls / questions take these in turn (`[1, 0]`: accept the options, leave the report open; `"yes"`/`"no"`/`"cancel"`). |
 | `call` | `code` | Python with `win`, `pc` (plot control), `h` (harness), `button`, `np`, `QtCore`. Used only where no widget exists for the action: setting a view-model value, or a dead button's dialog. |
 | `wait`, `wait_until`, `wait_plot` | `ms` / `expr`, `timeout` | Pumps events until time passes, a condition holds, or the plot is idle. |
 | `resize_dialog` | `size`, (`target`) | Enlarges a scrolled dialog so every control is on the picture. |
 | `capture` | `name`, `target` | Saves a shot. `target` is one of `window` (default), `dialog` (latest opened), `dialog:<Class or title>`, `menu`, or `widget:<expr>`. |
+
+**ChiSurf-hosted scenarios.** A scenario with `"host": "chisurf"` builds the
+window as ChiSurf's ribbon opens it: `chisurf/plugins/ndxplorer/__init__.py`
+executed with `__name__ == "plugin"`, which adds the Accurate FRET, MMFDB and
+ChiSurf Phasor toolbars, the Global View parameters and the calibration
+restore on opening a `.pto`. `chisurf.gui.dialogs` is told the session is
+interactive so its boxes show. `trigger` accepts `tool('<label>')` (a toolbar
+action by its text, glyph ignored); the log records `toolbars` and the final
+`constants`. `open` with `"copy": true` opens a copy in the scratch `$HOME`
+(the calibration is written into the container), and `$HOME` in a path is that
+scratch home (`~` is the real one).
 
 `capture_qt.py` makes blocking Qt calls non-blocking, so a scenario can photograph what they open:
 

@@ -110,6 +110,9 @@ def expand(value, datasets: dict):
         if value.startswith("@"):
             value = datasets[value[1:]]["path"]
         value = value.replace("$REPO", str(REPO))
+        # $HOME is the scenario's scratch home (files a scenario writes);
+        # "~" below is the real one (data a scenario reads).
+        value = value.replace("$HOME", os.environ.get("HOME", ""))
         if value.startswith("~"):
             # The scenario subprocess runs with a scratch $HOME; data paths
             # mean the real one.
@@ -243,7 +246,11 @@ class Harness:
         self.opened: list = []          # dialogs / menus / message boxes, oldest first
         self.file_answers: list = []    # queued answers for QFileDialog.get*
         self.dialog_result = 0          # what a patched exec_() returns
+        self.dialog_results: list = []  # queued results, used before dialog_result
         self.question_answer = QtWidgets.QMessageBox.No
+        self.question_answers: list = []  # queued answers, used before question_answer
+        #: The plugin globals when the window is hosted by ChiSurf (host "chisurf").
+        self.host_context: dict = {}
         self.messages: list = []        # text of every message box shown
         self.menu_choice = None         # entry a patched QMenu.exec_ returns
         self._menu_chain: list = []
@@ -287,7 +294,17 @@ class Harness:
             self_.show()
             h._register(self_)
             h.pump(150)
-            result = h.dialog_result
+            if isinstance(self_, QtWidgets.QMessageBox):
+                # A box built and exec'd directly (chisurf.gui.dialogs does this)
+                # rather than through the static helpers: stays on screen to be
+                # photographed, and a question takes the queued answer.
+                h.messages.append({"title": self_.windowTitle(), "text": self_.text()})
+                if int(self_.standardButtons()) & int(QtWidgets.QMessageBox.Yes):
+                    if h.question_answers:
+                        return h.question_answers.pop(0)
+                    return h.question_answer
+                return QtWidgets.QMessageBox.Ok
+            result = h.dialog_results.pop(0) if h.dialog_results else h.dialog_result
             if result:
                 # An accepted dialog closes, as it would after pressing OK.
                 self_.hide()
@@ -333,6 +350,8 @@ class Harness:
                 h.messages.append({"title": str(title), "text": str(text)})
                 h.pump(100)
                 if icon == QtWidgets.QMessageBox.Question:
+                    if h.question_answers:
+                        return h.question_answers.pop(0)
                     return h.question_answer
                 return QtWidgets.QMessageBox.Ok
             return staticmethod(box)
@@ -408,7 +427,10 @@ class Harness:
         import ndxplorer
 
         self.log["ndxplorer"] = str(Path(ndxplorer.__file__).parent)
-        self.win = NDXplorer()
+        if self.sc.get("host") == "chisurf":
+            self.win = self.build_chisurf_hosted()
+        else:
+            self.win = NDXplorer()
         self.win.resize(*WINDOW_SIZE)
         self.win.move(0, 0)
         self.win.show()
@@ -418,10 +440,56 @@ class Harness:
         if not ok:
             raise RuntimeError("deferred init did not finish")
 
+    def build_chisurf_hosted(self):
+        """The window as ChiSurf's ribbon opens it: the plugin run as a macro.
+
+        ChiSurf executes ``chisurf/plugins/ndxplorer/__init__.py`` with
+        ``__name__ == "plugin"`` (``ribbon_plugins``: ``onRunMacro(...,
+        globals={"__name__": "plugin"})``). That builds the window through
+        ``rpc_bridge.make_ndxplorer`` (in-process ChiSurf client: the ChiSurf
+        Phasor toolbar, the burst bridges, the calibration restore on open) and
+        then adds the Accurate FRET and MMFDB toolbars and the Global View
+        parameters. Running the same file the same way is the only honest
+        baseline: nothing here re-implements the decoration.
+
+        ``chisurf.gui.dialogs`` shows nothing on the offscreen platform (it
+        answers with the default instead), so it is told the session is
+        interactive; its boxes then reach the patched ``exec_`` like any other.
+        """
+        import chisurf.gui.dialogs as chisurf_dialogs
+
+        chisurf_dialogs.is_interactive = lambda: True
+        init = REPO.parents[1] / "chisurf" / "plugins" / "ndxplorer" / "__init__.py"
+        self.log["chisurf_plugin"] = str(init)
+        context = {"__name__": "plugin", "__file__": str(init)}
+        exec(compile(init.read_text(encoding="utf-8"), str(init), "exec"), context)
+        self.host_context = context
+        return context["ndx"]
+
+    def toolbar_action(self, label: str, toolbar: str = ""):
+        """The toolbar action whose text (glyph ignored) is *label*."""
+        W = self.QtWidgets
+        for bar in self.win.findChildren(W.QToolBar):
+            if toolbar and toolbar not in (bar.objectName(), bar.windowTitle()):
+                continue
+            for act in bar.actions():
+                text = act.text().replace("&", "").strip()
+                if text == label or text.endswith(" " + label):
+                    return act
+        raise RuntimeError(f"no toolbar action {label!r}")
+
+    def toolbars(self) -> list:
+        """``[{"name", "title", "visible", "actions"}]`` of the window's toolbars."""
+        return [{"name": bar.objectName(), "title": bar.windowTitle(),
+                 "visible": bar.isVisible(),
+                 "actions": [a.text() for a in bar.actions() if a.text()]}
+                for bar in self.win.findChildren(self.QtWidgets.QToolBar)]
+
     def ns(self) -> dict:
         import numpy as np
 
         return {"win": self.win, "pc": getattr(self.win, "plot_control", None),
+                "host": self.host_context, "tool": self.toolbar_action,
                 "app": self.app, "h": self, "np": np, "QtCore": self.QtCore,
                 "QtGui": self.QtGui, "QtWidgets": self.QtWidgets,
                 "last": self.opened[-1] if self.opened else None,
@@ -594,7 +662,10 @@ class Harness:
                     if not isinstance(w, W.QMenu) and _alive(w) and w.isVisible()]
             if target.startswith("dialog:"):
                 key = target.split(":", 1)[1]
-                live = [w for w in live if key in type(w).__name__ or key in w.windowTitle()]
+                # A message box is found by its text too: macOS ignores (and
+                # reports empty) a QMessageBox's window title.
+                live = [w for w in live if key in type(w).__name__ or key in w.windowTitle()
+                        or (isinstance(w, W.QMessageBox) and key in w.text())]
             if not live:
                 raise RuntimeError(f"no open dialog for capture target {target!r}")
             return live[-1]
@@ -658,6 +729,15 @@ class Harness:
             # trigger the action (or the CLI path for "cli").
             via = a.get("via", "action")
             path = a["path"]
+            if a.get("copy"):
+                # Open a copy in the scratch $HOME: the scenario writes into the
+                # container (a calibration is stored in the .pto), and the
+                # user's measurement is never the one written.
+                copy = Path(os.environ["HOME"]) / Path(path).name
+                if not copy.exists():
+                    shutil.copyfile(path, copy)
+                path = str(copy)
+                self.log["opened_copy"] = path
             if via == "cli":
                 from ndxplorer.__main__ import open_path_like_drop
                 open_path_like_drop(self.win, path)
@@ -678,9 +758,15 @@ class Harness:
             self.menu_choice = a["text"]
         elif op == "dialog_result":
             self.dialog_result = int(a["value"])
+        elif op == "dialog_results":
+            self.dialog_results = [int(v) for v in a["values"]]
         elif op == "question_answer":
             self.question_answer = (QtWidgets.QMessageBox.Yes if a["value"] == "yes"
                                     else QtWidgets.QMessageBox.No)
+        elif op == "question_answers":
+            buttons = {"yes": QtWidgets.QMessageBox.Yes, "no": QtWidgets.QMessageBox.No,
+                       "cancel": QtWidgets.QMessageBox.Cancel}
+            self.question_answers = [buttons[v] for v in a["values"]]
         elif op == "set":
             self.set_value(self.resolve(a["widget"]), a["value"])
         elif op == "axis":
@@ -693,7 +779,7 @@ class Harness:
             self.pump(200)
         elif op == "trigger":
             act = getattr(self.win, a["action"]) if not a["action"].startswith(
-                ("win.", "pc.", "last")) else self.resolve(a["action"])
+                ("win.", "pc.", "last", "tool(")) else self.resolve(a["action"])
             if a.get("checked") is not None:
                 act.setChecked(bool(a["checked"]))
             else:
@@ -762,6 +848,13 @@ class Harness:
                     self.log["status"] = "failed"
                     break
                 self.log["steps"].append(entry)
+            if self.sc.get("host") == "chisurf":
+                # What the host added, in words: the report and the emtk side
+                # compare this inventory, not only the pictures.
+                self.log["toolbars"] = self.toolbars()
+                self.log["constants"] = {k: float(v) for k, v in dict(
+                    getattr(self.win, "constants", {}) or {}).items()
+                    if isinstance(v, (int, float))}
             # Every scenario ends with the main window, unless it captured it itself.
             if not any(c["name"] == "main" for c in self.log["captures"]):
                 try:
