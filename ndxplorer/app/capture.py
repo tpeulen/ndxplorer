@@ -389,8 +389,8 @@ class Replay:
         elif target.startswith("dialog"):
             box = self.feature_box(target)
             if box is None:
-                box = getattr(self.app, "message_box", None) if self.app.message is not None else \
-                    getattr(self.app, "dialog_box", None) if self.app.dialog is not None else None
+                box = getattr(self.app, "message_box", None) if self.app.message is not None \
+                    else None
             if box is None:
                 raise Unsupported("no dialog is open")
             shot = image.crop(_ints(box, pad=2))

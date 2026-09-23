@@ -36,7 +36,7 @@ from ..logging_config import logging
 from ..utils.axis_helpers import robust_axis_range, settings_for_axis
 from ..utils.histogram_computation import Axis, HistogramAxes, compute_histograms
 
-__all__ = ["AxisState", "ExplorerModel", "Histograms", "find_parameter", "read_path"]
+__all__ = ["AxisState", "ExplorerModel", "Histograms", "find_parameter"]
 
 #: What the Qt window's axis spin boxes start at.
 DEFAULT_BINS_1D = 81
@@ -118,31 +118,6 @@ def find_parameter(names: Sequence[str], wanted: str, contains: bool = False) ->
     return None
 
 
-def read_path(path: str) -> DataSource:
-    """Read a file or folder the way the Qt window's ``--file`` and drop path do.
-
-    A folder is a burst-analysis folder (or a sampling folder with a
-    ``parameters.json``); ``.csv``/``.dat``/``.txt``/``.bur`` are text tables;
-    ``.er4`` is ChiSurf sampling; ``.h5``/``.hdf5``/``.zip`` an analysis file;
-    ``.pto`` a measurement container.
-    """
-    from ..io import reader
-
-    p = pathlib.Path(path)
-    if p.is_dir():
-        if (p / "parameters.json").exists():
-            return reader.read_sampling_folder(str(p))
-        return reader.read_burst_analysis(str(p))
-    suffix = p.suffix.lower()
-    if suffix == ".er4":
-        return reader.read_csv_sampling([str(p)])
-    if suffix in (".h5", ".hdf5", ".zip"):
-        return reader.read_mfd_hdf5([str(p)])
-    if suffix == ".pto":
-        return reader.read_burst_analysis(str(p))
-    return reader.read_csv([str(p)])
-
-
 class ExplorerModel:
     """The state of one ndXplorer window, and the histograms it implies.
 
@@ -220,7 +195,9 @@ class ExplorerModel:
     def open(self, path: str) -> bool:
         """Read *path* and show it; ``False`` (and :attr:`error`) when it failed."""
         try:
-            source = read_path(path)
+            from ..io.loading import read
+
+            source = read(path)
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logging.error("Failed to load %s: %s", path, exc)
             self.error = f"Failed to load data: {exc}"

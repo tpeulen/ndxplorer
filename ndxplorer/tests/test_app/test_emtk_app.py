@@ -301,21 +301,18 @@ def test_the_menu_bar_mirrors_the_qt_menus(app):
         assert label in labels
     # without data, only opening something (and leaving) is enabled
     draw(app)
-    assert app.panel.available("open_analysis_folder")
+    # opening belongs to the io feature: without it the entry is shown, disabled
+    assert not app.panel.available("open_analysis_folder")
+    assert app.panel.available("exit")
     assert not app.panel.available("clear_gates")
     assert not app.panel.available("umap")                    # not ported: shown, disabled
 
 
-def test_file_menu_opens_the_folder_dialog(app):
+def test_the_file_menu_opens(app):
     draw(app)
     titles = {m.label: rect for m, rect in app.menubar._titles}
     click(app, *centre(titles["File"]))
     assert app.menubar.menus[0].open
-    assert app.run_action("open_analysis_folder")
-    draw(app)
-    # the core's folder dialog, or the io feature's own, is up and modal
-    assert app.dialog is not None or app._feature_modal
-
 
 def test_a_load_error_is_a_message_box(app):
     app.open_path("/no/such/file.csv")

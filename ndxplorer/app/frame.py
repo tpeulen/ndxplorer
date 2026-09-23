@@ -74,11 +74,6 @@ class NdxApp:
         self.model = model if model is not None else ExplorerModel(settings_file)
         self.on_exit = on_exit
         self.panel = PanelModel(self.model, actions={
-            "browse": self.browse,
-            "open_text": self.open_text,
-            "open_analysis_folder": self.open_analysis_folder,
-            "open_analysis_file": self.open_analysis_file,
-            "open_sampling": self.open_sampling,
             "exit": self.exit,
             "toggle_plot_controls": self.toggle_plot_controls,
         })
@@ -104,7 +99,6 @@ class NdxApp:
                                       extra=self._feature_menu_entries())
         self._menu_box = (0.0, 0.0, 1.0, MENU_H)
         self.popup = None
-        self.dialog = None
         self.left_tab = "Plot controls"
         self.right_tab = "Plot"
         self.box = (0.0, 0.0, 1.0, 1.0)
@@ -162,36 +156,6 @@ class NdxApp:
             self.data_changed()
         return ok
 
-    def _open_dialog(self, title: str, mode: str, filters, purpose: str) -> None:
-        from emtk.file_dialog import FileDialog
-
-        start = self.model.working_path or str(pathlib.Path.home())
-        self.dialog = (FileDialog(title, mode=mode, filters=filters, directory=start), purpose)
-
-    def open_text(self) -> None:
-        """File > Import > Import Text files."""
-        self._open_dialog("Comma separated value files", "open",
-                          [("Text files", ["*.csv", "*.dat", "*.er4", "*.txt", "*.bur"]),
-                           ("All files", ["*"])], "open")
-
-    def open_analysis_folder(self) -> None:
-        """File > Import > Analysis-Folder: a burst-analysis folder."""
-        self._open_dialog("Burst analysis folder", "folder", [("Folders", ["*"])], "open")
-
-    def open_analysis_file(self) -> None:
-        """File > Import > Analysis file: an MFD HDF5 (or a zip of one)."""
-        self._open_dialog("MFD HDF5 files", "open",
-                          [("HDF5 files", ["*.h5", "*.hdf5"]), ("ZIP files", ["*.zip"]),
-                           ("All Files", ["*"])], "open")
-
-    def open_sampling(self) -> None:
-        """File > Import > ChiSurf-Sampling: a sampling folder."""
-        self._open_dialog("Open sampling folder", "folder", [("Folders", ["*"])], "open")
-
-    def browse(self) -> None:
-        """The Browse button: choose the working folder."""
-        self._open_dialog("Change working path", "folder", [("Folders", ["*"])], "working_path")
-
     def toggle_plot_controls(self) -> None:
         self.panel.show_plot_controls = not self.panel.show_plot_controls
 
@@ -242,8 +206,7 @@ class NdxApp:
         self.plots.begin_frame()
         with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage):
             emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
-            modal = (self.dialog is not None or self.message is not None
-                     or getattr(self, "_feature_modal", False))
+            modal = self.message is not None or getattr(self, "_feature_modal", False)
             if modal:
                 emtk.begin_disabled(True)
             if self.panel.show_plot_controls:
@@ -258,8 +221,6 @@ class NdxApp:
                     self._feature_modal = True
             if self.message is not None:
                 self._draw_message(x, y, w, h)
-            elif self.dialog is not None:
-                self._draw_dialog(x, y, w, h)
         if self.status:
             from emtk import style
             from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
@@ -376,28 +337,6 @@ class NdxApp:
         if emtk.button("OK", (90.0, 0.0)):
             self.message = None
         emtk.end()
-
-    def _draw_dialog(self, x, y, w, h) -> None:
-        import emtk
-
-        dialog, purpose = self.dialog
-        dw, dh = min(720.0, w - 40.0), min(460.0, h - 60.0)
-        box = (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
-        self.dialog_box = box
-        emtk.begin(f"{dialog.title}##dialog", box)
-        emtk.text(dialog.title)
-        emtk.separator()
-        result = dialog.draw()
-        emtk.end()
-        if result is False:
-            self.dialog = None
-        elif result:
-            self.dialog = None
-            chosen = result[0] if isinstance(result, (list, tuple)) else result
-            if purpose == "working_path":
-                self.model.working_path = str(chosen)
-            else:
-                self.open_path(str(chosen))
 
     def _open_dropdowns(self) -> None:
         """A choice asked for its list: open it as a popup over everything."""

@@ -91,11 +91,9 @@ class PanelModel:
             return name in WITHOUT_DATA or self.model.has_data
         if name in NOT_PORTED:
             return False
-        if name in WITHOUT_DATA:
-            return True
-        if name in self.actions or hasattr(self, name) or hasattr(type(self), name):
-            return self.model.has_data
-        return False
+        if not hasattr(type(self), name):
+            return False                     # nobody provides it: shown, disabled
+        return name in WITHOUT_DATA or self.model.has_data
 
     def enabled(self, name: str) -> bool:
         """AutoForm's hook: a field or action that cannot be used is drawn disabled."""
