@@ -72,7 +72,7 @@ def _button(control, action: str) -> QtWidgets.QToolButton:
 def test_the_panel_has_the_controls_the_spec_declares(control):
     form = control.playback_form
     assert [b.text() for b in form.findChildren(QtWidgets.QToolButton)
-            if getattr(b, "_autoform_action", "")] == ["◀◀", "◀", "⏸", "▶", "▶▶"]
+            if getattr(b, "_autoform_action", "")] == ["◀◀", "◀", "■", "▶", "▶▶"]
     # Step and speed: both sliders, both integer-valued. The int branch of the
     # value renderer used to be tested before the slider branch, so an int
     # slider rendered as a bare spin box.

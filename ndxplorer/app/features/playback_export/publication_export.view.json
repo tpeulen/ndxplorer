@@ -1,0 +1,24 @@
+{
+  "_comment": "Export… (publication figure) of the emtk app, drawn by emtk.view_form over ndxplorer.app.features.playback_export.PublicationExportModel. The Qt window's PublicationExportDialog, as a spec: the figure is composed by ndxplorer.export.publication_figure (Matplotlib) and handed to app.io_service as bytes (a path on a desktop, a download in a browser).",
+  "sections": [
+    {
+      "type": "panel",
+      "title": "Publication export",
+      "n_col": 1,
+      "sections": [
+        {"type": "choice", "attr": "format", "label": "Format:", "options_source": "format_options",
+         "description": "Vector (PDF/SVG) is resolution-independent and best for print; PNG is a high-resolution raster."},
+        {"type": "value", "attr": "dpi", "label": "DPI (raster):", "kind": "int", "minimum": 72, "maximum": 1200,
+         "description": "Raster resolution. Ignored for vector formats."},
+        {"type": "toggle", "attr": "with_marginals", "label": "Include X/Y marginal histograms",
+         "description": "Draw the x and y marginal histograms above and beside the 2-D density."},
+        {"type": "toggle", "attr": "transparent", "label": "Transparent background",
+         "description": "Leave the figure background transparent."},
+        {"type": "button_row", "buttons": [
+          {"label": "Export…", "action": "export", "description": "Ask where to save, then write the figure."},
+          {"label": "Cancel", "action": "cancel", "description": "Close without exporting."}
+        ]}
+      ]
+    }
+  ]
+}

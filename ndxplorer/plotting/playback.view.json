@@ -41,7 +41,7 @@
           "buttons": [
             {"label": "◀◀", "action": "step_backward", "description": "One step back"},
             {"label": "◀", "action": "play_backward", "description": "Play backward"},
-            {"label": "⏸", "action": "pause", "description": "Stop"},
+            {"label": "■", "action": "pause", "description": "Stop"},
             {"label": "▶", "action": "play_forward", "description": "Play forward"},
             {"label": "▶▶", "action": "step_forward", "description": "One step forward"}
           ]
