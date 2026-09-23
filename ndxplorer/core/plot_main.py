@@ -1281,24 +1281,19 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.pick_population_from_canvas(pos)
 
     # ── picking a population off the 2-D plane ──────────────────────────
-    def pick_population_at(self, x: float, y: float, *, radius: float = 0.0,
-                           name: str = "") -> str:
+    def pick_population_at(self, x: float, y: float, *, name: str = "") -> str:
         """Fit a gate to the population at ``(x, y)`` and add it.
 
-        The model half of the gesture, in the **parameters' own units**, so it
-        is testable without a plot and so the coordinate mapping is somebody
-        else's problem exactly once.
+        The model half of the gesture, in the **parameters' own units**. The
+        fit is :func:`ndxplorer.core.population_pick.fit_population`, the same
+        one the emtk app uses: it finds the population on the displayed points
+        in display-scaled units, so the result does not depend on the units of
+        the axes. The ellipse becomes a 2-sigma G2D gate.
 
         Parameters
         ----------
         x, y : float
             Where the user clicked, in parameter units.
-        radius : float, optional
-            Capture radius. Zero takes a twentieth of the shorter displayed
-            axis, which is a starting point rather than an answer: a density
-            has no edge, so how much of a cloud is "one population" is a
-            decision, and this one is merely a reasonable default to adjust
-            from.
         name : str, optional
             Gate name; a numbered default otherwise.
 
@@ -1307,7 +1302,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         str
             Empty on success, or why the pick was refused.
         """
-        from ..core.region_selection import pick_population
+        from ..core.population_pick import fit_population
 
         data = self.values
         if data is None or not len(data):
@@ -1323,54 +1318,39 @@ class NDXplorer(QtWidgets.QMainWindow):
         idx2 = names.index(y_param) if y_param in names else -1
         if idx1 < 0 or idx2 < 0:
             return f"could not find the parameters {x_param!r} and {y_param!r}"
-        if not radius:
-            x_range = self.plot_control.x_range
-            y_range = self.plot_control.y_range
-            span_x = abs(float(x_range[1]) - float(x_range[0]))
-            span_y = abs(float(y_range[1]) - float(y_range[0]))
-            radius = max(min(span_x, span_y) / 20.0, 1e-12)
-
-        count = self.plot_control.gates.count("Region")
-        selection, reason = pick_population(
-            np.asarray(data), (idx1, idx2), float(x), float(y),
-            radius=float(radius), name=name or f"Population {count + 1}",
-        )
-        if selection is None:
-            return reason
-
-        self.plot_control.add_selection_object(selection)
+        values = np.asarray(data)
+        log_x = str(getattr(self.plot_control, "scale_x", "lin")).lower() == "log"
+        log_y = str(getattr(self.plot_control, "scale_y", "lin")).lower() == "log"
+        fit = fit_population(values[idx1], values[idx2], (x, y), self.plot_control.x_range,
+                             self.plot_control.y_range, log_x=log_x, log_y=log_y)
+        if not fit.success:
+            return fit.reason
+        count = self.plot_control.gates.count("G2D")
+        self.plot_control.addGaussianSelection(
+            idx1, idx2, fit.mu, fit.cov, sigma=2.0, name=name or f"Population {count + 1}",
+            log_x=fit.log_x, log_y=fit.log_y)
         self.request_plot_update()
         return ""
 
     def pick_population_from_canvas(self, pos) -> None:
         """Fit a gate to the population under the cursor, from a canvas click.
 
-        The coordinate half. ``pos`` is in the canvas viewport's own pixels, so
-        it goes through the scene to the view box, which is the only mapping
-        that respects pan, zoom and whatever transform the image item carries.
-        A point that lands outside the displayed ranges is **refused**: it means
-        the mapping did not do what this code thinks it did, and fitting
-        somewhere arbitrary would produce a gate that is merely plausible.
+        The coordinate half. ``pos`` is in the canvas viewport's own pixels; the
+        scene maps it to the view box, whose units are **bin indices** of the
+        2-D histogram image (x first, y up). The histogram's edges turn those
+        into data units -- comparing the bin index against the data range, as
+        this used to, refused every pick.
         """
         try:
             view = self.g_2dplot.plot_widget
             box = view.getPlotItem().getViewBox()
             point = box.mapSceneToView(view.mapToScene(pos))
-            x, y = float(point.x()), float(point.y())
+            _H, x_edges, y_edges = self._histogram["2d"]
+            x = float(np.interp(point.x(), np.arange(len(x_edges)), x_edges))
+            y = float(np.interp(point.y(), np.arange(len(y_edges)), y_edges))
         except Exception as exc:
             logging.debug("could not map the click to data coordinates", exc_info=True)
             self.statusBar().showMessage(f"Could not read the click position: {exc}")
-            return
-
-        x_range = self.plot_control.x_range
-        y_range = self.plot_control.y_range
-        inside = (min(x_range) <= x <= max(x_range)
-                  and min(y_range) <= y <= max(y_range))
-        if not inside:
-            self.statusBar().showMessage(
-                f"That click maps to ({x:.4g}, {y:.4g}), outside the plotted "
-                "range — not fitting a gate there"
-            )
             return
 
         reason = self.pick_population_at(x, y)

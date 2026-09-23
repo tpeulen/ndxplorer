@@ -83,3 +83,23 @@ def test_a_mask_row_keeps_its_object_and_deletes_by_the_list(window, qapp):
     assert control.tableWidget.rowCount() == 1
     control.onClearSelection()
     assert len(control.gates) == 0 and control.tableWidget.rowCount() == 0
+
+
+def test_a_pick_adds_a_gaussian_gate_on_the_population(window, qapp, monkeypatch):
+    """The Qt window's pick uses the shared fit and adds a G2D row."""
+    monkeypatch.setattr(window, "request_plot_update", lambda *a, **k: None)
+    control = window.plot_control
+    names = list(window.data_source.parameter_names)
+    control.comboBoxSelX.setCurrentText("Tau")
+    control.comboBoxSelY.setCurrentText("r")
+    control.spinBoxXmin.setValue(0.0)
+    control.spinBoxXmax.setValue(6.0)
+    control.spinBoxYmin.setValue(0.0)
+    control.spinBoxYmax.setValue(0.6)
+    monkeypatch.setattr(type(window), "values",
+                        property(lambda self: np.stack([self.data_source.column_view(i)
+                                                        for i in range(len(names))])))
+    assert window.pick_population_at(3.0, 0.3) == ""
+    (gate,) = control.gates
+    assert gate.kind == "G2D" and gate.meta["mu"][0] == pytest.approx(3.0, abs=0.1)
+    assert control.tableWidget.item(0, 1).text() == "G2D"
