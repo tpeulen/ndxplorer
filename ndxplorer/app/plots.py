@@ -112,10 +112,21 @@ class PlotArea:
         self.rects = {}
 
     def draw(self, boxes: dict) -> None:
-        """The x marginal, the map and the y marginal, in their boxes."""
-        self._draw_xmarginal(boxes["xmarginal"])
-        self._draw_map(boxes["map"])
-        self._draw_ymarginal(boxes["ymarginal"])
+        """The x marginal, the map and the y marginal, in their boxes.
+
+        The plots are drawn with no padding: the marginals are the map's axes,
+        so their plot areas have to meet the map's edges exactly. The rest of
+        ImPlot's default style is left as it is.
+        """
+        from emtk import implot
+
+        implot.push_style_var(implot.STYLE_VAR_PLOT_PADDING, (0.0, 0.0))
+        try:
+            self._draw_xmarginal(boxes["xmarginal"])
+            self._draw_map(boxes["map"])
+            self._draw_ymarginal(boxes["ymarginal"])
+        finally:
+            implot.pop_style_var()
 
     def _begin(self, title: str, box, flags_extra: int = 0) -> None:
         import emtk
@@ -184,8 +195,8 @@ class PlotArea:
         implot.setup_axis_limits(implot.AXIS_Y1, 0.0, top * 1.05, implot.COND_ALWAYS)
         if hist is not None:
             xs, ys = step_outline(*hist.x)
-            implot.plot_shaded("##x-fill", xs, ys, spec={"fill_color": theme.X_FILL})
-            implot.plot_line("##x-line", xs, ys, spec={"line_color": theme.X_LINE,
+            implot.plot_shaded("##x-fill", xs, ys, spec={"fill_color": theme.axis_colour("x", 110)})
+            implot.plot_line("##x-line", xs, ys, spec={"line_color": theme.axis_colour("x"),
                                                        "line_weight": 1.5})
             self._gate_lines("x", vertical=True)
             self._feature_items("xmarginal")
@@ -206,7 +217,7 @@ class PlotArea:
         self._setup_y("y", decorated=True, opposite=True)
         if hist is not None:
             ys, xs = step_outline(*hist.y)
-            implot.plot_line("##y-line", xs, ys, spec={"line_color": theme.Y_LINE,
+            implot.plot_line("##y-line", xs, ys, spec={"line_color": theme.axis_colour("y"),
                                                        "line_weight": 1.5})
             self._gate_lines("y", vertical=False)
             self._feature_items("ymarginal")
@@ -308,7 +319,7 @@ class PlotArea:
             abs(io.mouse_pos[1] - self._band_pixels[1]) > DRAG_THRESHOLD
         if moved:
             implot.drag_rect(900, min(bx0, bx1), min(by0, by1), max(bx0, bx1), max(by0, by1),
-                             theme.GATE, implot.DRAG_TOOL_FLAGS_NO_INPUTS |
+                             theme.gate_colour(), implot.DRAG_TOOL_FLAGS_NO_INPUTS |
                              implot.DRAG_TOOL_FLAGS_NO_FIT)
         if not io.mouse_down[0]:
             if moved:
@@ -350,7 +361,7 @@ class PlotArea:
         if pair is None:
             return False
         gx, gy = (self.model.gates[i] for i in pair)
-        result = implot.drag_rect(1, gx.lower, gy.lower, gx.upper, gy.upper, theme.GATE,
+        result = implot.drag_rect(1, gx.lower, gy.lower, gx.upper, gy.upper, theme.gate_colour(),
                                   implot.DRAG_TOOL_FLAGS_NO_FIT)
         if result.modified:
             self.model.edit_gate(pair[0], "lower", min(result.x_min, result.x_max))
@@ -372,7 +383,7 @@ class PlotArea:
             return
         drag = implot.drag_line_x if vertical else implot.drag_line_y
         for n, field in enumerate(("lower", "upper")):
-            result = drag(10 + n, getattr(gate, field), theme.GATE, 1.5,
+            result = drag(10 + n, getattr(gate, field), theme.gate_colour(), 1.5,
                           implot.DRAG_TOOL_FLAGS_NO_FIT)
             if result.modified:
                 model.edit_gate(index, field, result.value)
@@ -400,15 +411,15 @@ class PlotArea:
         if model.index_of(model.z.name) >= 0:
             zlo, zhi = model.z_range
             implot.plot_shaded("##z-region", [zlo, zhi], [top * 1.1, top * 1.1],
-                               spec={"fill_color": theme.Z_REGION})
+                               spec={"fill_color": theme.gate_colour(50)})
             if hist is not None and hist.z is not None:
                 xs, ys = step_outline(*hist.z)
-                implot.plot_shaded("##z-fill", xs, ys, spec={"fill_color": theme.Z_FILL})
-                implot.plot_line("##z-line", xs, ys, spec={"line_color": theme.Z_LINE,
+                implot.plot_shaded("##z-fill", xs, ys, spec={"fill_color": theme.axis_colour("z", 110)})
+                implot.plot_line("##z-line", xs, ys, spec={"line_color": theme.axis_colour("z"),
                                                            "line_weight": 1.5})
-            first = implot.drag_line_x(20, zlo, (120, 120, 220, 255), 1.5,
+            first = implot.drag_line_x(20, zlo, theme.gate_colour(), 1.5,
                                        implot.DRAG_TOOL_FLAGS_NO_FIT)
-            second = implot.drag_line_x(21, zhi, (120, 120, 220, 255), 1.5,
+            second = implot.drag_line_x(21, zhi, theme.gate_colour(), 1.5,
                                         implot.DRAG_TOOL_FLAGS_NO_FIT)
             if first.modified or second.modified:
                 model.set_z_range(first.value, second.value)
@@ -425,7 +436,7 @@ class PlotArea:
             if not text:
                 continue
             if kind == "h":
-                painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, theme.LABEL_RED,
+                painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text, theme.text_colour(),
                              True)
             else:
                 rotate = getattr(painter, "text_rotated", None)
@@ -433,7 +444,7 @@ class PlotArea:
                     # The box is the text's own, unturned, centred on the band.
                     cx, cy = x + w / 2.0, y + h / 2.0
                     rotate(cx - h / 2.0, cy - w / 2.0, h, w, ALIGN_HCENTER | ALIGN_VCENTER,
-                           text, theme.LABEL_RED, -90.0)
+                           text, theme.text_colour(), -90.0)
                 else:
                     painter.text(x, y, w, h, ALIGN_HCENTER | ALIGN_VCENTER, text,
-                                 theme.LABEL_RED, True)
+                                 theme.text_colour(), True)

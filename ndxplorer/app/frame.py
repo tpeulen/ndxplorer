@@ -78,8 +78,6 @@ class NdxApp:
             "exit": self.exit,
             "toggle_plot_controls": self.toggle_plot_controls,
         })
-        self._palette = theme.install_palette()
-        self.style = theme.make_style()
         self.io = emtk.IO()
         self.storage: Dict[Any, Any] = {}
         self.specs = {name: load_spec(name) for name in ("plot_controls", "plot_header",
@@ -192,12 +190,8 @@ class NdxApp:
             self.on_exit()
 
     def close(self) -> None:
-        """Put back the emtk palette this app installed."""
-        if self._palette is not None:
-            from emtk import style
-
-            style.use_palette(self._palette)
-            self._palette = None
+        """Release what the window holds (nothing global since it draws in the
+        default style); kept for hosts, which call it when the window closes."""
 
     # -------------------------------------------------------------- layout
     def layout(self, x: float, y: float, w: float, h: float) -> dict:
@@ -228,41 +222,33 @@ class NdxApp:
     def draw(self, painter, x: float, y: float, w: float, h: float) -> None:
         """Draw one frame of the window into *painter*."""
         import emtk
-        from emtk import implot
-        from emtk import implot_internal
 
         self.box = (x, y, w, h)
         self.model.update()
         refresh_menus(self.menubar, self.panel.available, self._checked)
         painter.fill_rect(x, y, w, h, theme.WINDOW_BG)
         boxes = self.layout(x, y, w, h)
-        saved_plot_style = implot.get_style().copy()
-        theme.apply_plot_style()
         self.plots.begin_frame()
-        try:
-            with emtk.frame(painter, (x, y, w, h), io=self.io, style=self.style,
-                            storage=self.storage):
-                emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
-                modal = (self.dialog is not None or self.message is not None
-                         or getattr(self, "_feature_modal", False))
-                if modal:
-                    emtk.begin_disabled(True)
-                if self.panel.show_plot_controls:
-                    self._draw_left(boxes)
-                self._draw_right(boxes, painter)
-                if modal:
-                    emtk.end_disabled()
-                emtk.end()
-                self._feature_modal = False
-                for feature in self.features:
-                    if feature.draw_windows():
-                        self._feature_modal = True
-                if self.message is not None:
-                    self._draw_message(x, y, w, h)
-                elif self.dialog is not None:
-                    self._draw_dialog(x, y, w, h)
-        finally:
-            implot_internal.gp.style = saved_plot_style
+        with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage):
+            emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
+            modal = (self.dialog is not None or self.message is not None
+                     or getattr(self, "_feature_modal", False))
+            if modal:
+                emtk.begin_disabled(True)
+            if self.panel.show_plot_controls:
+                self._draw_left(boxes)
+            self._draw_right(boxes, painter)
+            if modal:
+                emtk.end_disabled()
+            emtk.end()
+            self._feature_modal = False
+            for feature in self.features:
+                if feature.draw_windows():
+                    self._feature_modal = True
+            if self.message is not None:
+                self._draw_message(x, y, w, h)
+            elif self.dialog is not None:
+                self._draw_dialog(x, y, w, h)
         self.plots.draw_overlays(painter)
         self._spend_edges()
         self._menu_box = (x, y, w, MENU_H)
@@ -284,7 +270,7 @@ class NdxApp:
         io.key, io.text = 0, ""
 
     def _tabs(self, box, titles, current: str, enabled=None) -> str:
-        """A dock's tab strip, the Qt window's: small tabs, the current one blue."""
+        """A dock's tab strip: the current tab in the style's selected-tab colour."""
         import emtk
         from emtk.im_core import Col
 
@@ -296,8 +282,9 @@ class NdxApp:
                 emtk.same_line(0.0, 0.0)
             selected = title == current
             usable = enabled(title) if enabled else True
-            emtk.push_style_color(Col.BUTTON, theme.PALETTE["HEADER_HOVERED"] if selected
-                                  else (228, 228, 228, 255))
+            style = emtk.get_style()
+            emtk.push_style_color(Col.BUTTON, style.color(Col.TAB_SELECTED if selected
+                                                          else Col.TAB))
             emtk.begin_disabled(not usable)
             if emtk.button(f"{title}##tab", (0.0, h)) and usable:
                 chosen = title
