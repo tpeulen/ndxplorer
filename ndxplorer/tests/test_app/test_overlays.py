@@ -216,9 +216,9 @@ def test_every_target_and_reduction_builds_a_fit(app):
 # ---------------------------------------------------------------- equations
 def test_view_equations_reaches_the_equations_tab(app):
     f = feature(app)
-    assert "Equations" not in [t for _, t, _ in f.tabs()]
+    assert not app.docks.is_visible("Equations")
     assert app.run_action("toggle_equations")
-    assert app.left_tab == "Equations" and app.panel.show_equations
+    assert app.docks.is_shown("Equations") and app.panel.show_equations
     draw(app)
     assert f.equations.status_text() == "59 equation(s), all valid"
 
@@ -335,12 +335,12 @@ def test_without_chisurf_parameters_the_constants_are_plain_numbers(monkeypatch,
         before = column(app, "Fd/Fa")
         gamma = next(r for r in f.constants.parameter_rows() if r["name"] == "gG/gR")
         f.constants.edit_parameter(gamma, "value", gamma["value"] * 2.0)
-        app.left_tab = "Parameters"
+        app.docks.focus("Parameters")
         draw(app)
         after = column(app, "Fd/Fa")
         good = np.isfinite(before) & np.isfinite(after)
         assert np.allclose(after[good] * 2.0, before[good])
-        app.left_tab = "Overlays"
+        app.docks.focus("Overlays")
         draw(app)
     finally:
         app.close()

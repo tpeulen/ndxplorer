@@ -43,11 +43,12 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     """
     import logging
 
+    from .docks import layout_store
     from .frame import NdxApp
     from . import theme
 
     host = host or available_host()
-    app = NdxApp()
+    app = NdxApp(layout_store=layout_store())
     if chisurf_rpc:
         from ..rpc import connect
 

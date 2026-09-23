@@ -989,7 +989,6 @@ class AnalysisFeature(Feature):
         self.progress = ProgressWindow(self, "UMAP Computation Progress")
         self.projection = ProjectionWindow(self)
         self.gaussians = GaussianPanel(self)
-        self.show_fit_gaussians = False
         self.modal: List[SpecWindow] = []
         #: The last labelling: labels/probabilities (table length) and how.
         self.labels: Optional[np.ndarray] = None
@@ -1022,10 +1021,13 @@ class AnalysisFeature(Feature):
             "show_fit_gaussians": (lambda: self.show_fit_gaussians, self._set_show_gaussians),
         }
 
-    def tabs(self) -> list:
-        if not self.show_fit_gaussians:
-            return []
-        return [("left", GAUSSIAN_TAB, self.gaussians.draw_tab)]
+    def windows(self) -> list:
+        return [("left", GAUSSIAN_TAB, self.gaussians.draw_tab, {"visible": False})]
+
+    @property
+    def show_fit_gaussians(self) -> bool:
+        """Whether the Gaussian Fit window is open (View > Fit Gaussians)."""
+        return self.app.docks.is_visible(GAUSSIAN_TAB)
 
     def capture_actions(self) -> Dict[str, str]:
         return {"actionFit_Gaussians": "toggle_fit_gaussians", "actionUMAP": "umap"}
@@ -1091,12 +1093,11 @@ class AnalysisFeature(Feature):
             self.app.plots.image_revision += 1
 
     def _set_show_gaussians(self, value) -> None:
-        self.show_fit_gaussians = bool(value)
-        if self.show_fit_gaussians:
-            self.app.left_tab = GAUSSIAN_TAB
+        if value:
+            self.app.docks.focus(GAUSSIAN_TAB)
             self.gaussians.select_point = True
-        elif self.app.left_tab == GAUSSIAN_TAB:
-            self.app.left_tab = "Plot controls"
+        else:
+            self.app.docks.hide(GAUSSIAN_TAB)
 
     # ------------------------------------------------------------ actions
     def toggle_structure(self) -> None:
@@ -1114,7 +1115,9 @@ class AnalysisFeature(Feature):
         self.structure.show()
 
     def toggle_fit_gaussians(self) -> None:
-        self._set_show_gaussians(not self.show_fit_gaussians)
+        """View > Fit Gaussians: open the window on top, or put it away."""
+        if self.app.docks.toggle(GAUSSIAN_TAB):
+            self.gaussians.select_point = True
 
     def settings_changed(self, values: dict) -> None:
         self.gaussians.set_settings(values)
@@ -1343,7 +1346,7 @@ class AnalysisFeature(Feature):
         return True
 
     def _point_mode(self) -> bool:
-        return (self.show_fit_gaussians and self.app.left_tab == GAUSSIAN_TAB
+        return (self.app.docks.is_shown(GAUSSIAN_TAB)
                 and self.gaussians.select_point and self.gaussians.group is not None
                 and not self.modal)
 
@@ -1373,12 +1376,9 @@ class AnalysisFeature(Feature):
             return located
 
         def fit_dock(_replay):
-            if not self.show_fit_gaussians or self.app.left_tab != GAUSSIAN_TAB:
+            if not self.app.docks.is_shown(GAUSSIAN_TAB):
                 return None
-            boxes = self.app.layout(*self.app.box)
-            x, y, w, h = boxes["left"]
-            tx, ty, _tw, _th = boxes["left_tabs"]
-            return (tx, ty, w, y + h - ty)
+            return self.app.docks.window(GAUSSIAN_TAB).frame
 
         return {
             "widget:win.clustering_dialog": box_of(self.structure),
@@ -1485,9 +1485,8 @@ class AnalysisFeature(Feature):
 
     def _op_tab(self, replay, step: dict):
         title = step.get("title")
-        extra = [t for t, _d in self.app.feature_tabs("left")]
-        if title == "Plot controls" or title in extra:
-            self.app.left_tab = title
+        if self.app.docks.is_visible(title):
+            self.app.docks.focus(title)
             replay.settle()
             return None
         return False

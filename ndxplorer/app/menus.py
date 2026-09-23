@@ -48,6 +48,7 @@ MENUS: List[tuple] = [
     ("View", [
         {"label": "Plot controls", "action": "toggle_plot_controls", "checkable": True,
          "checked": "show_plot_controls"},
+        {"label": "Plot", "action": "toggle_plot", "checkable": True, "checked": "show_plot"},
         {"label": "Parameters", "action": "toggle_parameters", "checkable": True,
          "checked": "show_parameters"},
         {"label": "Overlays", "action": "toggle_overlays", "checkable": True,
@@ -61,6 +62,7 @@ MENUS: List[tuple] = [
         {"label": "Find informative projections (z axis)…", "action": "find_z_projections"},
         None,
         {"label": "Axis Control", "action": "axis_control"},
+        {"label": "Reset window layout", "action": "reset_layout"},
     ]),
     ("Help", [
         {"label": "Help", "action": "help"},

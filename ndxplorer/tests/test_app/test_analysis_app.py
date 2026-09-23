@@ -219,7 +219,7 @@ def test_gaussians_seed_fit_select_and_draw(closing):
     feature, model = feature_of(run), run.app.model
     panel = feature.gaussians
     assert panel.error == "", panel.error
-    assert run.app.left_tab == "Gaussian Fit" and run.app.panel.show_fit_gaussians
+    assert run.app.docks.is_shown("Gaussian Fit") and run.app.panel.show_fit_gaussians
     components = panel.components()
     assert len(components) == 2
     assert components[0].fix_mu.all()              # a click holds the centre

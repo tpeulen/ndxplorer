@@ -34,9 +34,16 @@ The hooks (all optional; the base class does nothing):
     ``{key: draw(section, model, state, width)}`` -- ``custom`` sections a
     core spec may contain (``{"type": "custom", "key": "playback"}``), drawn
     by the feature in their place.
-``tabs()``
-    ``[(dock, title, draw(box))]`` -- a tab in the left (``"left"``) or right
-    (``"right"``) dock: the Parameters, Overlays, Equations and Fit tabs.
+``windows()``
+    ``[(region, title, draw(box))]`` or ``[(region, title, draw(box), options)]``
+    -- the feature's own windows, asked once when the app starts: the
+    Parameters, Overlays, Equations and Gaussian Fit windows. Each is a sticky
+    window of ``app.docks`` (:mod:`ndxplorer.app.docks`), docked at first as a
+    tab of the left (``"left"``) or right (``"right"``) region; *title* is its
+    identity. *options* are :class:`emtk.docking.DockWindow` attributes --
+    ``{"visible": False}`` for one the View menu opens. Whether it is shown is
+    ``app.docks`` state from then on: ``app.docks.focus(title)`` brings it to
+    the front, ``app.docks.is_shown(title)`` says whether it is on screen.
 ``draw_windows()``
     Called every frame after the main window, inside the emtk frame: dialogs
     and tool windows. Return ``True`` while one is modal (the main window
@@ -134,7 +141,7 @@ class Feature:
     def custom_sections(self) -> Dict[str, Callable]:
         return {}
 
-    def tabs(self) -> List[tuple]:
+    def windows(self) -> List[tuple]:
         return []
 
     def draw_windows(self) -> bool:

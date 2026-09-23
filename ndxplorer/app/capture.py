@@ -98,13 +98,18 @@ class Replay:
         Window size.
     """
 
-    def __init__(self, scenario: dict, catalogue: dict, size=WINDOW) -> None:
+    def __init__(self, scenario: dict, catalogue: dict, size=WINDOW,
+                 layout_store=None) -> None:
         from .frame import NdxApp
 
         self.scenario = scenario
         self.catalogue = catalogue
         self.size = size
-        self.app = NdxApp()
+        # A window layout is kept only when asked for: capture_scenario keeps
+        # it as the shipped app does, in the settings folder of its scratch
+        # $HOME. A Replay made anywhere else must never read or write the
+        # user's own layout.
+        self.app = NdxApp(layout_store=layout_store)
         self.shots: Dict[str, object] = {}
         self.frame = None
 
@@ -171,7 +176,11 @@ class Replay:
         titles = [s.get("title") for s in self.app.specs["plot_controls"]["sections"]]
         below = [form.rects[f"{t}.fold"][1] for t in titles[titles.index(title) + 1:]
                  if f"{t}.fold" in form.rects]
-        left = self.app.layout(0.0, 0.0, *self.size)["left"]
+        from .docks import PLOT_CONTROLS
+
+        left = self.app.docks.window(PLOT_CONTROLS).content
+        if left is None:
+            raise Unsupported(f"{PLOT_CONTROLS} is not on screen")
         bottom = min(below) if below else left[1] + left[3]
         return (start[0], start[1], start[2], bottom - start[1])
 
@@ -196,14 +205,18 @@ class Replay:
         kind = TARGETS.get(target)
         if kind is None:
             raise Unsupported(f"capture target {target!r}")
-        boxes = self.app.layout(0.0, 0.0, *self.size)
         if kind == "left_dock":
-            x, y, w, h = boxes["left"]
-            tx, ty, _tw, _th = boxes["left_tabs"]
-            return (tx, ty, w, y + h - ty)
+            from .docks import PLOT_CONTROLS
+
+            frame = self.app.docks.window(PLOT_CONTROLS).frame
+            if frame is None:
+                raise Unsupported(f"{PLOT_CONTROLS} is not on screen")
+            return frame
         if kind.startswith("panel:"):
             return self.panel_rect(kind[len("panel:"):])
-        return boxes[kind]
+        if kind not in self.app.plot_boxes:
+            raise Unsupported(f"the Plot window is not on screen for {target!r}")
+        return self.app.plot_boxes[kind]
 
     def menu_box(self):
         """The union of the menu panels that are open."""
@@ -473,7 +486,9 @@ def capture_scenario(scenario_id: str, out_dir=DEFAULT_OUT, catalogue: Optional[
     out_dir = pathlib.Path(out_dir).resolve()
     catalogue = _with_real_home(catalogue)
     with scratch_home():
-        replay = Replay(scenario, catalogue, size)
+        from .docks import layout_store
+
+        replay = Replay(scenario, catalogue, size, layout_store=layout_store())
         try:
             shots = replay.run()
         finally:

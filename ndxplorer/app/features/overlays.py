@@ -1390,11 +1390,6 @@ class OverlaysFeature(Feature):
 
     def __init__(self, app) -> None:
         super().__init__(app)
-        self.show_parameters = True
-        self.show_overlays = True
-        #: The Qt window's Equations tab exists but cannot be shown; here View >
-        #: Equations shows it.
-        self.show_equations = False
         self.constants = ConstantsPanel(self)
         self.overlays = OverlaysPanel(self)
         self.equations = EquationsPanel(self)
@@ -1513,20 +1508,23 @@ class OverlaysFeature(Feature):
         return None
 
     def fields(self):
-        def field(name):
-            return (lambda: getattr(self, name), lambda v: setattr(self, name, bool(v)))
+        """``show_parameters`` / ``show_overlays`` / ``show_equations``: whether the
+        window is open -- what the View menu's ticks read and a spec may set."""
+        def field(title):
+            def set_(value) -> None:
+                if value:
+                    self.app.docks.focus(title)
+                else:
+                    self.app.docks.hide(title)
 
-        return {name: field(name) for name in ("show_parameters", "show_overlays",
-                                               "show_equations")}
+            return (lambda: self.app.docks.is_visible(title), set_)
+
+        return {f"show_{title.lower()}": field(title)
+                for title in ("Parameters", "Overlays", "Equations")}
 
     def _toggle(self, title: str) -> None:
-        attr = f"show_{title.lower()}"
-        shown = not getattr(self, attr)
-        setattr(self, attr, shown)
-        if shown:
-            self.app.left_tab = title
-        elif self.app.left_tab == title:
-            self.app.left_tab = "Plot controls"
+        """View > Parameters/Overlays/Equations: open the window on top, or put it away."""
+        self.app.docks.toggle(title)
 
     def show_data(self) -> None:
         """The Data button: the Table Editor over a copy of the data."""
@@ -1557,15 +1555,12 @@ class OverlaysFeature(Feature):
         logger.info("Curve fit: chi2r=%.4g, params=%s", result.chi2r, result.params)
 
     # -- tabs --------------------------------------------------------------------
-    def tabs(self) -> List[tuple]:
-        tabs = []
-        if self.show_parameters:
-            tabs.append(("left", "Parameters", self._draw_parameters))
-        if self.show_overlays:
-            tabs.append(("left", "Overlays", self._draw_overlays))
-        if self.show_equations:
-            tabs.append(("left", "Equations", self._draw_equations))
-        return tabs
+    def windows(self) -> List[tuple]:
+        # The Qt window's Equations dock exists but cannot be shown; here
+        # View > Equations opens it.
+        return [("left", "Parameters", self._draw_parameters),
+                ("left", "Overlays", self._draw_overlays),
+                ("left", "Equations", self._draw_equations, {"visible": False})]
 
     def _draw_parameters(self, _box) -> None:
         from emtk.view_form import draw_form
@@ -1650,8 +1645,7 @@ class OverlaysFeature(Feature):
         title = step.get("title")
         if title not in ("Parameters", "Overlays", "Equations"):
             return False
-        setattr(self, f"show_{title.lower()}", True)
-        self.app.left_tab = title
+        self.app.docks.focus(title)
         replay.settle()
         return True
 
@@ -1718,7 +1712,7 @@ class OverlaysFeature(Feature):
             return True
         if "dockWidget_Equations" in code:
             # The Qt harness forces the dead tab open; here View > Equations works.
-            self.show_equations = True
+            self.app.docks.focus("Equations")
             replay.settle()
             return True
         return False
