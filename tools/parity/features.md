@@ -257,73 +257,83 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## clustering_dialog — Clustering dialog ('Find structure'), every method page
 
-- [ ] Opened by "Cluster" (tooltip "Open clustering dialog"); non-modal; Escape or close hides it
-- [ ] "Method:" combo: PCA / UMAP / HDBSCAN / K-means (default K-means)
-- [ ] "▦ Columns (n)" button opens the column chooser
-- [ ] Grey one-line explanation of each method
-- [ ] PCA page: Components (2..10, default 2), "Standardise columns" (on)
-- [ ] UMAP page: Neighbours (2..100, default 15), Min. distance (0..1, default 0.1), Components (2..3), Metric (euclidean, manhattan, chebyshev, minkowski, canberra, braycurtis, cosine, correlation, hamming, jaccard), "Advanced"
-- [ ] UMAP Advanced: Parallel jobs (-1..64, "All cores"), Learning rate (0.1..10), Initialisation (spectral / random / pca), Spread (0.1..5), Epochs (0..2000, "Auto")
-- [ ] HDBSCAN page: Min. samples (default 5), Min. cluster size (default 50)
-- [ ] K-means page: Clusters (1..20, default 3)
-- [ ] Buttons: "▶ Run", "■ Cancel" (shown while running, reads "Cancelling…"), "📈 Plot" (UMAP only), "💾 Save" (labelling methods, once labels exist)
-- [ ] Progress pane: message plus an indeterminate bar ("Running…", "Finished.", "Cancelled or failed.")
-- [ ] Asks "Select columns?" when a labelling method is run with no columns chosen
+- [x] Opened by "Cluster" (tooltip "Open clustering dialog"); non-modal; Escape or close hides it — a movable `emtk.dialog_window` with ✕; Escape over it closes; the settings survive hiding
+- [x] "Method:" combo: PCA / UMAP / HDBSCAN / K-means (default K-means)
+- [x] "▦ Columns (n)" button opens the column chooser
+- [~] Grey one-line explanation of each method — shown under the combo in the default text colour (emtk default style, no per-feature colours)
+- [x] PCA page: Components (2..10, default 2), "Standardise columns" (on)
+- [x] UMAP page: Neighbours (2..100, default 15), Min. distance (0..1, default 0.1), Components (2..3), Metric (euclidean, manhattan, chebyshev, minkowski, canberra, braycurtis, cosine, correlation, hamming, jaccard), "Advanced"
+- [x] UMAP Advanced: Parallel jobs (-1..64, "All cores"), Learning rate (0.1..10), Initialisation (spectral / random / pca), Spread (0.1..5), Epochs (0..2000, "Auto") — special value texts via view_form `special_text`
+- [x] HDBSCAN page: Min. samples (default 5), Min. cluster size (default 50)
+- [x] K-means page: Clusters (1..20, default 3)
+- [x] Buttons: "▶ Run", "■ Cancel" (shown while running, reads "Cancelling…"), "📈 Plot" (UMAP only), "💾 Save" (labelling methods, once labels exist) — emoji dropped from Plot/Save (the emtk font has none)
+- [x] Progress pane: message plus an indeterminate bar ("Running…", "Finished.", "Cancelled or failed.") — view_form `progress` section; the run is an `emtk.tasks` task (thread on desktop, steps in the browser)
+- [x] Asks "Select columns?" when a labelling method is run with no columns chosen (No uses the x/y/z axes)
+- [~] In a browser (Pyodide) K-means/HDBSCAN/PCA fall back to scikit-learn; UMAP says it cannot run there (umap-learn needs numba)
+
 
 ## column_selection_dialog — Column selection dialog
 
-- [ ] Title "Select Columns for Clustering"
-- [ ] Hint text on keyboard navigation (Up/Down, Ctrl+Space, PageUp/PageDown, Home/End)
-- [ ] "Filter:" field ("Enter text to filter columns")
-- [ ] One check box per column, in a scroll area
-- [ ] "☑ Select All" and "☐ Deselect All"
-- [ ] OK / Cancel
+- [x] Title "Select Columns for Clustering"
+- [~] Hint text on keyboard navigation (Up/Down, Ctrl+Space, PageUp/PageDown, Home/End) — says what the emtk table does: Up/Down, PageUp/PageDown, Home/End move; a click on the box toggles (no Ctrl+Space)
+- [x] "Filter:" field ("Enter text to filter columns")
+- [~] One check box per column, in a scroll area — a data_table with a Use check column and the Column name
+- [x] "☑ Select All" and "☐ Deselect All"
+- [x] OK / Cancel
+
 
 ## clustering_kmeans_run — K-means clustering run, clusters coloured
 
-- [ ] Clustering runs in the background while the window stays responsive
-- [ ] Labels are stored on the data; the cluster spin box can isolate one cluster (-1 = all)
-- [ ] "colour" check colours the 2-D map by cluster instead of by density
-- [ ] "💾 Save" saves the clustering data to a folder
+- [x] Clustering runs in the background while the window stays responsive (`emtk.tasks`)
+- [x] Labels are stored on the data; the cluster spin box can isolate one cluster (-1 = all)
+- [x] "colour" check colours the 2-D map by cluster instead of by density — also while one cluster is isolated (Qt lost the colours there: the labels no longer matched the masked values)
+- [x] "💾 Save" saves the clustering data to a folder (through the app's file service; writer.save_clustering_data is Qt-free now)
+
 
 ## clustering_pca_run — PCA run: loadings report
 
-- [ ] The result text lists which parameters carry the variance (the loadings)
-- [ ] PC columns are added and can be picked on the axes
+- [x] The result text lists which parameters carry the variance (the loadings) — plain text, one line per component and the rows/variance footer
+- [x] PC columns are added and can be picked on the axes
+
 
 ## umap_run — UMAP via the clustering dialog
 
-- [ ] Missing umap-learn: offers the installer; a cancelled or failed install ends in "Installation was cancelled or failed, so this method cannot run." (the baseline environment has no umap-learn, so this is what the Qt shots show)
-- [ ] Progress dialog: "UMAP Computation Progress", log view, status line, auto-closes after 3 s on success, "Close" on error
-- [ ] UMAP_1…UMAP_n columns are added ("Added UMAP_1…UMAP_n. Pick them in the axis controls to plot.") and can be used as axes
-- [ ] "📈 Plot" opens a "UMAP Projection" window (UMAP 1 / UMAP 2 axes, a legend per cluster when labels exist; a 3-D view for 3 components)
+- [~] Missing umap-learn: offers the installer; a cancelled or failed install ends in "Installation was cancelled or failed, so this method cannot run." — the emtk shot shows the offer (Install/Cancel); Install runs conda as a task with its log in the progress window, Cancel gives the same message. In a browser: "not available in the browser" (numba)
+- [x] Progress dialog: "UMAP Computation Progress", log view, status line, auto-closes after 3 s on success, "Close" on error — the log is UMAP's own verbose/tqdm output; Cancel while running
+- [x] UMAP_1…UMAP_n columns are added ("Added UMAP_1…UMAP_n. Pick them in the axis controls to plot.") and can be used as axes — verified with umap-learn 0.5.12 (outside arm64, `pip --target` scratch path)
+- [x] "📈 Plot" opens a "UMAP Projection" window (UMAP 1 / UMAP 2 axes, a legend per cluster when labels exist; a 3-D view for 3 components) — implot / implot3d
+
 
 ## view_umap_action — View > UMAP
 
-- [ ] View > UMAP opens UMAP (Qt: broken, `umap_helpers.on_show_umap` does not exist; nothing happens)
+- [x] View > UMAP opens UMAP (Qt: broken, `umap_helpers.on_show_umap` does not exist; nothing happens) — opens Find structure on UMAP (fixed in the Qt window too)
+
 
 ## gaussian_fit — Gaussian Fit panel: fit 2-D Gaussians
 
-- [ ] View > Fit Gaussians shows the "Gaussian Fit" tab; while that tab is active, clicks on the map add seed Gaussians (point mode)
-- [ ] Buttons "🎯 Fit", "✕ Clear", "🔍 Select", "⚙ Settings"
-- [ ] "Selection σ:" (0.1..4.0, step 0.2, default 1.0)
-- [ ] "Gaussians" table: per component x, y, σx, σy, ρ, w, with Name / Value / Fixed / Lo / Hi / Bounds columns (σ ≥ 0, -1 ≤ ρ ≤ 1, w ≥ 0); add / remove rows; Delete removes the selected components
-- [ ] Parameters can be fixed and linked (crosslinked constants)
-- [ ] Checks: "Select point", "Marginals" (on), "Log Gauss"
-- [ ] "💾 Save" / "📂 Load" (.json / .csv; "Axis Mismatch" warning)
-- [ ] Ellipses on the 2-D map and Gaussian curves on the marginals
-- [ ] Warnings "No Gaussians", "No data", "No histogram"
+- [x] View > Fit Gaussians shows the "Gaussian Fit" tab; while that tab is active, clicks on the map add seed Gaussians (point mode)
+- [x] Buttons "🎯 Fit", "✕ Clear", "🔍 Select", "⚙ Settings" — without the emoji
+- [x] "Selection σ:" (0.1..4.0, step 0.2, default 1.0)
+- [x] "Gaussians" table: per component x, y, σx, σy, ρ, w, with Name / Value / Fixed / Lo / Hi / Bounds columns (σ ≥ 0, -1 ≤ ρ ≤ 1, w ≥ 0); add / remove rows; Delete removes the selected components — names without subscripts (x1, σx,1)
+- [x] Parameters can be fixed and linked (crosslinked constants) — a Link column: type a parameter name (sd_x_1, or "Group: name" of another registered table), empty unlinks
+- [x] Checks: "Select point", "Marginals" (on), "Log Gauss" — Log Gauss now fits and draws in log space (Qt only recorded it in the saved axes)
+- [x] "💾 Save" / "📂 Load" (.json / .csv; "Axis Mismatch" warning) — a saved _gaussians.csv loads again (Qt read its '#' header as the column row)
+- [x] Ellipses on the 2-D map and Gaussian curves on the marginals
+- [x] Warnings "No Gaussians", "No data", "No histogram"
+- [~] A click's seed width is the local spread at the clicked bin (Qt read the transposed bin), so the unfitted seeds differ from the Qt "points" shot; the fitted values match
+
 
 ## gaussian_select — Gaussian Fit: turn a component into a gate
 
-- [ ] "🔍 Select" adds the chosen component as an elliptical gate at Selection σ
+- [x] "🔍 Select" adds the chosen component as an elliptical gate at Selection σ — through `model.gates.add_gaussian`; the gate list then outlines it, and the component is no longer drawn by the panel while it is that gate (10257 of 12237 kept, as in Qt)
+
 
 ## gmm_settings_dialog — GMM Settings dialog
 
-- [ ] "⚙ Settings" opens it (Qt: broken, wrong import path, the button does nothing)
-- [ ] "Tolerance (tol)", "Reg. covar", "Max iterations", "Verbose", "Weight floor", "Local window (bins)"
-- [ ] "Fix new means by default"
-- [ ] OK / Cancel / "💾 Save" (to gmm_settings.json in the user folder)
+- [x] "⚙ Settings" opens it (Qt: broken, wrong import path, the button does nothing) — fixed in the Qt window too
+- [x] "Tolerance (tol)", "Reg. covar", "Max iterations", "Verbose", "Weight floor", "Local window (bins)" — Weight floor is applied to the fit now (it was stored and ignored)
+- [x] "Fix new means by default"
+- [x] OK / Cancel / "💾 Save" (to gmm_settings.json in the user folder)
 
 ## overlays_curve — Overlays: static FRET line on Fd/Fa vs Tau
 
