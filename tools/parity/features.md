@@ -58,50 +58,50 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## file_dialog_analysis_folder — Analysis-Folder directory picker
 
-- [ ] Directory chooser titled "Burst analysis folder", starting in the working path
-- [ ] Cancelling leaves the current data untouched
+- [x] Directory chooser titled "Burst analysis folder", starting in the working path (emtk file dialog in folder mode, via `app.io_service`; with no working path it starts in the current folder, as Qt's does)
+- [x] Cancelling leaves the current data untouched (Cancel or ✕)
 
 ## merge_dialog — Merge dialog when data is already loaded
 
-- [ ] Title per importer ("Open CSV Files", "Open SmFRET Files", "Open MFD HDF5 Files", "Open Sampling Files", "Open PTO Container")
-- [ ] Prompt "How do you want to merge the new data?"
-- [ ] Radio "Replace existing data" (default)
-- [ ] Radio "Append as columns (add new columns, rows must match)"
-- [ ] Radio "Append as rows (add new rows of existing columns)"
-- [ ] OK / Cancel (Cancel aborts the import)
+- [x] Title per importer ("Open CSV Files", "Open SmFRET Files", "Open MFD HDF5 Files", "Open Sampling Files", "Open PTO Container") — `io.loading.IMPORTERS[kind].merge_title`, shared with Qt. (No PTO import in the menu of either GUI.)
+- [x] Prompt "How do you want to merge the new data?"
+- [x] Radio "Replace existing data" (default) — `io/merge.view.json`, a `radio_list` choice
+- [x] Radio "Append as columns (add new columns, rows must match)" (a row-count mismatch is reported in a message box)
+- [x] Radio "Append as rows (add new rows of existing columns)"
+- [x] OK / Cancel (Cancel aborts the import)
 
 ## open_csv_iris — File > Import > Import Text files (CSV)
 
-- [ ] Import Text files (*.csv, *.dat), Ctrl+O; several files can be selected at once
-- [ ] `#` comment lines are skipped and the header row gives the column names
-- [ ] Axes can be set to any column (here petal length vs petal width); marginals and counts (150 / 150) update
+- [x] Import Text files (*.csv, *.dat), Ctrl+O; several files can be selected at once (multi-select file dialog)
+- [x] `#` comment lines are skipped and the header row gives the column names (the shared reader)
+- [x] Axes can be set to any column (here petal length vs petal width); marginals and counts (150 / 150) update
 
 ## open_csv_file_dialog — CSV file picker
 
-- [ ] File chooser titled "Comma separated value files", filter "Text files (*.csv *.dat *.er4 *.txt);;All files (*.*)", multi-select
+- [x] File chooser titled "Comma separated value files", filter "Text files (*.csv *.dat *.er4 *.txt);;All files (*.*)", multi-select
 
 ## open_bur_cli — Single .bur file via `ndx --file` (CLI / drop path)
 
-- [ ] `ndx --file <x.bur>` (and dropping a .bur/.txt) opens a single burst file
-- [ ] .csv → CSV reader, .er4 → sampling, .h5/.hdf5 → MFD HDF5, directory → burst folder (the same dispatch as a drop)
-- [ ] Tiny files (11 rows) still plot without errors
+- [x] `ndx --file <x.bur>` (and dropping a .bur/.txt) opens a single burst file (`python -m ndxplorer --emtk --file`, a drop on the window or the page)
+- [x] .csv → CSV reader, .er4 → sampling, .h5/.hdf5 → MFD HDF5, directory → burst folder (the same dispatch as a drop) — `io.loading.kind_for_paths`; a folder with parameters.json is a sampling folder, .pto a container
+- [x] Tiny files (11 rows) still plot without errors. Fixed on the way: the .bur's trailing tab read as a parameter named "" (both GUIs); the emtk axis chooser picked it and showed an empty x axis
 
 ## open_sampling — File > Import > ChiSurf-Sampling
 
-- [ ] ChiSurf-Sampling asks for a sampling folder ("Open sampling folder") and reads every .er4 in it
-- [ ] The er4 columns (chi2, rho_1, lb, sc, ts, xL1, b_1, tL1, bg) become parameters and the plot shows them
+- [x] ChiSurf-Sampling asks for a sampling folder ("Open sampling folder") and reads every .er4 in it
+- [x] The er4 columns (chi2, rho_1, lb, sc, ts, xL1, b_1, tL1, bg) become parameters and the plot shows them
 
 ## open_analysis_file_error — File > Import > Analysis file: load error
 
-- [ ] Analysis file import: file chooser "MFD HDF5 files", filter "HDF5 files (*.h5 *.hdf5);;ZIP files (*.zip);;All Files (*.*)"
-- [ ] Files load in the background without freezing the window
-- [ ] A failure shows a "Data Load Error" box with the reader's reason (here: "holds no columnar HDF5 table …"), and the current data stays
+- [x] Analysis file import: file chooser "MFD HDF5 files", filter "HDF5 files (*.h5 *.hdf5);;ZIP files (*.zip);;All Files (*.*)"
+- [x] Files load in the background without freezing the window (a thread and a progress window with Cancel; in a page, where there are no threads, on the next frame)
+- [x] A failure shows a "Data Load Error" box with the reader's reason (here: "holds no columnar HDF5 table …"), and the current data stays. [~] the reason only, not the Python traceback Qt shows
 
 ## open_image_h5 — Image table (X/Y pixel) → image mode
 
-- [ ] X pixel / Y pixel columns are detected as image axes: pixel bins, pixel ranges, and a map shown as an image (not upside down)
-- [ ] Photon weighting is switched on automatically
-- [ ] NaN / inf masking is turned off for pixel axes
+- [x] X pixel / Y pixel columns are detected as image axes: pixel bins, pixel ranges, and a map shown as an image (not upside down) — `axis_helpers.image_axes`, shared; applied however the table was opened
+- [x] Photon weighting is switched on automatically
+- [x] NaN / inf masking is turned off for pixel axes
 - [ ] The Frame column drives playback (see playback_image_frames)
 
 ## menu_file — File menu (+ Import, Save submenus)
@@ -412,7 +412,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## screenshot_button — Screenshot button
 
-- [ ] "Screenshot" asks for a file (PNG / JPEG / BMP) and saves the plot area
+- [x] "Screenshot" asks for a file (PNG / JPEG / BMP) and saves the plot area — the whole window, as Qt's `grab()` does, redrawn without dialogs; in a page it is a PNG download. [-] Qt also copies it to the clipboard; emtk has no image clipboard
 
 ## report_tool — File > Make Report
 
@@ -450,10 +450,10 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## save_burst_ids — Save Burst IDs ('BID' / File > Save > Burst IDs)
 
-- [ ] Folder chooser "Folder for Burst IDs"
-- [ ] Progress window "Saving Files" / "Saving Burst ID files..." (Cancel)
-- [ ] "Process Burst IDs" dialog: "Compute microtime histogram" (on), "Open FCS Correlator Wizard to correlate BST files" (off), OK / Cancel
-- [ ] Follow-up messages ("Plugin Not Available", "No BST Files Found", "Launch Error")
+- [x] Folder chooser "Folder for Burst IDs"
+- [x] Progress window "Saving Files" / "Saving Burst ID files..." (Cancel) — on a thread, `n / total files`
+- [x] "Process Burst IDs" dialog: "Compute microtime histogram" (on), "Open FCS Correlator Wizard to correlate BST files" (off), OK / Cancel — `io/burst_ids.view.json`
+- [~] Follow-up messages ("Plugin Not Available", "No BST Files Found", "Launch Error"): the histogram answer is Qt's "Plugin Not Available"; the correlator is a ChiSurf Qt wizard that cannot run in this window, so it says "Plugin Not Available" with the folder and file count (or "No BST Files Found"). No "Launch Error" (nothing is launched). BID is enabled only for a table with First/Last File and First/Last Photon (Qt enables it always and fails later)
 
 ## set_default_axis — Settings > Set default axis
 
@@ -469,11 +469,11 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## browse_working_path — Browse (working path)
 
-- [ ] "Browse" (tooltip "Change working path") opens a directory chooser and sets the Path field
+- [x] "Browse" (tooltip "Change working path") opens a directory chooser and sets the Path field ("Select current path", Qt's caption)
 
 ## selection_save — Selection 'save' (gates to *.selection.json)
 
-- [ ] "save" writes the gates to a *.selection.json file; "load" reads them back (file chooser "Selection JSON")
+- [x] "save" writes the gates to a *.selection.json file; "load" reads them back (file chooser "Selection JSON"), any shape; the name gets `.selection.json` when it lacks it. Without ChiSurf (a page) interval gates still save and load
 
 ## clear_plot — Clear
 
