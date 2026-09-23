@@ -394,8 +394,30 @@ class Replay:
     def op_wait_plot(self, _step: dict) -> None:
         self.settle()
 
-    def op_wait(self, _step: dict) -> None:
+    def op_wait(self, step: dict) -> None:
+        """Let the app settle; with ``seconds``, let that much time pass
+        first (a tooltip shows once the pointer has rested on its item)."""
+        seconds = float(step.get("seconds", 0) or 0)
+        if seconds > 0:
+            import time
+
+            time.sleep(seconds)
         self.settle()
+
+    def op_hover(self, step: dict) -> None:
+        """Rest the pointer on a control: ``widget`` is a Qt name this module
+        maps (``pc.comboBoxSelX``, ``win.toolButton_AutoContrast``) or a form
+        item's own name (``x_name``, ``set_x_axis``)."""
+        widget = step["widget"]
+        name = WIDGETS.get(widget) or BUTTONS.get(widget) or widget
+        for form in self.app.forms.values():
+            rect = form.rects.get(name)
+            if rect is not None:
+                x, y, w, h = rect
+                self.app.pointer_move(x + w / 2.0, y + h / 2.0)
+                self.draw()
+                return
+        raise Unsupported(f"hover on {widget!r}")
 
     def op_dialog_result(self, _step: dict) -> None:
         """The answer to Qt's merge question; the app has no merge question
