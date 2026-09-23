@@ -1070,6 +1070,14 @@ class AnalysisFeature(Feature):
         tasks = (self.label_task, self.work_task)
         return any(t is not None and t.running for t in tasks) or self.progress.open
 
+    @property
+    def cluster_labels(self) -> Optional[np.ndarray]:
+        """The last labelling, one label per table row (``-1`` noise), or ``None``.
+
+        What *Find informative projections* offers as "Clusters" classes.
+        """
+        return self.labels
+
     # ------------------------------------------------------------- fields
     def _set_selected_cluster(self, value) -> None:
         value = int(value)

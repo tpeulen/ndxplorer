@@ -59,6 +59,7 @@ def test_kmeans_labels_colour_and_isolate(closing):
     feature, model = feature_of(run), run.app.model
     assert feature.structure.open
     assert feature.labels is not None and set(np.unique(feature.labels)) == {0, 1, 2}
+    assert feature.cluster_labels is feature.labels      # the ranking's "Clusters" classes
     assert "Cluster Label" in model.parameter_names
     assert feature.structure.progress_text() == "Finished."
     assert feature.structure.enabled("save")
