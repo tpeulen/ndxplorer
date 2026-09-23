@@ -100,6 +100,7 @@ FEATURES: List[str] = [
     "analysis",
     "overlays",
     "playback_export",
+    "window",
 ]
 
 

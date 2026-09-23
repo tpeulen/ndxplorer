@@ -6,8 +6,8 @@ AutoForm binds a spec to flat attributes and methods -- ``x_bins_1d``,
 :class:`~ndxplorer.app.model.AxisState` objects, a gate list). Every write goes
 through the explorer model, which marks itself for a recompute.
 
-Actions the app has not ported yet exist as names in :data:`NOT_PORTED`, so a
-button for them is drawn and disabled rather than missing.
+An action or field that no feature provides is drawn disabled rather than
+left out.
 """
 
 from __future__ import annotations
@@ -16,18 +16,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .model import ExplorerModel
 
-__all__ = ["PanelModel", "NOT_PORTED"]
+__all__ = ["PanelModel", "NEVER_USABLE"]
 
-#: Buttons and menu entries whose feature the emtk app does not have yet.
-NOT_PORTED = frozenset({
-    "screenshot", "show_data", "export_figure", "cluster", "save_burst_ids", "load_gates",
-    "save_gates", "selected_cluster", "cluster_colours",
-    "save_histograms", "make_report", "print_window", "performance_settings", "load_settings",
-    "save_axis_settings", "save_constants", "save_equations", "set_default_axis",
-    "toggle_parameters", "toggle_overlays", "toggle_fit_gaussians", "toggle_equations", "umap",
-    "find_projections", "find_z_projections", "axis_control", "help",
-    "about", "update_app", "z_bins_2d",
-})
+#: Fields that exist in a spec for the row's shape but never apply: the z axis
+#: has no 2-D bins. (An action or field no feature provides is disabled anyway.)
+NEVER_USABLE = frozenset({"z_bins_2d"})
 
 #: What a field a feature owns shows until the feature is there (the Qt
 #: window's initial values): the cluster spin box reads -1, "all clusters".
@@ -36,7 +29,7 @@ FIELD_DEFAULTS = {"selected_cluster": -1, "cluster_colours": False}
 #: What stays usable without data: opening something, and leaving.
 WITHOUT_DATA = frozenset({"open_text", "open_analysis_folder", "open_analysis_file",
                           "open_sampling", "browse", "working_path", "colormap", "exit",
-                          "toggle_plot_controls"})
+                          "toggle_plot_controls", "toggle_plot", "reset_layout"})
 
 
 def _axis_property(key: str, field: str, cast: Callable[[Any], Any]):
@@ -74,7 +67,6 @@ class PanelModel:
         self.fields: Dict[str, tuple] = {}
         #: ``availability(action) -> bool | None``: what a feature says first.
         self.availability: Optional[Callable[[str], Optional[bool]]] = None
-        self.show_plot_controls = True
 
     # ------------------------------------------------------------- enabling
     def available(self, name: str) -> bool:
@@ -89,7 +81,7 @@ class PanelModel:
                 return answer
         if name in self.actions or name in self.fields:
             return name in WITHOUT_DATA or self.model.has_data
-        if name in NOT_PORTED:
+        if name in NEVER_USABLE:
             return False
         if not hasattr(type(self), name):
             return False                     # nobody provides it: shown, disabled
@@ -102,8 +94,8 @@ class PanelModel:
         if name == "weight_name":
             # the weight parameter counts only while "weight" is ticked
             return self.model.has_data and self.model.weight_enabled
-        if name.startswith(("x_", "y_", "z_", "weight")) or name in NOT_PORTED:
-            if name in NOT_PORTED:
+        if name.startswith(("x_", "y_", "z_", "weight")) or name in NEVER_USABLE:
+            if name in NEVER_USABLE:
                 return False
             return self.model.has_data
         return self.available(name)
