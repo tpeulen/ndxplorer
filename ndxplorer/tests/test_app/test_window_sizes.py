@@ -22,7 +22,7 @@ DATA = pathlib.Path(__file__).resolve().parents[3] / "test" / "mfd" / "burstwise
 #: Half a 1470x949 screen, a Magnet two-thirds tile, what a window manager
 #: left one window at, the default, the parity captures' size, and the whole
 #: work area.
-SIZES = [(735, 949), (980, 949), (992, 593), (1120, 720), (1400, 900), (1470, 949)]
+SIZES = [(735, 949), (900, 600), (980, 949), (992, 593), (1120, 720), (1400, 900), (1470, 949)]
 
 
 @pytest.fixture(scope="module")
@@ -159,11 +159,11 @@ def test_the_corner_holds_its_controls_or_gives_them_to_the_toolbar(size, data_p
     assert not app.corner_in_toolbar, f"the default marginals hold the corner at {size}"
 
 
-def test_the_default_window_is_three_quarters_of_a_laptop_screen():
+def test_the_default_window_is_small():
     from ndxplorer.app.capture import WINDOW
     from ndxplorer.app.launch import SIZE
 
-    assert SIZE == (1120, 720) and SIZE in SIZES
+    assert SIZE == (900, 600) and SIZE in SIZES
     assert WINDOW == (1400, 900), "the parity captures keep the Qt baseline's size"
 
 

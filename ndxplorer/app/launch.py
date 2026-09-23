@@ -21,10 +21,10 @@ from typing import Optional
 
 __all__ = ["run", "available_host", "parse_size"]
 
-#: The window's default logical size: about three quarters of a 1470x949 laptop
-#: work area, leaving room beside it. (The parity captures keep the Qt
+#: The window's default logical size: small, so it opens beside other windows
+#: on a laptop; the layout wraps down to it without clipping. (The parity captures keep the Qt
 #: baseline's 1400x900, :data:`ndxplorer.app.capture.WINDOW`.)
-SIZE = (1120, 720)
+SIZE = (900, 600)
 TITLE = "ndX"
 
 
