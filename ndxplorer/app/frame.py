@@ -111,6 +111,9 @@ class NdxApp:
         self.frames = 0
         #: ``(title, text)`` of a message box on screen, or ``None``.
         self.message = None
+        #: The ChiSurf RPC client (``--chisurf-rpc``), or ``None``: what "Send
+        #: selection to" and the phasor features talk to.
+        self.chisurf_rpc = None
         #: One line of non-modal feedback under the plots (Qt's status bar);
         #: set it with :meth:`show_status`.
         self.status = ""

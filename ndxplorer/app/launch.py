@@ -33,13 +33,28 @@ def available_host() -> str:
     return "tk"
 
 
-def run(path: Optional[str] = None, host: Optional[str] = None) -> int:
-    """Open the app, optionally with *path* loaded, and run until the window closes."""
+def run(path: Optional[str] = None, host: Optional[str] = None,
+        chisurf_rpc: Optional[str] = None) -> int:
+    """Open the app, optionally with *path* loaded, and run until the window closes.
+
+    *chisurf_rpc* is ``host:port`` of a ChiSurf RPC server (``--chisurf-rpc``):
+    the connection "Send selection to" and the phasor features use. A desktop
+    option -- a browser page has no socket to open.
+    """
+    import logging
+
     from .frame import NdxApp
     from . import theme
 
     host = host or available_host()
     app = NdxApp()
+    if chisurf_rpc:
+        from ..rpc import connect
+
+        app.chisurf_rpc = connect(chisurf_rpc, require=False)
+        if app.chisurf_rpc is None:
+            logging.warning("No ChiSurf RPC server at %s; ChiSurf features disabled",
+                            chisurf_rpc)
     if path:
         app.open_path(str(path))
     try:

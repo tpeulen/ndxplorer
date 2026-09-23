@@ -135,7 +135,7 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
     if use_emtk:
         from .app.launch import run
 
-        raise SystemExit(run(path=file or folder, host=host))
+        raise SystemExit(run(path=file or folder, host=host, chisurf_rpc=chisurf_rpc))
 
     logging.info("Starting ndxplorer as standalone module")
 
