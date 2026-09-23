@@ -159,8 +159,8 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## weights — Weighted histograms
 
-- [ ] "weight" check (tooltip "If checked, histograms are weighted by selected parameter")
-- [ ] Weight parameter combo lists every parameter; weighting applies to the map and the marginals
+- [x] "weight" check (tooltip "If checked, histograms are weighted by selected parameter")
+- [x] Weight parameter combo lists every parameter; weighting applies to the map and the marginals (same counts and vmin/vmax 3.10e+01 / 4.50e+04 as Qt)
 
 ## colour_log_contrast — Colormap, log counts, auto contrast, vmin/vmax
 
@@ -174,67 +174,70 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## mask_nan_inf_off — NaN / inf masking off
 
-- [ ] Unchecking NaN / inf keeps non-finite rows on the plotted axes, and the counts change accordingly
+- [x] Unchecking NaN / inf keeps non-finite rows on the plotted axes, and the counts change accordingly (12237 / 12237, as Qt)
 
 ## gate_rectangle — Rectangular gate dragged on the 2-D plot
 
-- [ ] Dragging a rectangle (with a rubber-band preview) on the 2-D map adds two range gates, one for the x parameter and one for the y parameter
-- [ ] Map, marginals and visible count show only the gated bursts
-- [ ] Selection section: "Cluster" button, cluster spin box (-1 = all), "colour" check, "BID", "clear", "load", "save"
-- [ ] Gate table columns: Parameter | Min | Max | Invert | Enable
-- [ ] Clicking a cell edits the name / Min / Max (range gates only)
-- [ ] Double-clicking a row deletes it (tooltip "Double click to remove a selection"); the Delete key deletes the selected rows
+- [x] Dragging a rectangle (with a rubber-band preview) on the 2-D map adds two range gates, one for the x parameter and one for the y parameter
+- [x] Map, marginals and visible count show only the gated bursts
+- [x] Selection section: "Cluster" button, cluster spin box (-1 = all), "colour" check, "BID", "clear", "load", "save" (Cluster/BID/load/save are other groups' features)
+- [x] Gate table columns: Parameter | Min | Max | Invert | Enable. The table is a `data_table` view spec over `GateList.records()`; it holds all four gate kinds (interval, G2D, region, mask), and a non-interval shows what it is in Min/Max ("Bitmap", "G2D"/"2 σ", the region's shape)
+- [~] Clicking a cell edits the name / Min / Max (range gates only): a double click opens Min/Max for typing (emtk's table convention); Parameter is not editable in the emtk table
+- [x] Double-clicking a row deletes it (on a non-editable cell, e.g. Parameter); the Delete key deletes the selected rows (all of them after Select All)
+- [~] Row numbers (Qt's vertical header) are not shown
 
 ## gate_invert_disable — Gate table: invert and disable
 
-- [ ] Invert check per gate (keep what is outside)
-- [ ] Enable check per gate
-- [ ] The plot updates immediately on either
+- [x] Invert check per gate (keep what is outside)
+- [x] Enable check per gate
+- [x] The plot updates immediately on either (the next frame recomputes; no timer)
 
 ## selection_table_menu — Selection table context menu
 
-- [ ] "Select All"
-- [ ] "Clear"
-- [ ] "Delete"
-- [ ] "Send selection to ▸" submenu; it is disabled, with the reason in its title, when there is no ChiSurf RPC, no data, no gate, or no analyses
+- [x] "Select All" (marks every row; Delete then removes them all)
+- [x] "Clear"
+- [x] "Delete"
+- [x] "Send selection to ▸" submenu; it is disabled, with the reason in its title, when there is no ChiSurf RPC, no data, no gate, or no analyses. In the browser the reason is that ChiSurf's RPC needs a native socket
 
 ## canvas_context_menu — 2-D canvas context menu
 
-- [ ] "Copy 2D Histogram (CSV)" to the clipboard
-- [ ] "Copy 1D Histograms (CSV)" to the clipboard
-- [ ] "Send to Napari" (offers to install napari when it is missing)
-- [ ] "Fit gate to the population here" (with its tooltip)
-- [ ] "Send selection to ▸" submenu (FCS / TCSPC / PDA / PCH targets discovered over ChiSurf RPC)
+- [x] "Copy 2D Histogram (CSV)" to the clipboard (tab separated, as Qt; `emtk.clipboard`: host hook, `navigator.clipboard` in the browser, pbcopy/clip/xclip on the desktop)
+- [x] "Copy 1D Histograms (CSV)" to the clipboard
+- [~] "Send to Napari": opens napari in its own process on the desktop. When napari is missing the row is disabled and says "napari is not installed" (no installer prompt); in the browser it says "not in the browser"
+- [~] "Fit gate to the population here" (with its tooltip): the menu row has no tooltip (emtk menus have none); the result is reported on the status line
+- [x] "Send selection to ▸" submenu (FCS / TCSPC / PDA / PCH targets discovered over ChiSurf RPC; disabled with the reason when there is no connection)
 
 ## pick_population — Fit gate to the population here
 
-- [ ] Right-click seeds a local 2-D Gaussian fit around the cursor; the fit re-centres on the population (Qt: broken, the click is mapped to bin indices and then checked against data ranges, so it is always refused as "outside the plotted range")
-- [ ] The fitted ellipse is added as an elliptical gate (type G2D) in the gate table and drawn on the map
+- [x] Right-click seeds a local 2-D Gaussian fit around the cursor; the fit re-centres on the population. Fixed, not copied: the click is taken in data units, and the population is found in display-scaled units (`core/population_pick.py`: climb to the local density maximum, grow downhill to 25 % of the peak, correct the covariance for the cut). The Qt model half used a raw-unit radius that cut a sliver (105 of 12237 bursts kept); the emtk pick keeps the FRET population (3976 at the scenario's click, 3819 after the scenario's second pick at (3.2, 0.35))
+- [x] The fitted ellipse is added as an elliptical gate (type G2D, 2 σ) in the gate table and drawn on the map (every enabled G2D gate is outlined)
+- [~] The "refused" shot shows the working pick (the gate fitted at the clicked population) instead of Qt's refusal
 
 ## z_axis_dynamic — z axis panel: dynamic z-selection
 
-- [ ] "dynamic z-selection" check enables the z axis (tooltip "Gate the plots by the z range below…")
-- [ ] z parameter combo, 1-D bins, Normalized / Log / Auto-scale checks, "Set"
-- [ ] "z range" min / max fields
-- [ ] Dynamic-selection check (tooltip "When checked, 2D and 1D histograms (except Z) will only display data selected by region selector")
-- [ ] "select" button (turn the range into a gate) and "Auto" (auto-range; the region becomes mean ± 2 sd)
-- [ ] z marginal histogram (magenta) with a draggable range region; dragging it re-gates the plots live while dynamic selection is on
+- [x] "dynamic z-selection" check enables the z axis
+- [x] z parameter combo, 1-D bins, Normalized / Log / Auto-scale checks, "Set"
+- [x] "z range" min / max fields
+- [x] Dynamic-selection check
+- [x] "select" button (turn the range into a gate) and "Auto"
+- [x] z marginal histogram with a draggable range (two drag lines); dragging it re-gates the plots live while dynamic selection is on (1725 / 12237, as Qt). Measured: a recompute with a z gate, an interval pair and a G2D gate takes ~4 ms at 1e5 rows and ~15–20 ms at 1e6, once per frame however many drags arrived (no timer)
 
 ## z_add_selection — z range → gate ('select')
 
-- [ ] "select" adds the current z range as a range gate on the z parameter
-- [ ] During playback gating the current slice is added as a gate too
+- [x] "select" adds the current z range as a range gate on the z parameter (1725 / 12237, as Qt)
+- [ ] During playback gating the current slice is added as a gate too (playback group)
 
 ## draw_mask — Draw Mask panel: paint and apply
 
-- [ ] "Enable drawing" check (tooltip "Enable/disable drawing on 2D plot"); the rubber-band gate is off while drawing
-- [ ] Draw / Erase radio buttons
-- [ ] "Cat:" category spin box, 1..255 ("Category/class ID for drawing (1-255)")
-- [ ] "Brush:" spin box, 1..50 px ("Brush radius in pixels")
-- [ ] Painted mask overlay on the 2-D map, one colour per category (Qt: broken, strokes never register because `PGImageWidget.invTransform` raises NameError `_QWT_X_BOTTOM`; the port must make painting work)
-- [ ] "Load Mask" (integer TIFF) and "Save Mask" (integer TIFF)
-- [ ] "Clear" (clear the mask)
-- [ ] "Apply" turns the mask into a mask gate in the gate table
+- [x] "Enable drawing" check; the rubber-band gate is off while drawing
+- [x] Draw / Erase radio buttons
+- [x] "Cat:" category spin box, 1..255
+- [x] "Brush:" spin box, 1..50 px (radius on screen, the Qt kernel)
+- [x] Painted mask overlay on the 2-D map, one colour per category. Fixed, not copied: strokes register (`core/mask_paint.py`, dabs along each drag segment); the "painted" shot shows the X stroke
+- [x] "Load Mask" (integer TIFF) and "Save Mask" (integer TIFF), through emtk's file dialog
+- [x] "Clear" (clear the mask)
+- [x] "Apply" turns the painted category into a mask gate in the gate table ("Bitmap 1 (Tau (green), Proximity ratio)", 578 bursts kept)
+- [x] Changing bins or axes clears the mask and stops drawing (Qt behaviour)
 
 ## playback — Playback panel (window mode)
 
