@@ -1,0 +1,13 @@
+{
+  "title": "Merge",
+  "description": "Asked when data is already loaded and another file is opened: replace the table, or merge the new one into it.",
+  "sections": [
+    {"type": "info", "source": "prompt"},
+    {"type": "choice", "attr": "choice", "style": "radio_list", "options_source": "choice_options",
+     "description": "Replace: the new table replaces the one on screen. Columns: its columns are added beside these (the rows must match). Rows: its rows are appended under these, for the columns both have."},
+    {"type": "button_row", "buttons": [
+      {"label": "OK", "action": "ok"},
+      {"label": "Cancel", "action": "cancel", "description": "Cancel the import"}
+    ]}
+  ]
+}

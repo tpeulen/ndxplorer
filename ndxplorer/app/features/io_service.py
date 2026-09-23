@@ -64,6 +64,7 @@ class Request:
     kind: str
     multiple: bool = False
     box: Optional[tuple] = field(default=None, repr=False)
+    window: Any = field(default=None, repr=False)
 
 
 class FileService:
@@ -72,8 +73,8 @@ class FileService:
     Parameters
     ----------
     working_path : callable, optional
-        ``() -> str``: where a dialog starts (the window's working path). The
-        home folder when it returns nothing.
+        ``() -> str``: where a dialog starts (the window's working path); see
+        :meth:`start_directory` when it returns nothing.
     report : callable, optional
         ``report(title, text)``: how a failure is shown (the window's message
         box). Logged otherwise.
@@ -103,8 +104,9 @@ class FileService:
     def start_directory(self) -> str:
         """Where a dialog opens: the working path, else the user's files.
 
-        In a page that is the mounted folder, else the dropped files, else
-        ``/`` -- a working path only counts when it is still there.
+        On a desktop that is the current folder (where the Qt window's dialogs
+        open too); in a page the mounted folder, else the dropped files, else
+        ``/``. A working path only counts when it is still there.
         """
         path = str(self.working_path() or "")
         if path and os.path.isdir(path):
@@ -113,7 +115,7 @@ class FileService:
             from emtk.web.page import user_files_dir
 
             return user_files_dir("/")
-        return str(pathlib.Path.home())
+        return os.getcwd()
 
     def _ask(self, kind: str, title: str, filters: Filters, callback, multiple=False,
              filename: str = "", action: Optional[str] = None) -> Request:
@@ -266,18 +268,16 @@ class FileService:
         request = self.current
         if request is None:
             return False
-        import emtk
+        from emtk.dialog_window import DialogWindow
 
-        x, y, w, h = box
-        dw, dh = min(720.0, w - 40.0), min(460.0, h - 60.0)
-        request.box = (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
-        dialog = request.dialog
-        emtk.begin(f"{dialog.title}##io-dialog", request.box)
-        emtk.text(dialog.title)
-        emtk.separator()
-        result = dialog.draw()
-        emtk.end()
-        if result is False:
+        if request.window is None:
+            request.window = DialogWindow(request.dialog.title, size=(720.0, 460.0),
+                                          key=f"io-{id(request)}")
+        pressed = request.window.begin(box)
+        result = request.dialog.draw()
+        request.window.end()
+        request.box = request.window.box
+        if result is False or pressed == "close":
             self.cancel()
         elif result:
             self.answer(result)

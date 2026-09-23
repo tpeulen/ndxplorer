@@ -1,0 +1,11 @@
+{
+  "title": "Progress",
+  "description": "A load or a save running in the background.",
+  "sections": [
+    {"type": "info", "source": "message"},
+    {"type": "info", "source": "detail"},
+    {"type": "button_row", "buttons": [
+      {"label": "Cancel", "action": "cancel", "description": "Stop; what is finished stays"}
+    ]}
+  ]
+}

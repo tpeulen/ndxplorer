@@ -1,0 +1,13 @@
+{
+  "title": "Process Burst IDs",
+  "description": "Asked after the burst-ID (.bst) files were written: what to do with them.",
+  "sections": [
+    {"type": "info", "text": "Choose what to do with the saved Burst IDs:"},
+    {"type": "toggle", "attr": "microtime_histogram", "label": "Compute microtime histogram"},
+    {"type": "toggle", "attr": "correlate", "label": "Open FCS Correlator Wizard to correlate BST files"},
+    {"type": "button_row", "buttons": [
+      {"label": "OK", "action": "ok"},
+      {"label": "Cancel", "action": "cancel"}
+    ]}
+  ]
+}
