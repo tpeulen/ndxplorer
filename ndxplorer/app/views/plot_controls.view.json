@@ -436,6 +436,7 @@
       "editable": true,
       "edited_call": "edit_gate",
       "delete_call": "delete_gate",
+      "activated_call": "delete_gate",
       "selected_call": "select_gate",
       "row_key": "row",
       "expand": true,
