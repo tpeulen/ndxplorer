@@ -4,8 +4,8 @@ A window manager tiles the window (Magnet, macOS tiling): half the screen,
 two thirds, whatever it had. At each size every control of the Plot
 controls, the path row and the display corner must lie inside its window,
 every button must show its label whole, and the axis combo boxes must show
-at least a dozen characters. Text is measured at the native window's size
-(:data:`ndxplorer.app.capture.NATIVE_FONT_SCALE`).
+at least a dozen characters. The offscreen painter draws the atlas 1:1, as
+the native window does, so its text widths are the window's.
 """
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ def data_path():
 
 
 def _replay(size, path, monkeypatch):
-    from ndxplorer.app.capture import NATIVE_FONT_SCALE, Replay
+    from ndxplorer.app.capture import Replay
 
-    replay = Replay({"id": "sizes"}, {}, size, font_scale=NATIVE_FONT_SCALE)
+    replay = Replay({"id": "sizes"}, {}, size)
     assert replay.app.open_path(path)
     replay.settle(4)
     return replay
@@ -42,10 +42,7 @@ def _replay(size, path, monkeypatch):
 def _text_width(text: str) -> float:
     from emtk.pil_painter import PilPainter
 
-    from ndxplorer.app.capture import NATIVE_FONT_SCALE
-
     painter = PilPainter(1, 1)
-    painter.set_font_scale(NATIVE_FONT_SCALE)
     return painter.text_width(text)
 
 

@@ -36,10 +36,6 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 SCENARIOS = REPO / "tools" / "parity" / "scenarios.json"
 DEFAULT_OUT = REPO / "parity" / "emtk"
 WINDOW = (1400, 900)
-#: The native window's text size over the atlas' baked one
-#: (:class:`emtk.app.ControlSurface` draws 9 pt from an 8 pt atlas): a
-#: :class:`Replay` made with it lays text out as wide as the real window does.
-NATIVE_FONT_SCALE = 9.0 / 8.0
 
 
 class Unsupported(Exception):
@@ -100,19 +96,15 @@ class Replay:
         The whole file (datasets and setups).
     size : tuple of int
         Window size.
-    font_scale : float
-        Text size over the atlas'; :data:`NATIVE_FONT_SCALE` measures text as
-        the native window does. 1 (the parity captures) by default.
     """
 
     def __init__(self, scenario: dict, catalogue: dict, size=WINDOW,
-                 layout_store=None, font_scale: float = 1.0) -> None:
+                 layout_store=None) -> None:
         from .frame import NdxApp
 
         self.scenario = scenario
         self.catalogue = catalogue
         self.size = size
-        self.font_scale = float(font_scale)
         # A window layout is kept only when asked for: capture_scenario keeps
         # it as the shipped app does, in the settings folder of its scratch
         # $HOME. A Replay made anywhere else must never read or write the
@@ -130,8 +122,6 @@ class Replay:
 
         w, h = self.size
         painter = PilPainter(w, h, background=theme.WINDOW_BG)
-        if self.font_scale != 1.0:
-            painter.set_font_scale(self.font_scale)
         self.app.draw(painter, 0.0, 0.0, float(w), float(h))
         self.frame = painter.frame
         return self.frame
