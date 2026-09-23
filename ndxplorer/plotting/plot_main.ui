@@ -581,7 +581,6 @@
     </property>
     <addaction name="actionHelp"/>
     <addaction name="separator"/>
-    <addaction name="actionFix_Report_Tool"/>
     <addaction name="actionAbout"/>
     <addaction name="actionUpdate"/>
    </widget>
@@ -1005,11 +1004,6 @@
   <action name="actionMake_Report">
    <property name="text">
     <string>Make Report</string>
-   </property>
-  </action>
-  <action name="actionFix_Report_Tool">
-   <property name="text">
-    <string>Fix Report Tool</string>
    </property>
   </action>
   <action name="actionFit_Gaussians">

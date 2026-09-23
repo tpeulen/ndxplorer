@@ -9,8 +9,8 @@
    "description": "Step through the data along one of its columns.",
    "sections": [
     {
-     "type": "info",
-     "text": "Playback is not ported to the emtk app yet."
+     "type": "custom",
+     "key": "playback"
     }
    ]
   },
@@ -347,8 +347,8 @@
    "description": "Paint a region on the 2-D plot and apply it as a gate.",
    "sections": [
     {
-     "type": "info",
-     "text": "Mask drawing is not ported to the emtk app yet."
+     "type": "custom",
+     "key": "draw_mask"
     }
    ]
   },

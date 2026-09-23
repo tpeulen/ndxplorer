@@ -63,7 +63,6 @@ MENUS: List[tuple] = [
     ("Help", [
         {"label": "Help", "action": "help"},
         None,
-        {"label": "Fix Report Tool", "action": "fix_report_tool"},
         {"label": "About", "action": "about"},
         {"label": "Update", "action": "update_app"},
     ]),

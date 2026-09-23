@@ -402,8 +402,6 @@ class NdxApp:
             name, (rx, ry, rw, rh), labels, current = request
             items = [MenuItem(text, checked=(index == current)) for index, text in enumerate(labels)]
             popup = Popup(items)
-            popup.set_viewport(self.box[0] + self.box[2], self.box[1] + self.box[3]) \
-                if hasattr(popup, "set_viewport") else None
             popup.open_at(rx, ry + rh)
             self.popup = (popup, items, form, name)
 
@@ -416,10 +414,13 @@ class NdxApp:
         if self.popup is not None:
             popup, items, form, name = self.popup
             result = popup.press(px, py, *self.box)
-            if result.item is not None:
-                form.dropdown_result[name] = items.index(result.item)
             if not popup.open:
                 self.popup = None
+            if result.item is not None:
+                if callable(name):                      # a menu from open_menu
+                    name(result.item)
+                else:
+                    form.dropdown_result[name] = items.index(result.item)
             return True
         result = self.menubar.press(px, py, *self._menu_box)
         if result.item is not None:
@@ -428,6 +429,17 @@ class NdxApp:
             self.run_action(action)
             return True
         return bool(result.consumed)
+
+    def open_menu(self, entries, x: float, y: float, on_choose, title: str = "") -> None:
+        """A context menu at ``(x, y)``: *entries* are emtk menu entries
+        (``MenuItem``, ``Menu`` for a submenu, ``None`` for a rule); choosing
+        an item -- from a submenu too -- calls ``on_choose(item)``. A press
+        anywhere else (either button) closes it."""
+        from emtk.widgets.menus import Popup
+
+        popup = Popup(list(entries), title=title)
+        popup.open_at(float(x), float(y))
+        self.popup = (popup, None, None, on_choose)
 
     def run_action(self, action: str) -> bool:
         """Run a menu or button action by name; ``False`` when unavailable."""
@@ -440,7 +452,7 @@ class NdxApp:
         return False
 
     def pointer_press(self, x, y, button, modifiers=0, clicks=1) -> None:
-        if button == 1 and self._press_overlays(float(x), float(y)):
+        if (button == 1 or self.popup is not None) and self._press_overlays(float(x), float(y)):
             return
         index = {1: 0, 2: 1, 4: 2}.get(int(button), -1)
         io = self.io
@@ -495,7 +507,9 @@ class NdxApp:
             self.open_path(str(paths[0]))
 
     def animating(self) -> bool:
-        return False
+        """Whether the host should keep drawing without input: a feature is
+        playing back or streaming results."""
+        return any(feature.animating() for feature in self.features)
 
 
 def make_app() -> NdxApp:

@@ -607,7 +607,6 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Report tool
         self.actionMake_Report.triggered.connect(self.onShowReportWizard)
-        self.actionFix_Report_Tool.triggered.connect(self.onShowFixReportTool)
 
         # Enable drag & drop on working path line edit
         try:
@@ -1424,16 +1423,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Report Tool Error", str(e))
             
-    def onShowFixReportTool(self):
-        """Open the Fix Report Tool dialog."""
-        logging.debug(f"onShowFixReportTool")
-        try:
-            from ..fix_report_tool import FixReportTool
-            dlg = FixReportTool(parent=self)
-            dlg.exec_()
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Fix Report Tool Error", str(e))
-
     def on_take_screenshot(self):
         screenshot_helpers.take_screenshot(self)
 

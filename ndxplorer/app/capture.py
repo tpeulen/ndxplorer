@@ -243,13 +243,20 @@ class Replay:
             raise Unsupported(f"op {op!r}")
         handler(step)
 
+    def actions(self) -> Dict[str, str]:
+        """Qt action -> app action: the core's and every feature's."""
+        merged = dict(ACTIONS)
+        for feature in self.app.features:
+            merged.update(feature.capture_actions())
+        return merged
+
     def op_open(self, step: dict) -> None:
         if step.get("expect_error"):
             ok = self.app.open_path(self.dataset(step["path"]))
             if ok:
                 raise Unsupported("expected a load error, the file opened")
         else:
-            if step.get("action") and step["action"] not in ACTIONS:
+            if step.get("action") and step["action"] not in self.actions():
                 raise Unsupported(f"action {step['action']!r}")
             if not self.app.open_path(self.dataset(step["path"])):
                 raise Unsupported(f"could not open {step['path']}: {self.app.model.error}")
@@ -300,7 +307,7 @@ class Replay:
         self.settle()
 
     def op_trigger(self, step: dict) -> None:
-        action = ACTIONS.get(step.get("action", ""))
+        action = self.actions().get(step.get("action", ""))
         if action is None or not self.app.run_action(action):
             raise Unsupported(f"action {step.get('action')!r}")
         self.settle()

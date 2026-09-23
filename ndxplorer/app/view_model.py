@@ -25,7 +25,7 @@ NOT_PORTED = frozenset({
     "save_histograms", "make_report", "print_window", "performance_settings", "load_settings",
     "save_axis_settings", "save_constants", "save_equations", "set_default_axis",
     "toggle_parameters", "toggle_overlays", "toggle_fit_gaussians", "toggle_equations", "umap",
-    "find_projections", "find_z_projections", "axis_control", "help", "fix_report_tool",
+    "find_projections", "find_z_projections", "axis_control", "help",
     "about", "update_app", "z_bins_2d",
 })
 

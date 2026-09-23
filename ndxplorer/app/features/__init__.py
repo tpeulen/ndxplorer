@@ -61,6 +61,13 @@ The hooks (all optional; the base class does nothing):
 ``capture_ops()``
     ``{op name: fn(replay, step)}`` -- scenario steps the capture replay
     (:mod:`ndxplorer.app.capture`) should understand, beyond the core's.
+``capture_actions()``
+    ``{Qt action name: app action}`` -- the Qt menu actions a scenario's
+    ``trigger``/``open`` steps name (``actionLoad_settings``), merged into
+    :data:`ndxplorer.app.capture.ACTIONS`.
+``animating()``
+    ``True`` while the feature needs frames without input (playback, a
+    ranking that streams results); the host keeps drawing.
 ``capture_targets()``
     ``{target: fn(replay) -> (x, y, w, h)}`` -- ``capture`` targets it can
     photograph (``"dialog:QFileDialog"``, ``"widget:pc.widgetSelection"``).
@@ -143,6 +150,12 @@ class Feature:
 
     def capture_targets(self) -> Dict[str, Callable]:
         return {}
+
+    def capture_actions(self) -> Dict[str, str]:
+        return {}
+
+    def animating(self) -> bool:
+        return False
 
 
 def load_features(app, names: Optional[List[str]] = None) -> List[Feature]:

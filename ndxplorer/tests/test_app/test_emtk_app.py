@@ -296,7 +296,7 @@ def test_the_menu_bar_mirrors_the_qt_menus(app):
     labels = [item["label"] for _path, item in iter_entries()]
     for label in ("Import Text files (*.csv,*.dat)", "Analysis-Folder", "Burst IDs",
                   "Performance Settings", "Axis settings", "UMAP", "Axis Control",
-                  "Fix Report Tool", "About"):
+                  "About"):
         assert label in labels
     # without data, only opening something (and leaving) is enabled
     draw(app)
@@ -405,3 +405,31 @@ def test_a_feature_registers_actions_menus_tabs_and_mask_terms(monkeypatch, sour
         assert "tab" in calls
     finally:
         app.close()
+
+
+def test_open_menu_calls_back_with_the_chosen_item_even_from_a_submenu(app):
+    from emtk.widgets.menus import Menu, MenuItem
+
+    chosen = []
+    inner = MenuItem("Inner")
+    app.open_menu([MenuItem("First"), None, Menu("More", [inner])], 300.0, 200.0,
+                  chosen.append)
+    draw(app)
+    popup = app.popup[0]
+    rows = {entry.label: rect for entry, rect in popup._rows if entry is not None}
+    click(app, *centre(rows["More"]))
+    draw(app)
+    sub = next(e for e, _r in popup._rows if isinstance(e, Menu))
+    inner_rect = next(rect for entry, rect in sub._rows if entry is inner)
+    click(app, *centre(inner_rect))
+    assert chosen == [inner] and app.popup is None
+
+
+def test_a_right_click_elsewhere_closes_a_menu(app):
+    from emtk.widgets.menus import MenuItem
+
+    app.open_menu([MenuItem("First")], 300.0, 200.0, lambda item: None)
+    draw(app)
+    app.pointer_press(900.0, 700.0, 2)
+    app.pointer_release(900.0, 700.0, 2)
+    assert app.popup is None
