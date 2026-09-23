@@ -498,3 +498,27 @@ def test_the_axis_titles_are_painted_inside_the_frame(app, source):
     app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
     order = [c[6] for c in painter.calls if c[0] == "text"]
     assert order.index("E") < order.index("Data Load Error")
+
+
+def test_every_file_the_app_reads_is_package_data():
+    """A wheel ships only what pyproject's package-data names; a view spec
+    missing from it is an app that starts from a checkout and not from an
+    install (or a browser)."""
+    import fnmatch
+
+    try:
+        import tomllib
+    except ImportError:                                   # Python < 3.11
+        tomllib = pytest.importorskip("tomli")
+    config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = config["tool"]["setuptools"]["package-data"]
+    app = REPO / "ndxplorer" / "app"
+    patterns = package_data.get("ndxplorer.app", [])
+    shipped = []
+    for path in app.rglob("*"):
+        if path.is_dir() or "__pycache__" in path.parts or path.suffix in (".py", ".pyc"):
+            continue
+        relative = path.relative_to(app).as_posix()
+        assert any(fnmatch.fnmatch(relative, pattern) for pattern in patterns), relative
+        shipped.append(relative)
+    assert "views/plot_controls.view.json" in shipped
