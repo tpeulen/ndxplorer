@@ -7,3 +7,8 @@ __pycache__
 .idea/ndxplorer.iml
 .idea/vcs.xml
 .idea/inspectionProfiles/profiles_settings.xml
+
+# Parity harness (tools/parity): generated output. The Qt baseline is ~10 MB of
+# PNGs, so it is regenerated (capture_qt.py --app-root <git archive 44da1f2>)
+# rather than committed.
+/parity/
