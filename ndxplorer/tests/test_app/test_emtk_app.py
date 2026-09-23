@@ -389,7 +389,7 @@ def test_a_step_the_app_cannot_do_is_reported_not_faked(tmp_path):
 # --------------------------------------------------------------------- features ---
 
 
-def test_a_feature_registers_actions_menus_tabs_and_mask_terms(monkeypatch, source):
+def test_a_feature_registers_actions_menus_windows_and_mask_terms(monkeypatch, source):
     """The seam ndxplorer.app.features: a module with create(app) plugs in."""
     import types
 
@@ -407,8 +407,8 @@ def test_a_feature_registers_actions_menus_tabs_and_mask_terms(monkeypatch, sour
         def menu_entries(self):
             return [(("View", "Extra"), {"label": "Fake entry", "action": "fake_action"})]
 
-        def tabs(self):
-            return [("left", "Parameters", lambda box: calls.append("tab"))]
+        def windows(self):
+            return [("left", "Parameters", lambda box: calls.append("window"))]
 
         def mask_terms(self):
             return {"cluster_label": None}
@@ -435,9 +435,10 @@ def test_a_feature_registers_actions_menus_tabs_and_mask_terms(monkeypatch, sour
         assert "Extra" in labels
         draw(app)
         assert "map" in calls and "xmarginal" in calls
-        app.left_tab = "Parameters"
+        assert app.docks.region_of("Parameters") == "left"
+        app.docks.focus("Parameters")
         draw(app)
-        assert "tab" in calls
+        assert "window" in calls
     finally:
         app.close()
 
@@ -565,3 +566,28 @@ def test_the_window_title_names_the_opened_data(app):
     assert app.window_title == "ndX"
     assert app.model.open(str(MFD))
     assert app.window_title == "ndX - burstwise_All 0.1500#30"
+
+
+def test_axis_control_switches_the_y_top_and_z_titles(app, source):
+    """The y marginal's counts title on top, the z plot's bottom and left."""
+    from emtk.testing import RecordingPainter
+
+    from ndxplorer.plotting.axis_display import AxisDisplay
+
+    app.model.set_source(source)
+    app.model.set_parameter("z", "Tau")
+    app.forms["plot_controls"].folds["z axis"] = True
+    display = AxisDisplay()
+    display.axes["ymarginal"]["top"] = True          # the counts axis shown on top
+    app.model.axis_display = display
+    painter = RecordingPainter()
+    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    painter = RecordingPainter()
+    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    assert painter.strings.count("counts") == 2 and "Tau" in painter.strings
+    display.label_settings["enable_all_labels"] = False
+    display.label_settings["axis_labels"] = {"y_plot": {"top": False, "right": True},
+                                             "z_plot": {"bottom": False, "left": False}}
+    painter = RecordingPainter()
+    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    assert "counts" not in painter.strings

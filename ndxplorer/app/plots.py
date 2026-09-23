@@ -34,6 +34,8 @@ __all__ = ["PlotArea", "step_outline"]
 DRAG_THRESHOLD = 3.0
 #: Height of the red axis title above the x marginal / width beside the y one.
 TITLE_BAND = 22.0
+#: The title of a marginal's counts axis.
+COUNTS_TITLE = "counts"
 
 
 def step_outline(edges, counts) -> tuple:
@@ -242,7 +244,9 @@ class PlotArea:
         hist = self.model.histograms
         counts = hist.y[1] if hist is not None else np.zeros(1)
         top = float(np.nanmax(counts)) if np.size(counts) and np.nanmax(counts) > 0 else 1.0
-        implot.setup_axis(implot.AXIS_X1, None,
+        # The counts axis's title on top, when Axis Control shows it.
+        implot.setup_axis(implot.AXIS_X1,
+                          COUNTS_TITLE if self._title_shown("ymarginal", "top") else None,
                           self._axis_flags(*self._decorations("ymarginal", True)))
         implot.setup_axis_limits(implot.AXIS_X1, 0.0, top * 1.05, implot.COND_ALWAYS)
         self._setup_y("y", *self._decorations("ymarginal", False))
@@ -433,12 +437,14 @@ class PlotArea:
         hist = model.histograms
         counts = hist.z[1] if hist is not None and hist.z is not None else np.zeros(1)
         top = float(np.nanmax(counts)) if np.size(counts) and np.nanmax(counts) > 0 else 1.0
-        implot.setup_axis(implot.AXIS_X1, None,
+        implot.setup_axis(implot.AXIS_X1,
+                          model.z.name if self._title_shown("zmarginal", "bottom") else None,
                           self._axis_flags(*self._decorations("zmarginal", True)))
         if log:
             implot.setup_axis_scale(implot.AXIS_X1, implot.SCALE_LOG10)
         implot.setup_axis_limits(implot.AXIS_X1, lo, hi, implot.COND_ALWAYS)
-        implot.setup_axis(implot.AXIS_Y1, None,
+        implot.setup_axis(implot.AXIS_Y1,
+                          COUNTS_TITLE if self._title_shown("zmarginal", "left") else None,
                           self._axis_flags(*self._decorations("zmarginal", False)))
         implot.setup_axis_limits(implot.AXIS_Y1, 0.0, top * 1.1, implot.COND_ALWAYS)
         if model.index_of(model.z.name) >= 0:
