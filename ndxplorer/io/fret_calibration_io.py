@@ -81,7 +81,8 @@ def container_of(ndx) -> str:
     return str(container or "")
 
 
-def payload(constants: dict, *, result: dict | None = None, note: str = "") -> bytes:
+def payload(constants: dict, *, result: dict | None = None, note: str = "",
+            vectors: dict | None = None) -> bytes:
     """The bytes written by either route (and by a window that saves them itself).
 
     Parameters
@@ -92,6 +93,11 @@ def payload(constants: dict, *, result: dict | None = None, note: str = "") -> b
         The calibration's result, for the report and uncertainties.
     note : str, optional
         A line saying what this calibration is of.
+    vectors : dict, optional
+        The window's vector constants, ``{name: {"populations": [...], "values":
+        [...], "column", "probabilities", "uncertainties"}}``. Stored as lists,
+        so population order and the per-burst axis survive the key-sorted JSON
+        that the flat ``"gamma[FRET 1]"`` constants alone did not.
 
     Returns
     -------
@@ -112,6 +118,9 @@ def payload(constants: dict, *, result: dict | None = None, note: str = "") -> b
     }
     if note:
         doc["note"] = str(note)
+    vectors = vectors if vectors is not None else result.get("vectors")
+    if vectors:
+        doc["vectors"] = json.loads(json.dumps(vectors, default=float))
     for key in (
         "factors",
         "uncertainties",
@@ -193,6 +202,7 @@ def save_calibration(
     result: dict | None = None,
     note: str = "",
     embed: bool = True,
+    vectors: dict | None = None,
 ) -> dict:
     """Write a calibration to the measurement container, or to a file.
 
@@ -210,6 +220,8 @@ def save_calibration(
         A line from the user saying what this calibration is of.
     embed : bool, optional
         Prefer the container (default). ``False`` forces the file route.
+    vectors : dict, optional
+        The window's vector constants (see :func:`payload`).
 
     Returns
     -------
@@ -218,7 +230,7 @@ def save_calibration(
         ``where`` is ``"container"`` or ``"file"`` — the caller should say which
         happened rather than claim "saved".
     """
-    data = payload(constants, result=result, note=note)
+    data = payload(constants, result=result, note=note, vectors=vectors)
 
     if path is None and embed:
         container = container_of(ndx)
@@ -339,6 +351,7 @@ def read_payload(data, *, target: str = "") -> dict:
         "saved_utc": doc.get("saved_utc", ""),
         "note": doc.get("note", ""),
         "report": doc.get("report", ""),
+        "vectors": doc.get("vectors") or {},
         "document": doc,
     }
 
@@ -378,5 +391,6 @@ def load_calibration(*, ndx=None, path: str | None = None, uid: int | None = Non
         "saved_utc": doc.get("saved_utc", ""),
         "note": doc.get("note", ""),
         "report": doc.get("report", ""),
+        "vectors": doc.get("vectors") or {},
         "document": doc,
     }

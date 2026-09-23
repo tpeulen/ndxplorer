@@ -426,6 +426,36 @@ class AccurateFretFeature(Feature):
             return ""
         return path
 
+    def write_vector(self, name: str, vector: dict) -> None:
+        """Make constant *name* a per-population vector (species-specific factor).
+
+        *vector* holds the arguments of the constants' ``set_vector``:
+        ``values``, ``populations`` and optionally ``uncertainties``,
+        ``default`` (the global value), ``column`` (per-burst population label),
+        ``codes`` (``{population: value in that column}``) and
+        ``probabilities`` (``{population: probability column}``).
+        """
+        constants = self.app.model.manager.constants
+        set_vector = getattr(constants, "set_vector", None)
+        if not callable(set_vector):
+            return
+        set_vector(name, list(vector["values"]), [str(p) for p in vector["populations"]],
+                   uncertainties=vector.get("uncertainties"), default=vector.get("default"),
+                   column=vector.get("column"), probabilities=vector.get("probabilities"),
+                   codes=vector.get("codes"))
+
+    def vectors(self) -> dict:
+        """The window's vector constants as saved (order, axis, uncertainties)."""
+        group = getattr(self.app.model.manager.constants, "group", None)
+        if group is None:
+            return {}
+        from ...core.constants_group import vector_elements, vectors_state
+
+        state = vectors_state(group)
+        for name, entry in state.items():
+            entry["values"] = [float(p.value) for _, p in vector_elements(group, name)]
+        return state
+
     def write_constants(self, values: Dict[str, float]) -> None:
         """Write *values* into the window's constants and re-derive what they feed.
 
@@ -581,7 +611,8 @@ class AccurateFretFeature(Feature):
             self.message("Accurate FRET", str(result.get("error") or "calibration failed"))
             return
         model = self.app.model
-        apply_result(result, write_constants=self.write_constants, data_source=model.source)
+        apply_result(result, write_constants=self.write_constants, data_source=model.source,
+                     write_vector=self.write_vector)
         model.invalidate()
         for feature in self.app.features:
             if feature is not self:
@@ -592,7 +623,8 @@ class AccurateFretFeature(Feature):
         if options is not None and options.save_requested() and self.container():
             from ...io.fret_calibration_io import save_calibration
 
-            saved = save_calibration(self.constants, ndx=self, result=result, embed=True)
+            saved = save_calibration(self.constants, ndx=self, result=result, embed=True,
+                                     vectors=self.vectors())
         self.window = ReportWindow(self, "FRET calibration — applied", report_text(result),
                                    result=result, saved=saved)
 
@@ -616,7 +648,7 @@ class AccurateFretFeature(Feature):
         def to_file() -> None:
             container = container_of_window()
             start = (pathlib.Path(container).stem if container else "calibration") + SUFFIX
-            data = payload(constants, result=result)
+            data = payload(constants, result=result, vectors=self.vectors())
             service = self.app.io_service
             if service.browser:
                 service.save_bytes(start, data, "application/json")
@@ -625,7 +657,7 @@ class AccurateFretFeature(Feature):
 
             def write(path: str) -> None:
                 out = save_calibration(constants, ndx=self, path=path, result=result,
-                                       embed=False)
+                                       embed=False, vectors=self.vectors())
                 say(f"Saved to {out.get('target', '')}" if out.get("ok")
                     else f"Could not save: {out.get('error')}")
 
@@ -643,7 +675,8 @@ class AccurateFretFeature(Feature):
 
         def answered(answer: str) -> None:
             if answer == "yes":
-                out = save_calibration(constants, ndx=self, result=result, embed=True)
+                out = save_calibration(constants, ndx=self, result=result, embed=True,
+                                       vectors=self.vectors())
                 say(f"Stored in {out.get('target', '')}" if out.get("ok")
                     else f"Could not store: {out.get('error')}")
             elif answer == "no":
@@ -701,6 +734,9 @@ class AccurateFretFeature(Feature):
             if answer != "yes":
                 return
             self.write_constants(values)
+            for name, vector in dict(loaded.get("vectors") or {}).items():
+                if vector.get("values") and vector.get("populations"):
+                    self.write_vector(name, vector)
             if loaded.get("report"):
                 document = dict(loaded.get("document") or {})
                 result = {k: document[k] for k in ("factors", "uncertainties", "held",

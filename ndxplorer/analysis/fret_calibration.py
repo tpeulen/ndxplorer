@@ -266,12 +266,18 @@ def burst_columns(data_source) -> Dict[str, np.ndarray]:
 
 
 def apply_result(result: Mapping[str, Any], *, write_constants: Callable[[dict], None],
-                 data_source=None) -> List[str]:
-    """Write a successful result into a window: constants, then the new columns.
+                 data_source=None,
+                 write_vector: Optional[Callable[[str, dict], None]] = None) -> List[str]:
+    """Write a successful result into a window: new columns, constants, vectors.
 
     The window says how its constants are written (*write_constants*: the Qt
     window's parameter table, the emtk app's constants mapping); the columns
-    go into its :class:`~ndxplorer.core.data_source.DataSource`.
+    go into its :class:`~ndxplorer.core.data_source.DataSource`. A result
+    carrying species-specific factors has ``"vectors"``: per factor name
+    ``{"values", "populations", "uncertainties", "default", "column", "codes",
+    "probabilities"}`` (the arguments of the constants' ``set_vector``), handed
+    to *write_vector* after the scalar constants, so the per-burst population
+    column and probability columns it names already exist.
 
     Returns
     -------
@@ -286,6 +292,9 @@ def apply_result(result: Mapping[str, Any], *, write_constants: Callable[[dict],
     constants = {str(k): float(v) for k, v in dict(result.get("constants") or {}).items()}
     if constants:
         write_constants(constants)
+    if write_vector is not None:
+        for name, vector in dict(result.get("vectors") or {}).items():
+            write_vector(str(name), dict(vector))
     return added
 
 
