@@ -10,7 +10,8 @@ from chisurf.gui.widgets.chitable import ChiTableDialog
 
 from ndxplorer.core.data_source import DataSource
 from ndxplorer.ui import store_editor
-from ndxplorer.ui.store_editor import StoreEditor, apply_edits, edit_source
+from ndxplorer.core.store_edits import apply_edits
+from ndxplorer.ui.store_editor import StoreEditor, edit_source
 
 
 @pytest.fixture

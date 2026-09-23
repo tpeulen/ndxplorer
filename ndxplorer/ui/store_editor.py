@@ -3,22 +3,22 @@
 A :class:`chisurf.gui.widgets.chitable.ChiTableDialog` over a
 :class:`~chisurf.gui.widgets.chitable.DataStoreSource`. The dialog edits a copy
 of the source's store; edits are staged in the table model and written into the
-copy on Apply, and :func:`apply_edits` writes the accepted copy back into the
-source column by column, so the source keeps its identity and its column order.
+copy on Apply, and :func:`ndxplorer.core.store_edits.apply_edits` writes the
+accepted copy back into the source column by column.
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
-import numpy as np
 from qtpy import QtWidgets
 
 from chisurf.gui.widgets.chitable import ChiTableDialog, DataStoreSource
 
 from ..core.data_source import DataSource
+from ..core.store_edits import apply_edits
 
-__all__ = ["StoreEditor", "apply_edits", "edit_source"]
+__all__ = ["StoreEditor", "edit_source"]
 
 
 class StoreEditor(ChiTableDialog):
@@ -44,30 +44,6 @@ class StoreEditor(ChiTableDialog):
     def edited(self) -> DataSource:
         """The edited copy; holds the accepted edits once the dialog is accepted."""
         return self._working
-
-
-def apply_edits(source: DataSource, edited: DataSource) -> List[str]:
-    """Write every column of `edited` that differs from `source` into `source`.
-
-    Columns only `edited` has are appended; columns only `source` has stay.
-
-    Returns
-    -------
-    list of str
-        The names of the columns written.
-    """
-    written: List[str] = []
-    for index, name in enumerate(edited.parameter_names):
-        new = edited.column_items(index)
-        mine = source.column_index(name)
-        if mine >= 0 and source.parameter_names[mine] == name:
-            old = source.column_items(mine)
-            if old.dtype == new.dtype and old.shape == new.shape and (
-                    np.array_equal(old, new, equal_nan=new.dtype.kind == "f")):
-                continue
-        source.set_column(name, new)
-        written.append(name)
-    return written
 
 
 def edit_source(source: DataSource, parent=None) -> Optional[List[str]]:
