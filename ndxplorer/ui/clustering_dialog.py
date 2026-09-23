@@ -24,94 +24,16 @@ just how you plot it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Tuple
+from typing import Dict
 
 from qtpy import QtCore, QtWidgets
 from qtpy.QtCore import Signal
 
 from ..logging_config import logging
 from ..ui.column_selection_dialog import ColumnSelectionDialog
-from ..utils.lazy_imports import get_hdbscan, get_kmeans, get_pca, get_umap
+from ..analysis.structure import LABELS, METHODS, METHODS_BY_KEY, PROJECTION, Method, pca_report
 from .feedback import FriendlyErrorPresenter, ProgressPane
 from .glyphs import Glyphs, label as glyph_label
-
-#: Families. Projections add coordinate columns; labellings assign each point to
-#: a group. The distinction drives which actions are offered, and nothing else.
-PROJECTION = "projection"
-LABELS = "labels"
-
-
-@dataclass(frozen=True)
-class Method:
-    """Everything the dialog needs to know about one method.
-
-    Collecting this per method is what removes the triplicated "is the backend
-    importable, offer to install it, re-check, explain the restart" block that
-    used to be pasted once per algorithm -- in two different files, having
-    already drifted apart between them.
-    """
-
-    key: str
-    title: str
-    family: str
-    #: Returns the backend, or ``None`` when it cannot be imported.
-    probe: Callable[[], object]
-    #: Distribution name to offer to install, and the module to import after.
-    package: str
-    import_name: str
-    blurb: str
-    #: Minimum columns the method needs to mean anything.
-    min_columns: int = 1
-    #: Offer installation on demand. Off for backends that ship with the app,
-    #: where a failure means something is wrong rather than something is missing.
-    installable: bool = True
-
-
-METHODS: Tuple[Method, ...] = (
-    Method(
-        key="pca",
-        title="PCA",
-        family=PROJECTION,
-        probe=get_pca,
-        package="scikit-learn",
-        import_name="sklearn",
-        blurb="Linear decomposition. Reports which parameters carry the variance.",
-        min_columns=2,
-        installable=False,
-    ),
-    Method(
-        key="umap",
-        title="UMAP",
-        family=PROJECTION,
-        probe=get_umap,
-        package="umap-learn",
-        import_name="umap",
-        blurb="Non-linear projection to 2-3 dimensions for visual inspection.",
-        min_columns=2,
-    ),
-    Method(
-        key="hdbscan",
-        title="HDBSCAN",
-        family=LABELS,
-        probe=get_hdbscan,
-        package="hdbscan",
-        import_name="hdbscan",
-        blurb="Density-based. Finds clusters of varying shape and leaves noise unlabelled.",
-    ),
-    Method(
-        key="kmeans",
-        title="K-means",
-        family=LABELS,
-        probe=get_kmeans,
-        package="scikit-learn",
-        import_name="sklearn",
-        blurb="Partitions every point into exactly k groups of similar spread.",
-        installable=False,
-    ),
-)
-
-METHODS_BY_KEY: Dict[str, Method] = {m.key: m for m in METHODS}
 
 
 class ClusteringDialog(QtWidgets.QDialog):
@@ -708,20 +630,9 @@ class ClusteringDialog(QtWidgets.QDialog):
         The ``PC_n`` columns are how you plot the answer; the loadings *are* the
         answer -- which measured parameters carry the separation.
         """
-        lines = []
-        for component in range(result.n_components):
-            share = 100.0 * float(result.explained_variance_ratio[component])
-            drivers = ", ".join(
-                f"{name} ({weight:+.2f})"
-                for name, weight in result.top_contributors(component, n=3)
-            )
-            lines.append(f"<b>PC_{component + 1}</b> — {share:.0f}% of variance: {drivers}")
-        total = 100.0 * float(result.explained_variance_ratio.sum())
-        lines.append(
-            f"<i>{result.n_samples} rows fitted"
-            + (f", {result.n_dropped} dropped as non-finite" if result.n_dropped else "")
-            + f"; {total:.0f}% of the variance retained.</i>"
-        )
+        rows, footer = pca_report(result)
+        lines = [f"<b>{head}</b> — {text}" for head, text in rows]
+        lines.append(f"<i>{footer}</i>")
         self._show_result("<br>".join(lines))
 
     def _set_running(self, running: bool) -> None:

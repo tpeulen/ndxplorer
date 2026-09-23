@@ -42,8 +42,15 @@ def get_kmeans():
         __kmeans_cls = _KMeans
         logging.debug("lazy_imports: chisurf.core.ml KMeans imported on demand")
     except Exception:
-        __kmeans_cls = None
-        logging.debug("chisurf.core.ml KMeans not available")
+        # Without ChiSurf (a browser page, a standalone install) scikit-learn's
+        # estimator takes the same keywords and exposes the same attributes.
+        try:
+            from sklearn.cluster import KMeans as _KMeans  # type: ignore
+
+            __kmeans_cls = _KMeans
+        except Exception:
+            __kmeans_cls = None
+            logging.debug("no KMeans available (neither chisurf.core.ml nor scikit-learn)")
     return __kmeans_cls
 
 
@@ -80,8 +87,15 @@ def get_hdbscan():
         __hdbscan = _HdbscanNamespace(_HDBSCAN)
         logging.debug("lazy_imports: chisurf.core.ml HDBSCAN imported on demand")
     except Exception:
-        __hdbscan = None
-        logging.debug("chisurf.core.ml HDBSCAN not available")
+        # scikit-learn >= 1.3 has HDBSCAN, and it is in Pyodide; the standalone
+        # native ``hdbscan`` package is not.
+        try:
+            from sklearn.cluster import HDBSCAN as _HDBSCAN  # type: ignore
+
+            __hdbscan = _HdbscanNamespace(_HDBSCAN)
+        except Exception:
+            __hdbscan = None
+            logging.debug("no HDBSCAN available (neither chisurf.core.ml nor scikit-learn)")
     return __hdbscan
 
 
@@ -102,8 +116,13 @@ def get_pca():
         __pca = (PCA, IncrementalPCA)
         logging.debug("lazy_imports: chisurf.core.ml PCA imported on demand")
     except Exception:
-        __pca = None
-        logging.debug("chisurf.core.ml PCA not available")
+        try:
+            from sklearn.decomposition import IncrementalPCA, PCA  # type: ignore
+
+            __pca = (PCA, IncrementalPCA)
+        except Exception:
+            __pca = None
+            logging.debug("no PCA available (neither chisurf.core.ml nor scikit-learn)")
     return __pca
 
 

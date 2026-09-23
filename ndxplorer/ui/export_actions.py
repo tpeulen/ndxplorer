@@ -214,15 +214,32 @@ def save_clustering_data(ndxplorer, folder: Optional[str] = None) -> None:
         parameters = {}
 
     logging.info("Saving clustering data to %s...", folder)
-    writer.save_clustering_data(
-        folder_name=folder,
-        data_source=ndxplorer.data_source,
-        cluster_method=dialog._cluster_method,
-        cluster_labels=ndxplorer._cluster_labels,
-        cluster_probabilities=ndxplorer._cluster_probabilities,
-        cluster_columns=dialog._cluster_columns,
-        parameters=parameters,
-    )
+    from qtpy.QtCore import QCoreApplication
+
+    from .progress_window import ProgressWindow
+
+    progress_window = ProgressWindow(title="Saving Clustering Data",
+                                     message="Saving clustering data...", max_value=3)
+    progress_window.show()
+
+    def progress(step: int, message: str) -> None:
+        progress_window.set_value(step)
+        progress_window.label.setText(message)
+        QCoreApplication.processEvents()
+
+    try:
+        writer.save_clustering_data(
+            folder_name=folder,
+            data_source=ndxplorer.data_source,
+            cluster_method=dialog._cluster_method,
+            cluster_labels=ndxplorer._cluster_labels,
+            cluster_probabilities=ndxplorer._cluster_probabilities,
+            cluster_columns=dialog._cluster_columns,
+            parameters=parameters,
+            progress=progress,
+        )
+    finally:
+        progress_window.close()
 
     # Record clustering analysis back to database if ZMQ client is active
     if getattr(ndxplorer, "zmq_client", None) is not None and getattr(ndxplorer, "processed_data_id", None) is not None:

@@ -2,8 +2,7 @@ from ..logging_config import logging
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
-# Delay imports via centralized getters
-from ..utils.lazy_imports import get_kmeans, get_hdbscan
+from .structure import column_matrix, label_points
 
 from qtpy.QtCore import QThread, Signal
 
@@ -65,253 +64,68 @@ class ClusteringManager:
         self._clustering_worker = None
 
     def perform_clustering(self, method=None, worker=None, **kwargs) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        """
-        Perform clustering on the current data using the specified method.
+        """Cluster the chosen columns (or ``data``) and return the labels.
+
+        The work is :func:`ndxplorer.analysis.structure.label_points`, the one
+        both GUIs run; this drives its checkpoints on the Qt worker, turning
+        each into a ``progress_updated`` signal and honouring ``stop()``.
 
         Args:
-            method: The clustering method to use. If None, uses the method from clustering dialog.
-            worker: The ClusteringWorker instance that called this method, used for progress updates and cancellation.
-            **kwargs: Additional parameters for the clustering method.
-                For HDBSCAN:
-                    min_samples: Minimum number of samples in a neighborhood for a point to be considered a core point.
-                    min_cluster_size: Minimum number of points for a cluster.
-                For K-means:
-                    n_clusters: Number of clusters to form.
-                For data selection:
-                    data: The data to cluster (numpy array)
-                    columns: The column names for the data
-                    mask: Mask for filtering data points
+            method: ``"hdbscan"`` or ``"kmeans"``.
+            worker: The ClusteringWorker running this, for progress and cancellation.
+            **kwargs: ``min_samples``/``min_cluster_size`` (HDBSCAN),
+                ``n_clusters`` (K-means); ``data`` (an array), or ``columns``
+                read from the data source, or ``x_values``/``y_values``/``z_values``.
 
         Returns:
-            Tuple containing:
-            - cluster_labels: Array of cluster labels for each data point
-            - cluster_probabilities: Array of cluster membership probabilities (or None for K-means)
+            ``(labels, probabilities)``, or ``(None, None)`` when nothing could
+            be clustered or it was cancelled.
         """
         if method is None:
             method = kwargs.get("method", "hdbscan")
-
-        # Library availability will be checked lazily below for each method
-
-        # Get data from kwargs or data_source
         data = kwargs.get("data", None)
         if data is None and self._data_source is not None and not self._data_source.empty:
-            # Get the data for clustering based on selected columns
             columns = kwargs.get("columns", [])
             if columns:
-                # Use selected columns
-                selected_data = []
-
-                for column in columns:
-                    values = self._data_source.column_values(column)
-                    if values is not None:
-                        selected_data.append(values)
-
-                if selected_data:
-                    data = np.column_stack(selected_data)
-
-            # If no data was collected, use x, y, z values if provided
+                data, _used = column_matrix(self._data_source, columns)
             if data is None:
                 x_values = kwargs.get("x_values", None)
                 y_values = kwargs.get("y_values", None)
                 z_values = kwargs.get("z_values", None)
-
                 if x_values is not None and y_values is not None and z_values is not None:
                     data = np.column_stack((x_values, y_values, z_values))
-
         if data is None or len(data) == 0:
             logging.error("No data available for clustering.")
             return None, None
 
-        # Report progress: 10% - Starting data preparation
-        if worker:
-            worker.progress_updated.emit(10)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled during data preparation")
-                return None, None
-
-        # Report progress: 20% - Data collected
-        if worker:
-            worker.progress_updated.emit(20)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled after data collection")
-                return None, None
-
-        # Remove any rows with NaN or Inf values
-        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
-        clean_data = data[mask]
-
-        # Report progress: 30% - Data cleaned
-        if worker:
-            worker.progress_updated.emit(30)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled after data cleaning")
-                return None, None
-
-
-        # Extract parameters for the selected method
-        if method == "hdbscan":
-            min_samples = kwargs.get("min_samples", 5)
-            min_cluster_size = kwargs.get("min_cluster_size", 5)
-
-            # Check if we have enough data points
-            if len(clean_data) < min_cluster_size:
-                logging.warning(f"Not enough data points for HDBSCAN clustering. Need at least {min_cluster_size}.")
-                return None, None
-        elif method == "kmeans":
-            n_clusters = kwargs.get("n_clusters", 2)
-
-            # Check if we have enough data points
-            if len(clean_data) < n_clusters:
-                logging.warning(f"Not enough data points for K-means clustering. Need at least {n_clusters} (one per cluster).")
-                return None, None
-
+        params = {k: kwargs[k] for k in ("min_samples", "min_cluster_size", "n_clusters")
+                  if k in kwargs}
+        work = label_points(_WorkerTask(worker), data, method, params)
         try:
-            # Report progress: 40% - Starting clustering algorithm
-            if worker:
-                worker.progress_updated.emit(40)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before algorithm start")
-                    return None, None
-
-            if method == "hdbscan":
-                # Lazy import of hdbscan via getter
-                _hdbscan = get_hdbscan()
-                if _hdbscan is None:
-                    logging.error("HDBSCAN is not installed. Cannot perform clustering.")
-                    return None, None
-
-                # Create and fit the HDBSCAN clusterer
-                clusterer = _hdbscan.HDBSCAN(
-                    min_samples=min_samples,
-                    min_cluster_size=min_cluster_size,
-                    prediction_data=True
-                )
-
-                # This is the most CPU-intensive part
-                clusterer.fit(clean_data)
-
-                # Report progress: 70% - HDBSCAN clustering completed
+            while True:
+                fraction, _message = next(work)
                 if worker:
-                    worker.progress_updated.emit(70)
-                    # Check if stop was requested
+                    worker.progress_updated.emit(int(round(100 * fraction)))
                     if worker._stop_requested:
-                        logging.info("Clustering cancelled after HDBSCAN fit")
+                        logging.info("Clustering cancelled")
                         return None, None
-
-                # Get cluster labels and probabilities
-                labels = clusterer.labels_
-                probabilities = clusterer.probabilities_
-
-                # Create full-sized arrays with NaN for filtered points
-                full_labels = np.full(len(data), -1, dtype=np.int32)
-                full_probabilities = np.zeros(len(data))
-
-                # Fill in the values for non-filtered points
-                full_labels[mask] = labels
-                full_probabilities[mask] = probabilities
-
-            elif method == "kmeans":
-                # Lazy import KMeans class
-                KMeansCls = get_kmeans()
-                if KMeansCls is None:
-                    logging.error("scikit-learn KMeans not available. Install with: pip install scikit-learn")
-                    return None, None
-                # Create and fit the K-means clusterer
-                clusterer = KMeansCls(
-                    n_clusters=n_clusters,
-                    random_state=42  # For reproducibility
-                )
-
-                # This is the most CPU-intensive part
-                clusterer.fit(clean_data)
-
-                # Report progress: 70% - K-means clustering completed
-                if worker:
-                    worker.progress_updated.emit(70)
-                    # Check if stop was requested
-                    if worker._stop_requested:
-                        logging.info("Clustering cancelled after K-means fit")
-                        return None, None
-
-                # Get cluster labels
-                labels = clusterer.labels_
-
-                # Create full-sized arrays with NaN for filtered points
-                full_labels = np.full(len(data), -1, dtype=np.int32)
-
-                # Fill in the values for non-filtered points
-                full_labels[mask] = labels
-
-                # For K-means, we don't have probabilities, so we use the distance to the cluster center
-                # as a proxy for probability (inverse of distance)
-                distances = np.zeros(len(clean_data))
-
-                # Report progress: 80% - Starting distance calculations
-                if worker:
-                    worker.progress_updated.emit(80)
-                    # Check if stop was requested
-                    if worker._stop_requested:
-                        logging.info("Clustering cancelled before distance calculations")
-                        return None, None
-
-                # Calculate distances in batches to reduce CPU load and allow cancellation
-                batch_size = 1000
-                for batch_start in range(0, len(clean_data), batch_size):
-                    batch_end = min(batch_start + batch_size, len(clean_data))
-
-                    # Check if stop was requested before processing each batch
-                    if worker and worker._stop_requested:
-                        logging.info(f"Clustering cancelled during distance calculations at batch {batch_start}-{batch_end}")
-                        return None, None
-
-                    for i in range(batch_start, batch_end):
-                        cluster_idx = labels[i]
-                        if cluster_idx >= 0:  # Skip noise points
-                            center = clusterer.cluster_centers_[cluster_idx]
-                            distances[i] = np.linalg.norm(clean_data[i] - center)
-
-                    # Update progress during batch processing
-                    if worker:
-                        progress = 80 + int((batch_end / len(clean_data)) * 10)
-                        worker.progress_updated.emit(progress)
-
-                # Normalize distances to [0, 1] range and invert (closer = higher probability)
-                if len(distances) > 0:
-                    max_dist = np.max(distances) if np.max(distances) > 0 else 1
-                    probabilities = 1 - (distances / max_dist)
-                else:
-                    probabilities = np.array([])
-
-                # Create full-sized array for probabilities
-                full_probabilities = np.zeros(len(data))
-                full_probabilities[mask] = probabilities
-
-            else:
-                logging.error(f"Unsupported clustering method: {method}")
-                return None, None
-
-            # Report progress: 90% - Updating data frame
-            if worker:
-                worker.progress_updated.emit(90)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before data frame update")
-                    return None, None
-
-            # Report progress: 100% - Clustering completed
-            if worker:
-                worker.progress_updated.emit(100)
-
-            # Store the data shape used for clustering
-            self._cluster_data_shape = len(data)
-            logging.log(0, f"Stored cluster data shape: {self._cluster_data_shape}")
-
-            return full_labels, full_probabilities
-
+        except StopIteration as done:
+            result = done.value
         except Exception as e:
             logging.error(f"Error during {method} clustering: {str(e)}")
             return None, None
+        if result is None or result[0] is None:
+            return None, None
+        self._cluster_data_shape = len(data)
+        return result
+
+
+class _WorkerTask:
+    """The worker seen as the task :func:`label_points` checks for cancellation."""
+
+    def __init__(self, worker) -> None:
+        self._worker = worker
+
+    @property
+    def cancelled(self) -> bool:
+        return bool(self._worker is not None and self._worker._stop_requested)

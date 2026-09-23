@@ -1,6 +1,6 @@
 from __future__ import print_function
 from datetime import datetime
-from typing import List, Dict, Optional, Set
+from typing import Callable, List, Dict, Optional, Set
 from pathlib import Path
 from ..logging_config import logging
 import numpy as np
@@ -95,10 +95,16 @@ def save_clustering_data(
         cluster_labels: Optional[np.ndarray],
         cluster_probabilities: Optional[np.ndarray],
         cluster_columns: Set[str],
-        parameters: Dict
-):
+        parameters: Dict,
+        progress: Optional[Callable[[int, str], None]] = None,
+) -> Optional[Path]:
     """
-    Save clustering data to a folder.
+    Save clustering data to ``<folder>/clustering``.
+
+    Writes ``clustering_parameters.json``, ``clustering_full_data.csv`` (the
+    table with the cluster columns), ``cluster_labels.csv`` (ID, label,
+    probability) and one ``cluster_<n>.csv`` per cluster (noise, ``-1``, is
+    not written on its own).
 
     Args:
         folder_name: Path to the folder where clustering data will be saved
@@ -108,65 +114,47 @@ def save_clustering_data(
         cluster_probabilities: Array of cluster membership probabilities
         cluster_columns: Set of column names used for clustering
         parameters: Dictionary of clustering parameters
-    """
-    if not _HAS_QT or QApplication is None:
-        raise RuntimeError("save_clustering_data requires Qt (not available in headless mode)")
-    app = QApplication.instance() or QApplication([])
+        progress: ``progress(step, message)`` for steps 1..3, for a GUI's
+            progress display.
 
-    # Create the clustering folder
+    Returns:
+        The ``clustering`` folder, or ``None`` when writing failed.
+    """
+    def report(step: int, message: str) -> None:
+        if progress is not None:
+            progress(step, message)
+
     folder_path = Path(folder_name)
     clustering_folder = folder_path / "clustering"
     clustering_folder.mkdir(parents=True, exist_ok=True)
     logging.info(f"Saving clustering data to {clustering_folder}")
 
-    # Create a progress window
-    progress_window = ProgressWindow(title="Saving Clustering Data", message="Saving clustering data...", max_value=3)
-    progress_window.show()
-    QCoreApplication.processEvents()
-
     try:
-        # Step 1: Save clustering parameters
-        progress_window.set_value(1)
-        progress_window.label.setText("Saving clustering parameters...")
-        QCoreApplication.processEvents()
-
-        # Create a dictionary with all clustering information
+        report(1, "Saving clustering parameters...")
         clustering_info = {
             "method": cluster_method,
-            "columns": list(cluster_columns),
+            "columns": sorted(cluster_columns),
             "parameters": parameters,
             "timestamp": datetime.now().isoformat()
         }
-
-        # Save parameters to a JSON file
         params_file = clustering_folder / "clustering_parameters.json"
         with open(params_file, 'w') as f:
             json.dump(clustering_info, f, indent=4)
-
         logging.info(f"Saved clustering parameters to {params_file}")
 
-        # Step 2: Save cluster labels
-        progress_window.set_value(2)
-        progress_window.label.setText("Saving cluster labels...")
-        QCoreApplication.processEvents()
-
+        report(2, "Saving cluster labels...")
         if cluster_labels is not None:
             table = data_source.copy()
             labels = np.asarray(cluster_labels)
-
-            # Add cluster labels and probabilities if they don't exist
             if not table.has_column('Cluster Label'):
                 table.set_column('Cluster Label', labels)
-
             if cluster_probabilities is not None and not table.has_column('Cluster Probability'):
                 table.set_column('Cluster Probability', np.asarray(cluster_probabilities))
 
-            # Save the full data with cluster labels to a CSV file
             full_data_file = clustering_folder / "clustering_full_data.csv"
             tttrlib.write_csv(str(full_data_file), table.store)
             logging.info(f"Saved full data with cluster labels to {full_data_file}")
 
-            # Save just the cluster information (ID, label, probability)
             info_columns = {
                 'ID': np.arange(len(labels)),
                 'Cluster Label': labels,
@@ -177,7 +165,6 @@ def save_clustering_data(
             tttrlib.write_csv(str(cluster_info_file), DataSource.from_columns(info_columns).store)
             logging.info(f"Saved cluster labels to {cluster_info_file}")
 
-            # Save data for each cluster separately
             for label in np.unique(labels):
                 if label >= 0:  # Skip noise points (label -1)
                     cluster_file = clustering_folder / f"cluster_{label}.csv"
@@ -186,14 +173,9 @@ def save_clustering_data(
         else:
             logging.warning("No cluster labels to save")
 
-        # Step 3: Complete
-        progress_window.set_value(3)
-        progress_window.label.setText("Clustering data saved successfully!")
-        QCoreApplication.processEvents()
-
+        report(3, "Clustering data saved successfully!")
         logging.info("Clustering data saved successfully")
-
+        return clustering_folder
     except Exception as e:
         logging.error(f"Error saving clustering data: {str(e)}")
-    finally:
-        progress_window.close()
+        return None

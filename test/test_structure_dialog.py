@@ -18,7 +18,7 @@ import pytest
 from qtpy import QtWidgets
 
 from ndxplorer.core.data_source import DataSource
-from ndxplorer.ui.clustering_dialog import (
+from ndxplorer.analysis.structure import (
     LABELS,
     METHODS,
     METHODS_BY_KEY,

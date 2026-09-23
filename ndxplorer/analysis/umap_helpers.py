@@ -10,6 +10,7 @@ from qtpy import QtWidgets
 from ..logging_config import logging
 from ..utils.lazy_imports import get_umap
 from ..plotting import plot_umap
+from .structure import prepare_umap_params
 
 if False:  # pragma: no cover
     from ..core.plot_main import NDXplorer
@@ -54,35 +55,6 @@ def compute_umap_embedding(clean_data: np.ndarray, params: Dict[str, float]):
     """Run UMAP with provided parameters and return embedding."""
     reducer = get_umap().UMAP(**params)
     return reducer.fit_transform(clean_data)
-
-
-def prepare_umap_params(params: Dict[str, float]) -> Dict[str, float]:
-    """Normalize param dict to defaults expected by UMAP worker."""
-    umap_params = {
-        "n_neighbors": params.get("n_neighbors", 15),
-        "min_dist": params.get("min_dist", 0.1),
-        "n_components": params.get("n_components", 2),
-        "n_jobs": params.get("n_jobs", -1),
-        "verbose": True,
-        "tqdm_kwds": {"desc": "UMAP Embedding", "unit": "epoch"},
-    }
-    for name in [
-        "metric",
-        "learning_rate",
-        "init",
-        "spread",
-        "low_memory",
-        "set_op_mix_ratio",
-        "local_connectivity",
-        "repulsion_strength",
-        "negative_sample_rate",
-        "n_epochs",
-    ]:
-        if name in params:
-            umap_params[name] = params[name]
-    if umap_params["n_jobs"] == 1:
-        umap_params["random_state"] = 42
-    return umap_params
 
 
 def add_umap_columns(
