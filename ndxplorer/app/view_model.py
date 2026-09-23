@@ -66,13 +66,25 @@ class PanelModel:
     def __init__(self, model: ExplorerModel, actions: Optional[Dict[str, Callable]] = None) -> None:
         self.model = model
         self.actions: Dict[str, Callable] = dict(actions or {})
+        #: ``{attribute: (getter, setter)}`` the features own (see ``features``).
+        self.fields: Dict[str, tuple] = {}
+        #: ``availability(action) -> bool | None``: what a feature says first.
+        self.availability: Optional[Callable[[str], Optional[bool]]] = None
         self.show_plot_controls = True
-        self.cluster_colours = False
-        self.selected_cluster = -1
 
     # ------------------------------------------------------------- enabling
     def available(self, name: str) -> bool:
-        """Whether *name* (a field, a button, a menu action) can be used now."""
+        """Whether *name* (a field, a button, a menu action) can be used now.
+
+        A feature that provides *name* answers first; an action that no one
+        provides is drawn disabled.
+        """
+        if self.availability is not None and (name in self.actions or name in self.fields):
+            answer = self.availability(name)
+            if answer is not None:
+                return answer
+        if name in self.actions or name in self.fields:
+            return name in WITHOUT_DATA or self.model.has_data
         if name in NOT_PORTED:
             return False
         if name in WITHOUT_DATA:
@@ -83,6 +95,8 @@ class PanelModel:
 
     def enabled(self, name: str) -> bool:
         """AutoForm's hook: a field or action that cannot be used is drawn disabled."""
+        if name in self.actions or name in self.fields:
+            return self.available(name)
         if name.startswith(("x_", "y_", "z_", "weight")) or name in NOT_PORTED:
             if name in NOT_PORTED:
                 return False
@@ -315,7 +329,17 @@ class PanelModel:
 
     # ------------------------------------------------ actions the host owns
     def __getattr__(self, name: str):
+        fields = self.__dict__.get("fields", {})
+        if name in fields:
+            return fields[name][0]()
         actions = self.__dict__.get("actions", {})
         if name in actions:
             return actions[name]
         raise AttributeError(name)
+
+    def __setattr__(self, name: str, value) -> None:
+        fields = self.__dict__.get("fields")
+        if fields and name in fields:
+            fields[name][1](value)
+            return
+        object.__setattr__(self, name, value)

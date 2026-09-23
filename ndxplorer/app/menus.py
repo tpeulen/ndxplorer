@@ -81,7 +81,31 @@ def iter_entries(entries=None, path=()):
             yield path, item
 
 
-def build_menu_bar(available: Callable[[str], bool], checked: Callable[[str], bool]):
+def merged_menus(extra=()) -> List[tuple]:
+    """:data:`MENUS` with the features' rows added: ``extra`` is
+    ``[(path, entry)]``, *path* a tuple of menu titles. A missing submenu on
+    the path is created at the end of its parent."""
+    import copy
+
+    menus = copy.deepcopy(MENUS)
+    for path, entry in extra:
+        entries = None
+        level = menus
+        for title in path:
+            found = next((item for item in level if isinstance(item, tuple) and item[0] == title),
+                         None)
+            if found is None:
+                found = (title, [])
+                level.append(found)
+            entries = found[1]
+            level = entries
+        if entries is not None:
+            entries.append(entry)
+    return menus
+
+
+def build_menu_bar(available: Callable[[str], bool], checked: Callable[[str], bool],
+                   extra=()):
     """The menus as emtk controls, each item tagged with its action.
 
     Parameters
@@ -115,7 +139,7 @@ def build_menu_bar(available: Callable[[str], bool], checked: Callable[[str], bo
                 out.append(row)
         return out
 
-    return MenuBar([Menu(title, build(entries)) for title, entries in MENUS])
+    return MenuBar([Menu(title, build(entries)) for title, entries in merged_menus(extra)])
 
 
 def refresh(bar, available: Callable[[str], bool], checked: Callable[[str], bool]) -> None:

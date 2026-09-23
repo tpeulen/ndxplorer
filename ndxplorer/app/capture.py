@@ -176,6 +176,13 @@ class Replay:
         return (start[0], start[1], start[2], bottom - start[1])
 
     def box_of(self, target: str):
+        for feature in self.app.features:
+            locate = feature.capture_targets().get(target)
+            if locate is not None:
+                box = locate(self)
+                if box is None:
+                    raise Unsupported(f"capture target {target!r} is not on screen")
+                return box
         kind = TARGETS.get(target)
         if kind is None:
             raise Unsupported(f"capture target {target!r}")
@@ -223,7 +230,14 @@ class Replay:
         return self.shots
 
     def step(self, step: dict) -> None:
+        """Replay one step: a feature's op first (they extend the vocabulary),
+        then the core's."""
         op = step.get("op")
+        for feature in self.app.features:
+            handler = feature.capture_ops().get(op)
+            if handler is not None:
+                handler(self, step)
+                return
         handler: Optional[Callable[[dict], None]] = getattr(self, f"op_{op}", None)
         if handler is None:
             raise Unsupported(f"op {op!r}")
@@ -351,7 +365,8 @@ class Replay:
             shot = image.copy()
         elif target == "menu":
             shot = image.crop(_ints(self.menu_box(), pad=2))
-        elif target.startswith("dialog"):
+        elif target.startswith("dialog") and not any(
+                target in f.capture_targets() for f in self.app.features):
             box = getattr(self.app, "message_box", None) if self.app.message is not None else \
                 getattr(self.app, "dialog_box", None) if self.app.dialog is not None else None
             if box is None:

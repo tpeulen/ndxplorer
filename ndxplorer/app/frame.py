@@ -86,17 +86,56 @@ class NdxApp:
                                                        "plot_corner")}
         self.forms = {name: FormState() for name in self.specs}
         self.forms["plot_controls"].custom["z_plot"] = self._draw_z_plot
-        self.menubar = build_menu_bar(self.panel.available, self._checked)
+        self.plots = plots.PlotArea(self.model)
+        self.model.app = self
+        from .features import load_features
+
+        #: The feature modules (:mod:`ndxplorer.app.features`), created for this window.
+        self.features = load_features(self)
+        for feature in self.features:
+            self.panel.actions.update(feature.actions())
+            self.panel.fields.update(feature.fields())
+            for form in self.forms.values():
+                form.custom.update(feature.custom_sections())
+        self.panel.availability = self._feature_available
+        self.menubar = build_menu_bar(self.panel.available, self._checked,
+                                      extra=self._feature_menu_entries())
         self._menu_box = (0.0, 0.0, 1.0, MENU_H)
         self.popup = None
         self.dialog = None
-        self.plots = plots.PlotArea(self.model)
         self.left_tab = "Plot controls"
         self.right_tab = "Plot"
         self.box = (0.0, 0.0, 1.0, 1.0)
         self.frames = 0
         #: ``(title, text)`` of a message box on screen, or ``None``.
         self.message = None
+
+    # ------------------------------------------------------------ features
+    def _feature_available(self, action: str):
+        """What the feature that owns *action* says about it, or ``None``."""
+        for feature in self.features:
+            answer = feature.available(action)
+            if answer is not None:
+                return bool(answer)
+        return None
+
+    def _feature_menu_entries(self) -> list:
+        return [entry for feature in self.features for entry in feature.menu_entries()]
+
+    def feature_tabs(self, dock: str) -> list:
+        """``[(title, draw(box))]`` the features add to a dock."""
+        return [(title, draw) for feature in self.features
+                for side, title, draw in feature.tabs() if side == dock]
+
+    def data_changed(self) -> None:
+        """Tell the features the table was replaced or merged."""
+        for feature in self.features:
+            try:
+                feature.on_data_changed()
+            except Exception:  # noqa: BLE001 - logged, the window goes on
+                import logging
+
+                logging.getLogger(__name__).exception("%s.on_data_changed", feature.name)
 
     # ------------------------------------------------------------- actions
     def _checked(self, attr: str) -> bool:
@@ -111,6 +150,8 @@ class NdxApp:
         ok = self.model.open(path)
         if not ok:
             self.message = ("Data Load Error", self.model.error)
+        else:
+            self.data_changed()
         return ok
 
     def _open_dialog(self, title: str, mode: str, filters, purpose: str) -> None:
@@ -202,7 +243,8 @@ class NdxApp:
             with emtk.frame(painter, (x, y, w, h), io=self.io, style=self.style,
                             storage=self.storage):
                 emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
-                modal = self.dialog is not None or self.message is not None
+                modal = (self.dialog is not None or self.message is not None
+                         or getattr(self, "_feature_modal", False))
                 if modal:
                     emtk.begin_disabled(True)
                 if self.panel.show_plot_controls:
@@ -211,6 +253,10 @@ class NdxApp:
                 if modal:
                     emtk.end_disabled()
                 emtk.end()
+                self._feature_modal = False
+                for feature in self.features:
+                    if feature.draw_windows():
+                        self._feature_modal = True
                 if self.message is not None:
                     self._draw_message(x, y, w, h)
                 elif self.dialog is not None:
@@ -263,20 +309,38 @@ class NdxApp:
         import emtk
         from emtk.view_form import draw_form
 
-        self.left_tab = self._tabs(boxes["left_tabs"], ("Plot controls", "Parameters", "Overlays"),
-                                   self.left_tab, enabled=lambda t: t == "Plot controls")
+        extra = dict(self.feature_tabs("left"))
+        titles = ["Plot controls"] + [t for t in ("Parameters", "Overlays") if t not in extra] \
+            + list(extra)
+        order = ["Plot controls", "Parameters", "Overlays"]
+        titles = sorted(dict.fromkeys(titles), key=lambda t: order.index(t) if t in order
+                        else len(order))
+        self.left_tab = self._tabs(boxes["left_tabs"], titles, self.left_tab,
+                                   enabled=lambda t: t == "Plot controls" or t in extra)
         box = boxes["left"]
-        emtk.begin_child(box)
         if self.left_tab == "Plot controls":
+            emtk.begin_child(box)
             draw_form(self.specs["plot_controls"], self.panel, self.forms["plot_controls"],
                       titles=False)
-        emtk.end_child()
+            emtk.end_child()
+        elif self.left_tab in extra:
+            emtk.begin_child(box)
+            extra[self.left_tab](box)
+            emtk.end_child()
 
     def _draw_right(self, boxes: dict, painter) -> None:
         import emtk
         from emtk.view_form import draw_form
 
-        self._tabs(boxes["right_tabs"], ("Plot",), self.right_tab)
+        extra = dict(self.feature_tabs("right"))
+        self.right_tab = self._tabs(boxes["right_tabs"], ["Plot"] + list(extra), self.right_tab)
+        if self.right_tab in extra:
+            box = (boxes["header"][0], boxes["header"][1],
+                   boxes["header"][2], boxes["map"][1] + boxes["map"][3] - boxes["header"][1])
+            emtk.begin_child(box)
+            extra[self.right_tab](box)
+            emtk.end_child()
+            return
         for name, key in (("plot_header", "header"), ("plot_corner", "corner")):
             box = boxes[key]
             emtk.begin_child(box)

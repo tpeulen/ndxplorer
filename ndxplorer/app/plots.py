@@ -63,6 +63,9 @@ class PlotArea:
         self.model = model
         self._texture = None
         self._texture_key = None
+        #: Bump to redraw the map texture when a feature's ``map_image`` changes
+        #: without the histogram changing (cluster colours switched on).
+        self.image_revision = 0
         self._titles: list = []
         #: ``(x0, y0)`` in data units while a rectangle is being dragged.
         self.band_start: Optional[tuple] = None
@@ -82,13 +85,20 @@ class PlotArea:
         if hist is None:
             return None
         key = (hist.revision, self.model.colormap, self.model.vmin, self.model.vmax,
-               self.model.log_counts)
+               self.model.log_counts, self.image_revision)
         if key != self._texture_key:
             values = self.model.map_values()
             vmin, vmax = self.model.vmin, self.model.vmax
             if not vmax > vmin:
                 vmax = vmin + 1.0
-            rgba = apply_colormap(np.flipud(values), self.model.colormap, vmin, vmax)
+            rgba = None
+            for feature in self._features():
+                rgba = feature.map_image(values)
+                if rgba is not None:
+                    rgba = np.flipud(np.asarray(rgba, dtype=np.uint8))
+                    break
+            if rgba is None:
+                rgba = apply_colormap(np.flipud(values), self.model.colormap, vmin, vmax)
             ny, nx = values.shape
             self._texture = Texture(max(nx, 1), max(ny, 1), np.ascontiguousarray(rgba).tobytes(),
                                     filter="nearest")
@@ -178,6 +188,7 @@ class PlotArea:
             implot.plot_line("##x-line", xs, ys, spec={"line_color": theme.X_LINE,
                                                        "line_weight": 1.5})
             self._gate_lines("x", vertical=True)
+            self._feature_items("xmarginal")
         self.rects["xmarginal"] = self._plot_rect()
         implot.end_plot()
 
@@ -198,6 +209,7 @@ class PlotArea:
             implot.plot_line("##y-line", xs, ys, spec={"line_color": theme.Y_LINE,
                                                        "line_weight": 1.5})
             self._gate_lines("y", vertical=False)
+            self._feature_items("ymarginal")
         self.rects["ymarginal"] = self._plot_rect()
         implot.end_plot()
 
@@ -264,8 +276,10 @@ class PlotArea:
         if texture is not None:
             (x0, x1, _), (y0, y1, _) = self._range("x"), self._range("y")
             implot.plot_image("##histogram", texture, (x0, y0), (x1, y1))
-            if not self._gate_rect():
+            consumed = any(f.plot_input("map") for f in self._features())
+            if not consumed and not self._gate_rect():
                 self._rubber_band()
+            self._feature_items("map")
         self.rects["map"] = self._plot_rect()
         implot.end_plot()
 
@@ -300,6 +314,15 @@ class PlotArea:
             if moved:
                 self.model.add_rectangle((bx0, bx1), (by0, by1))
             self.band_start = self.band_end = self._band_pixels = None
+
+    def _features(self):
+        app = getattr(self.model, "app", None)
+        return getattr(app, "features", ())
+
+    def _feature_items(self, plot: str) -> None:
+        """The features' overlays in *plot* (see :mod:`ndxplorer.app.features`)."""
+        for feature in self._features():
+            feature.draw_plot(plot)
 
     def _selected_pair(self):
         """The selected gate and its partner, when they are an x/y interval pair."""
@@ -389,6 +412,7 @@ class PlotArea:
                                         implot.DRAG_TOOL_FLAGS_NO_FIT)
             if first.modified or second.modified:
                 model.set_z_range(first.value, second.value)
+            self._feature_items("zmarginal")
         self.rects["zmarginal"] = self._plot_rect()
         implot.end_plot()
 

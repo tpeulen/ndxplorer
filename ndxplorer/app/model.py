@@ -189,7 +189,12 @@ class ExplorerModel:
         self.z_range: Tuple[float, float] = (0.0, 1.0)
         self._z_range_for: Optional[tuple] = None
         self.gates: List[GateRow] = []
+        #: Selections a gate row cannot rebuild (painted masks, drawn regions),
+        #: matched to their rows by :func:`~ndxplorer.core.gates.selections_from_rows`.
+        self.stored_selections: list = []
         self.selected_gate: Optional[int] = None
+        #: The window, when there is one: its features take part in the mask.
+        self.app = None
 
         self.histograms: Optional[Histograms] = None
         self._dirty = True
@@ -428,13 +433,22 @@ class ExplorerModel:
         """Every gating term, for the data manager (the Qt ``_collect_mask_state``)."""
         indices = (self.index_of(self.x.name), self.index_of(self.y.name),
                    self.index_of(self.z.name))
-        return MaskState(
-            selections=selections_from_rows(self.gates),
+        state = MaskState(
+            selections=selections_from_rows(self.gates, stored=self.stored_selections),
             axis_indices=tuple(max(i, 0) for i in indices),
             mask_inf=self.mask_inf,
             mask_nan=self.mask_nan,
             z_range=tuple(self.z_range) if self.z_gate_active else None,
         )
+        # The features' terms: a cluster to isolate, the playback slice, gates
+        # of their own (see ndxplorer.app.features).
+        for feature in getattr(getattr(self, "app", None), "features", ()):
+            for key, value in feature.mask_terms().items():
+                if key == "selections":
+                    state.selections = list(state.selections) + list(value)
+                else:
+                    setattr(state, key, value)
+        return state
 
     def _keep_mask(self) -> Optional[np.ndarray]:
         if not self.has_data:

@@ -349,3 +349,59 @@ def test_a_step_the_app_cannot_do_is_reported_not_faked(tmp_path):
     with pytest.raises(Unsupported):
         capture_scenario("x", tmp_path, catalogue)
     assert not list(tmp_path.iterdir())
+
+
+# --------------------------------------------------------------------- features ---
+
+
+def test_a_feature_registers_actions_menus_tabs_and_mask_terms(monkeypatch, source):
+    """The seam ndxplorer.app.features: a module with create(app) plugs in."""
+    import types
+
+    from ndxplorer.app import features
+    from ndxplorer.app.features import Feature
+
+    calls = []
+
+    class Fake(Feature):
+        name = "fake"
+
+        def actions(self):
+            return {"umap": lambda: calls.append("umap"), "fake_action": lambda: None}
+
+        def menu_entries(self):
+            return [(("View", "Extra"), {"label": "Fake entry", "action": "fake_action"})]
+
+        def tabs(self):
+            return [("left", "Parameters", lambda box: calls.append("tab"))]
+
+        def mask_terms(self):
+            return {"cluster_label": None}
+
+        def draw_plot(self, plot):
+            calls.append(plot)
+
+        def capture_ops(self):
+            return {"fake_op": lambda replay, step: calls.append("op")}
+
+    module = types.ModuleType("ndxplorer.app.features.fake")
+    module.create = Fake
+    monkeypatch.setitem(sys.modules, "ndxplorer.app.features.fake", module)
+    monkeypatch.setattr(features, "FEATURES", ["fake", "does_not_exist"])
+
+    from ndxplorer.app.frame import NdxApp
+
+    app = NdxApp()
+    try:
+        app.model.set_source(source)
+        assert app.panel.available("umap")                  # was "not ported"
+        assert app.run_action("umap") and calls[-1] == "umap"
+        labels = [e.label for m in app.menubar.menus for e in m.entries if e is not None]
+        assert "Extra" in labels
+        draw(app)
+        assert "map" in calls and "xmarginal" in calls
+        app.left_tab = "Parameters"
+        draw(app)
+        assert "tab" in calls
+    finally:
+        app.close()
