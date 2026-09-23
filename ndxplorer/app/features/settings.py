@@ -823,8 +823,9 @@ class SettingsFeature(Feature):
         box = self.app.box
         window = self.window
         if window is not None:
+            # A folder per frame; a question of the tool's own pauses the batch.
             if isinstance(window, ReportTool) and window.job is not None \
-                    and self.question is None and self.app.message is None:
+                    and self.question is None:
                 window.step()
             window.draw(box)
             if window.done and self.window is window:

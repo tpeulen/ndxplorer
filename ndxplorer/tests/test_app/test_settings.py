@@ -262,11 +262,11 @@ def test_the_report_tool_generates_clears_and_browses(app, analysis):
     assert not tool.folder_rows()[0]["processed"]
     tool.generate()
     assert tool.job is not None and tool.job["targets"] == [analysis]
-    for _ in range(4):
+    for _ in range(10):
         draw(app)
         if tool.job is None:
             break
-    assert tool.job is None and app.message[0] == "Done"
+    assert tool.job is None and tool.last_status.startswith("Reports generated. 1 folder")
     report = analysis / "report"
     pngs = sorted(p.name for p in report.glob("*.png"))
     assert len(pngs) == 3 and (report / "axes_info.yaml").exists()
@@ -277,7 +277,7 @@ def test_the_report_tool_generates_clears_and_browses(app, analysis):
     draw(app)
     assert tool._preview is not None                       # the PNG is shown
     tool.generate()                                        # nothing left to do
-    assert app.message[0] == "Nothing to do"
+    assert tool.job is None and app.message[0] == "Nothing to do"
     app.message = None
     tool.clear_reports()
     feature(app).question.yes()
