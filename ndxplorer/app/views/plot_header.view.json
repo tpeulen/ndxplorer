@@ -1,0 +1,37 @@
+{
+ "_comment": "The row above the plots in the emtk app: working path, Browse, colormap (plot_main.ui's first row).",
+ "sections": [
+  {
+   "type": "row",
+   "n_col": 3,
+   "sections": [
+    {
+     "type": "value",
+     "attr": "working_path",
+     "label": "Path",
+     "kind": "str",
+     "placeholder": "Drop folder here.",
+     "description": "The working folder: where files are opened from."
+    },
+    {
+     "type": "button_row",
+     "width": 72,
+     "buttons": [
+      {
+       "label": "Browse",
+       "action": "browse",
+       "description": "Change working path"
+      }
+     ]
+    },
+    {
+     "type": "choice",
+     "attr": "colormap",
+     "width": 180,
+     "options_source": "colormap_options",
+     "description": "Colormap of the 2-D histogram."
+    }
+   ]
+  }
+ ]
+}

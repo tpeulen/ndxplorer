@@ -1,0 +1,463 @@
+{
+ "_comment": "The ndXplorer 'Plot controls' dock of the emtk app (ndxplorer.app), drawn by emtk.view_form over ndxplorer.app.view_model.PanelModel. The same panels, in the same order and with the same fold defaults, as plotting/plot_panels.view.json + plot_control.ui in the Qt window. The z marginal is a host-drawn custom section (z_plot); the gate table is a data_table.",
+ "sections": [
+  {
+   "type": "panel",
+   "title": "Playback",
+   "collapsible": true,
+   "collapsed": true,
+   "description": "Step through the data along one of its columns.",
+   "sections": [
+    {
+     "type": "info",
+     "text": "Playback is not ported to the emtk app yet."
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Histogram",
+   "collapsible": true,
+   "collapsed": false,
+   "description": "Axes, bin counts, ranges and weighting for the marginal and 2-D histograms.",
+   "sections": [
+    {
+     "type": "row",
+     "n_col": 7,
+     "sections": [
+      {
+       "type": "choice",
+       "attr": "x_name",
+       "label": "x:",
+       "options_source": "parameter_options",
+       "description": "Parameter on the x axis."
+      },
+      {
+       "type": "value",
+       "attr": "x_bins_1d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "Number of 1D bins"
+      },
+      {
+       "type": "value",
+       "attr": "x_bins_2d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "Number of 2D bins"
+      },
+      {
+       "type": "toggle",
+       "attr": "x_log",
+       "label": "",
+       "description": "Logarithmic axis"
+      },
+      {
+       "type": "toggle",
+       "attr": "x_norm",
+       "label": "",
+       "description": "Normalized density"
+      },
+      {
+       "type": "toggle",
+       "attr": "x_auto_scale",
+       "label": "",
+       "description": "If checked the axis is changed and no default scale is defined the axis scale is updated."
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Set",
+         "action": "set_x_axis",
+         "description": "Update default axis range. To save current default axis settings use the Settings->Save Menu."
+        }
+       ]
+      },
+      {
+       "type": "choice",
+       "attr": "y_name",
+       "label": "y:",
+       "options_source": "parameter_options",
+       "description": "Parameter on the y axis."
+      },
+      {
+       "type": "value",
+       "attr": "y_bins_1d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "Number of 1D bins"
+      },
+      {
+       "type": "value",
+       "attr": "y_bins_2d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "Number of 2D bins"
+      },
+      {
+       "type": "toggle",
+       "attr": "y_log",
+       "label": "",
+       "description": "Logarithmic axis"
+      },
+      {
+       "type": "toggle",
+       "attr": "y_norm",
+       "label": "",
+       "description": "Normalized density"
+      },
+      {
+       "type": "toggle",
+       "attr": "y_auto_scale",
+       "label": "",
+       "description": "If checked the axis is changed and no default scale is defined the axis scale is updated."
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Set",
+         "action": "set_y_axis",
+         "description": "Update default axis range. To save current default axis settings use the Settings->Save Menu."
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "row",
+     "n_col": 3,
+     "sections": [
+      {
+       "type": "value",
+       "attr": "x_min",
+       "label": "x:",
+       "kind": "float",
+       "description": "X axis minimum value"
+      },
+      {
+       "type": "value",
+       "attr": "x_max",
+       "kind": "float",
+       "description": "X axis maximum value"
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Auto",
+         "action": "auto_x",
+         "description": "Auto-range the x axis to the data"
+        }
+       ]
+      },
+      {
+       "type": "value",
+       "attr": "y_min",
+       "label": "y:",
+       "kind": "float",
+       "description": "Y axis minimum value"
+      },
+      {
+       "type": "value",
+       "attr": "y_max",
+       "kind": "float",
+       "description": "Y axis maximum value"
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Auto",
+         "action": "auto_y",
+         "description": "Auto-range the y axis to the data"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "row",
+     "n_col": 2,
+     "sections": [
+      {
+       "type": "toggle",
+       "attr": "weight_enabled",
+       "label": "weight",
+       "description": "If checked histogram as are weighted by selected axis"
+      },
+      {
+       "type": "choice",
+       "attr": "weight_name",
+       "options_source": "parameter_options",
+       "description": "Column each point is weighted by when the histograms are filled"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "z axis",
+   "collapsible": true,
+   "collapsed": true,
+   "description": "The third axis: its own marginal, and a range slider that gates the plot.",
+   "sections": [
+    {
+     "type": "toggle",
+     "attr": "z_gate_enabled",
+     "label": "dynamic z-selection",
+     "description": "Gate the plot on the z-range slider"
+    },
+    {
+     "type": "row",
+     "n_col": 7,
+     "sections": [
+      {
+       "type": "choice",
+       "attr": "z_name",
+       "label": "",
+       "options_source": "parameter_options",
+       "description": "Parameter on the z axis."
+      },
+      {
+       "type": "value",
+       "attr": "z_bins_1d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "Number of 1D bins"
+      },
+      {
+       "type": "value",
+       "attr": "z_bins_2d",
+       "kind": "int",
+       "minimum": 1,
+       "maximum": 100000,
+       "width": 58,
+       "description": "The z axis has no 2D bins"
+      },
+      {
+       "type": "toggle",
+       "attr": "z_log",
+       "label": "",
+       "description": "Logarithmic axis"
+      },
+      {
+       "type": "toggle",
+       "attr": "z_norm",
+       "label": "",
+       "description": "Normalized density"
+      },
+      {
+       "type": "toggle",
+       "attr": "z_auto_scale",
+       "label": "",
+       "description": "If checked the axis is changed and no default scale is defined the axis scale is updated."
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Set",
+         "action": "set_z_axis",
+         "description": "Update default axis range. To save current default axis settings use the Settings->Save Menu."
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "row",
+     "n_col": 5,
+     "sections": [
+      {
+       "type": "value",
+       "attr": "z_min",
+       "label": "z range",
+       "kind": "float",
+       "description": "Z axis minimum value"
+      },
+      {
+       "type": "value",
+       "attr": "z_max",
+       "kind": "float",
+       "description": "Z axis maximum value"
+      },
+      {
+       "type": "toggle",
+       "attr": "z_dynamic",
+       "label": "",
+       "description": "Limit histograms to overlay selection, dynamic"
+      },
+      {
+       "type": "button_row",
+       "width": 100,
+       "buttons": [
+        {
+         "label": "select",
+         "action": "z_select",
+         "description": "Add a new selection range to the selection list."
+        }
+       ]
+      },
+      {
+       "type": "button_row",
+       "width": 50,
+       "buttons": [
+        {
+         "label": "Auto",
+         "action": "auto_z",
+         "description": "Auto-range the z axis to the data"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "custom",
+     "key": "z_plot",
+     "options": {
+      "height": 90
+     },
+     "description": "The z marginal; drag the region to set the z range."
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Draw Mask",
+   "collapsible": true,
+   "collapsed": true,
+   "description": "Paint a region on the 2-D plot and apply it as a gate.",
+   "sections": [
+    {
+     "type": "info",
+     "text": "Mask drawing is not ported to the emtk app yet."
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Selection",
+   "collapsible": true,
+   "collapsed": false,
+   "description": "The gates in force. Edit a bound in place; the Delete key removes a row.",
+   "sections": [
+    {
+     "type": "row",
+     "n_col": 3,
+     "sections": [
+      {
+       "type": "button_row",
+       "width": 70,
+       "buttons": [
+        {
+         "label": "Cluster",
+         "action": "cluster",
+         "description": "Find clusters in the data (not ported yet)."
+        }
+       ]
+      },
+      {
+       "type": "value",
+       "attr": "selected_cluster",
+       "kind": "int",
+       "width": 58,
+       "minimum": -1,
+       "description": "Show only this cluster; -1 shows all."
+      },
+      {
+       "type": "toggle",
+       "attr": "cluster_colours",
+       "label": "colour",
+       "description": "Colour the 2-D map by cluster."
+      }
+     ]
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "BID",
+       "action": "save_burst_ids",
+       "description": "Save the burst IDs of the selected bursts."
+      },
+      {
+       "label": "clear",
+       "action": "clear_gates",
+       "description": "Remove every gate."
+      },
+      {
+       "label": "load",
+       "action": "load_gates",
+       "description": "Load gates from a file."
+      },
+      {
+       "label": "save",
+       "action": "save_gates",
+       "description": "Save the gates to a file."
+      }
+     ]
+    },
+    {
+     "type": "custom",
+     "key": "data_table",
+     "options": {
+      "source": "gate_rows",
+      "editable": true,
+      "edited_call": "edit_gate",
+      "delete_call": "delete_gate",
+      "selected_call": "select_gate",
+      "row_key": "row",
+      "expand": true,
+      "height": 200,
+      "columns": [
+       {
+        "key": "name",
+        "title": "Parameter",
+        "editable": false
+       },
+       {
+        "key": "lower",
+        "title": "Min",
+        "format": "%.4g",
+        "width": 64
+       },
+       {
+        "key": "upper",
+        "title": "Max",
+        "format": "%.4g",
+        "width": 64
+       },
+       {
+        "key": "invert",
+        "title": "Invert",
+        "width": 64
+       },
+       {
+        "key": "enabled",
+        "title": "Enable"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

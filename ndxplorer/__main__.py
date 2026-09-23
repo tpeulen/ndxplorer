@@ -11,10 +11,7 @@ if __name__ == "__main__" and __package__ is None:
 if len(sys.argv) > 1 and sys.argv[1] in ("filter", "image"):
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from qtpy.QtWidgets import QApplication
-from .core.plot_main import NDXplorer
 from .logging_config import logging
-from pathlib import Path
 
 
 def open_path_like_drop(ndxplorer, path_str):
@@ -101,8 +98,13 @@ class MutuallyExclusiveOption(click.Option):
                    'features (e.g. 127.0.0.1:8765).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable info logging (default is warnings only)')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
+@click.option('--emtk', 'use_emtk', is_flag=True,
+              help='Open the emtk app (ndxplorer.app) instead of the Qt window. No Qt is loaded.')
+@click.option('--host', type=click.Choice(['native', 'tk']), default=None,
+              help='Window for --emtk: native (wgpu + glfw, the default when available) or tk.')
 @click.pass_context
-def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc, verbose, debug):
+def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc,
+         verbose, debug, use_emtk, host):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -130,8 +132,16 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
     elif verbose:
         logging.getLogger().setLevel(logging.INFO)
     
+    if use_emtk:
+        from .app.launch import run
+
+        raise SystemExit(run(path=file or folder, host=host))
+
     logging.info("Starting ndxplorer as standalone module")
-    
+
+    from qtpy.QtWidgets import QApplication
+    from .core.plot_main import NDXplorer
+
     # Create Qt application
     app = QApplication(sys.argv)
     import numpy as np
