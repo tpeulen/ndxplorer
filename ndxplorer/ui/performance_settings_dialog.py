@@ -7,17 +7,15 @@ environment variables and settings with detailed tooltips.
 
 from typing import Dict, Any
 from qtpy import QtWidgets, QtCore
-import json
 
 from .glyphs import Glyphs, label as glyph_label
 from pathlib import Path
 
 from ..logging_config import logging
 from ..utils.performance_config import (
-    get_performance_config, 
-    set_performance_config,
-    reset_performance_config,
-    PerformanceConfig
+    PerformanceConfig,
+    get_performance_config,
+    save_performance_config,
 )
 
 
@@ -246,7 +244,10 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         
     def _load_current_settings(self):
         """Load current settings into the UI."""
-        config = get_performance_config()
+        self._show_config(get_performance_config())
+
+    def _show_config(self, config: PerformanceConfig):
+        """Put *config* into the controls."""
 
         # Computation settings
         self.fast_hist_cb.setChecked(config.use_fast_histogram)
@@ -267,70 +268,26 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
     def _apply_settings(self):
         """Apply settings and save to settings file."""
         try:
-            # Create new config
             new_config = PerformanceConfig(
                 use_fast_histogram=self.fast_hist_cb.isChecked(),
                 general_cache_memory_mb=float(self.gen_cache_spin.value()),
                 parallel_histogram=self.parallel_cb.isChecked(),
                 aggressive_caching=self.aggressive_cb.isChecked(),
                 histogram_threads=self.threads_spin.value(),
+                plot_backend=self.backend_combo.currentText(),
             )
-            
-            # Save to settings file
-            self._save_to_settings_file(new_config)
-            
-            # Apply globally
-            set_performance_config(new_config)
-            
+            save_performance_config(new_config)
             QtWidgets.QMessageBox.information(
-                self, 
-                "Settings Applied", 
+                self,
+                "Settings Applied",
                 "Performance settings have been saved.\n\n"
                 "Some changes may require restarting ndX to take full effect."
             )
-            
             logging.info("Performance settings updated and saved")
-            
         except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self, 
-                "Error", 
-                f"Failed to save settings: {e}"
-            )
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save settings: {e}")
             logging.error(f"Failed to save performance settings: {e}")
-            
-    def _save_to_settings_file(self, config: PerformanceConfig):
-        """Save configuration to settings file."""
-        try:
-            # Get settings path
-            from ..settings import get_settings_path
-            settings_path = get_settings_path()
-            settings_file = settings_path / "mfd.settings.json"
-            
-            # Load existing settings
-            if settings_file.exists():
-                with open(settings_file, 'r', encoding='utf-8') as f:
-                    settings_data = json.load(f)
-            else:
-                settings_data = {}
-            
-            # Update environment section
-            settings_data['environment'] = {
-                'NDXPLORER_USE_FAST_HISTOGRAM': config.use_fast_histogram,
-                'NDXPLORER_PARALLEL_HISTOGRAM': config.parallel_histogram,
-                'NDXPLORER_HISTOGRAM_THREADS': config.histogram_threads,
-                'NDXPLORER_AGGRESSIVE_CACHING': config.aggressive_caching,
-                'NDXPLORER_GENERAL_CACHE_MB': config.general_cache_memory_mb,
-            }
-            
-            # Save settings
-            settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                json.dump(settings_data, f, indent=2, sort_keys=True)
-                
-        except Exception as e:
-            raise RuntimeError(f"Failed to save settings file: {e}")
-            
+
     def _reset_to_defaults(self):
         """Reset all settings to defaults."""
         reply = QtWidgets.QMessageBox.question(
@@ -343,8 +300,9 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         )
         
         if reply == QtWidgets.QMessageBox.Yes:
-            reset_performance_config()
-            self._load_current_settings()
+            # The defaults are shown; Apply saves them. (Resetting the cached
+            # config alone re-read the saved file and changed nothing.)
+            self._show_config(PerformanceConfig())
             QtWidgets.QMessageBox.information(self, "Reset", "Settings reset to defaults")
             
     def _ok_clicked(self):

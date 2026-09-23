@@ -258,6 +258,50 @@ def reset_performance_config() -> None:
     _environment_overrides_cache = None
 
 
+def environment_overrides(config: PerformanceConfig) -> dict:
+    """The settings file's ``environment`` entries that stand for *config*."""
+    return {
+        "NDXPLORER_USE_FAST_HISTOGRAM": bool(config.use_fast_histogram),
+        "NDXPLORER_PARALLEL_HISTOGRAM": bool(config.parallel_histogram),
+        "NDXPLORER_HISTOGRAM_THREADS": int(config.histogram_threads),
+        "NDXPLORER_AGGRESSIVE_CACHING": bool(config.aggressive_caching),
+        "NDXPLORER_GENERAL_CACHE_MB": float(config.general_cache_memory_mb),
+        "NDXPLORER_PLOT_BACKEND": str(config.plot_backend),
+    }
+
+
+def default_settings_file() -> Path:
+    """The settings file the performance settings are saved to: the user's."""
+    from ..settings import get_settings_path
+
+    return get_settings_path() / "mfd.settings.json"
+
+
+def save_performance_config(config: PerformanceConfig,
+                            settings_file: Optional[Path] = None) -> Path:
+    """Write *config* into the settings file's ``environment`` and make it current.
+
+    Everything else in the file stays as it was. The overrides cache is
+    dropped, so the next :func:`get_performance_config` reads what was saved.
+    Returns the file written; raises ``OSError`` when it cannot be.
+    """
+    path = Path(settings_file) if settings_file else default_settings_file()
+    data = {}
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle) or {}
+    environment = dict(data.get("environment") or {})
+    environment.update(environment_overrides(config))
+    data["environment"] = environment
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+    global _environment_overrides_cache
+    _environment_overrides_cache = None
+    set_performance_config(config)
+    return path
+
+
 # Convenience functions for common configurations
 
 def enable_high_performance() -> None:

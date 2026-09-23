@@ -5,9 +5,6 @@ This module provides a dialog for enabling and disabling axes in the ndxplorer p
 It also allows controlling the visibility of axis labels and saving these settings to a file.
 """
 
-import os
-import yaml
-import pathlib
 from qtpy import QtCore, QtGui, QtWidgets
 
 from .glyphs import Glyphs, label as glyph_label
@@ -15,6 +12,7 @@ from .glyphs import Glyphs, label as glyph_label
 from ..logging_config import logging
 
 # Import settings functions
+from ..plotting.axis_display import write_label_settings
 from ..settings import get_settings_path
 from .feedback import FriendlyErrorPresenter
 
@@ -655,12 +653,7 @@ class AxisControlDialog(QtWidgets.QDialog):
             else:
                 fn_axis_labels = settings_dir / "axis_labels.yaml"
 
-            settings_dir.mkdir(parents=True, exist_ok=True)
-
-            with open(str(fn_axis_labels), "w") as fp:
-                fp.write("# Configuration for axis labels and fonts in ndX\n")
-                fp.write("# axis_labels: visibility of labels; fonts: family and sizes\n\n")
-                yaml.dump(settings, fp, default_flow_style=False, sort_keys=False)
+            write_label_settings(fn_axis_labels, settings)
 
             if hasattr(self.parent, 'axis_label_settings'):
                 self.parent.axis_label_settings.update(settings)

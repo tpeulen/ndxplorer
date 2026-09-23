@@ -1,17 +1,20 @@
-"""Helper functions for loading and saving ndXplorer settings."""
+"""The Qt window's settings actions: file dialogs and message boxes.
+
+What is read and written, and how, is Qt-free: :mod:`.settings.bundle` reads,
+:mod:`.settings.persist` writes. This module only asks the user.
+"""
 
 from __future__ import annotations
 
-import json
-import pathlib
-from pathlib import Path
+import copy
 from typing import Optional
 
-import yaml
 from qtpy import QtWidgets
 
 from .logging_config import logging
+from .plotting.axis_display import DEFAULT_LABEL_SETTINGS
 from .settings import get_settings_path
+from .settings.persist import write_axis_settings, write_default_axes
 
 if False:  # pragma: no cover - only for type checking without runtime import
     from .plot_main import NDXplorer
@@ -46,24 +49,6 @@ def save_axis_settings(
     except Exception as exc:  # pragma: no cover - defensive
         logging.debug("Could not refresh axis settings from UI before saving: %s", exc)
 
-    baseline = {}
-    target_path = Path(settings_json_fn)
-    try:
-        if target_path.exists():
-            with open(target_path, "r", encoding="utf-8") as handle:
-                baseline = json.load(handle) or {}
-        else:
-            packaged = Path(__file__).parent / "settings" / "mfd.axis.json"
-            if packaged.exists():
-                with open(packaged, "r", encoding="utf-8") as handle:
-                    baseline = json.load(handle) or {}
-    except Exception as exc:
-        logging.warning(
-            "Failed to load baseline axis settings, starting from empty. Reason: %s",
-            exc,
-        )
-        baseline = {}
-
     in_use_names = []
     try:
         in_use_names = [
@@ -75,29 +60,8 @@ def save_axis_settings(
         logging.debug("Could not determine in-use axis names: %s", exc)
 
     current = getattr(ndxplorer.plot_control, "axis_settings", {}) or {}
-    changed = {}
-    for name in in_use_names:
-        if not name:
-            continue
-
-        cur = current.get(name)
-        if not isinstance(cur, dict):
-            continue
-
-        base_val = baseline.get(name)
-        if base_val != cur:
-            baseline[name] = cur
-            changed[name] = {"from": base_val, "to": cur}
-
-    print(f"Saving axis settings to {settings_json_fn}")
     try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_path, "w", encoding="utf-8") as handle:
-            json.dump(baseline, handle, indent=4)
-        if changed:
-            logging.info("Updated axis settings for: %s", ", ".join(changed.keys()))
-        else:
-            logging.info("No changes detected for current axes; saved file unchanged")
+        write_axis_settings(settings_json_fn, current, in_use_names)
     except Exception as exc:
         logging.error("Failed to save axis settings to %s: %s", settings_json_fn, exc)
 
@@ -118,21 +82,6 @@ def set_default_axis(ndxplorer: "NDXplorer") -> None:
         return
 
     try:
-        with open(settings_path, "r", encoding="utf-8") as handle:
-            settings_data = json.load(handle) or {}
-    except Exception as exc:
-        logging.debug(
-            "Could not read settings file '%s', using in-memory settings. Reason: %s",
-            settings_path,
-            exc,
-        )
-        settings_data = (
-            dict(ndxplorer.settings)
-            if hasattr(ndxplorer, "settings") and isinstance(ndxplorer.settings, dict)
-            else {}
-        )
-
-    try:
         x_name = ndxplorer.plot_control.p1[1]
         y_name = ndxplorer.plot_control.p2[1]
         z_name = ndxplorer.plot_control.p3[1]
@@ -149,29 +98,22 @@ def set_default_axis(ndxplorer: "NDXplorer") -> None:
     except Exception:  # pragma: no cover - defensive
         weight_name = None
 
-    settings_data.setdefault("default_axes", {})
-    settings_data["default_axes"].update({"x": x_name, "y": y_name, "z": z_name})
-    if weight_name:
-        settings_data["default_axes"]["weight"] = weight_name
+    fallback = (
+        dict(ndxplorer.settings)
+        if hasattr(ndxplorer, "settings") and isinstance(ndxplorer.settings, dict)
+        else {}
+    )
     try:
-        settings_data["colormap"] = ndxplorer.current_cmap
-    except Exception:  # pragma: no cover - optional
-        pass
-
-    try:
-        with open(settings_path, "w", encoding="utf-8") as handle:
-            json.dump(settings_data, handle, indent=4)
+        settings_data = write_default_axes(
+            settings_path, x_name, y_name, z_name, weight=weight_name,
+            colormap=getattr(ndxplorer, "current_cmap", None), fallback=fallback,
+        )
         try:
             ndxplorer.settings.update(settings_data)
         except Exception:
             pass
         QtWidgets.QMessageBox.information(
             ndxplorer, "Set default axis", "Default axis settings have been updated."
-        )
-        logging.info(
-            "Updated default_axes in '%s' to %s",
-            settings_path,
-            settings_data.get("default_axes"),
         )
     except Exception as exc:
         logging.error("Failed to save default axes to '%s': %s", settings_path, exc)
@@ -219,20 +161,7 @@ def load_settings(
     ndxplorer.plot_control.axis_settings.update(bundle.axis_settings)
 
     if "axis_labels" in ndxplorer.settings:
-        ndxplorer.axis_label_settings = {
-            "enable_all_labels": True,
-            "axis_labels": {
-                "y_plot": {"top": True, "right": True},
-                "x_plot": {"top": True},
-                "z_plot": {"bottom": True, "left": True},
-            },
-            "fonts": {
-                "tick_size_pt": 8,
-                "title_size_pt": 10,
-                "title_weight": 700,
-                "color": "#000000",
-            },
-        }
+        ndxplorer.axis_label_settings = copy.deepcopy(DEFAULT_LABEL_SETTINGS)
         if bundle.axis_labels:
             ndxplorer.axis_label_settings.update(bundle.axis_labels)
         try:
