@@ -17,7 +17,7 @@ import pytest
 from qtpy import QtWidgets
 
 from ndxplorer.analysis.vizrank import AttrPairRanker, RankRow, RunState
-from ndxplorer.ui.vizrank_panel import VizRankModel, load_spec
+from ndxplorer.analysis.vizrank_model import VizRankModel, load_spec
 
 
 # ---- the model, without threads --------------------------------------------------------
@@ -181,7 +181,7 @@ def test_a_hand_picked_view_is_marked_not_applied():
 def test_the_spec_names_only_what_the_model_has():
     from emtk.widgets.view_spec import unsupported_sections
 
-    from ndxplorer.ui.projection_rank import ProjectionRankModel
+    from ndxplorer.analysis.projection_rank_model import ProjectionRankModel
 
     model = ProjectionRankModel(lambda: None, pairs=True)
     missing = [m for m in unsupported_sections(load_spec(), model)

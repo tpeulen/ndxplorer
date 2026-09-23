@@ -1,5 +1,5 @@
 {
-  "_comment": "The ndX ranking panel ('Find informative projections'), drawn by emtk's view_form over ndxplorer.ui.projection_rank.ProjectionRankModel. The table is a data_table section; its columns come from the model because the score's name and range depend on the method.",
+  "_comment": "The ndX ranking panel ('Find informative projections'), drawn by emtk's view_form over ndxplorer.analysis.projection_rank_model.ProjectionRankModel. The table is a data_table section; its columns come from the model because the score's name and range depend on the method.",
   "sections": [
     {
       "type": "panel",

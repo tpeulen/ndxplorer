@@ -1,113 +1,28 @@
-"""*Find informative projections…*: ranked x/y pairs and z parameters for ndX.
+"""*Find informative projections…* in the Qt window: the View-menu entries and
+the panels' wiring.
 
-ndX asks the user to pick two axes out of forty-odd burst parameters. Two View
-menu entries, directly below *UMAP*, rank every pair instead (*Find informative
-projections…*) or every third parameter (*… (z axis)…*); clicking a row sets the
-axes. What
-"informative" means is chosen in the panel (:data:`~ndxplorer.analysis.projection_scores.METHODS`):
-
-* **Class separation** — how well a view separates classes ndX already has:
-  the gate (inside vs outside), each gate as its own population, the
-  clusters, or the z parameter's value;
-* **Population structure** — whether the view splits into more than one
-  population, with no classes at all;
-* **Correlation** — how strongly two parameters co-vary (pairs only).
-
-Everything here is ndX wiring: which rows and classes exist, how an axis is
-drawn, and what applying a row changes. The scores are in
-:mod:`ndxplorer.analysis.projection_scores`, the ranking machinery in
-:mod:`ndxplorer.ui.vizrank_panel` (the panel is ``vizrank.view.json``, drawn by
-emtk).
+Two View menu entries, directly below *UMAP*, rank every pair (*Find
+informative projections…*) or every third parameter (*… (z axis)…*); clicking a
+row sets the axes. The ranking, its context and the panel's model are Qt-free,
+in :mod:`ndxplorer.analysis.projection_rank_model`; here is only what reads the
+Qt window (:func:`collect_context`) and the controller that opens the panels.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
-import numpy as np
-
-from ..analysis.projection_scores import (
-    DEFAULT_MAX_ROWS,
-    METHODS,
-    ClassLabels,
-    ColumnView,
-    ParameterRanker,
-    ProjectionRanker,
-    RankingTable,
-)
-from .vizrank_panel import VizRankModel, VizRankWindow
+from ..analysis.projection_rank_model import ProjectionRankModel, RankingContext, build_context
+from .vizrank_panel import VizRankWindow
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "RankingContext",
     "collect_context",
-    "ProjectionRankModel",
     "ProjectionRankController",
     "install_projection_ranking",
 ]
-
-#: A column with at most this many distinct integer values is a class id when
-#: it is used as the class; anything else is a quantity.
-MAX_DISCRETE_VALUES = 10
-
-#: Caption prefix of the class that is the z parameter's value.
-Z_CLASS_PREFIX = "z parameter: "
-
-
-@dataclass
-class RankingContext:
-    """What ndX offers a ranking at the moment a ranking is (re)built.
-
-    Attributes
-    ----------
-    columns : dict
-        Numeric columns by name, as views into the table (nothing is copied
-        until the ranker draws its subsample).
-    views : dict
-        :class:`ColumnView` per column: the scale and range ndX draws it with.
-    rows : numpy.ndarray
-        Rows the gates keep.
-    classes : dict
-        Caption -> :class:`ClassLabels`, in the order offered.
-    key : tuple
-        Changes whenever the table, the axis settings or the gates change — any
-        of which invalidates every ranked row.
-    class_keys : dict
-        Caption -> what that class additionally depends on (the clustering,
-        the z parameter), so choosing another z invalidates only a ranking that
-        separates by z.
-    """
-
-    columns: Dict[str, np.ndarray]
-    views: Dict[str, ColumnView]
-    rows: Optional[np.ndarray]
-    classes: Dict[str, ClassLabels] = field(default_factory=dict)
-    key: Tuple = ()
-    class_keys: Dict[str, Tuple] = field(default_factory=dict)
-
-
-def _selection_columns(selection, names: List[str]) -> Tuple[str, ...]:
-    """The parameter names a gate reads."""
-    indices = []
-    for attr in ("parameter_idx", "idx1", "idx2"):
-        value = getattr(selection, attr, None)
-        if value is not None:
-            indices.append(int(value))
-    return tuple(names[i] for i in indices if 0 <= i < len(names))
-
-
-def _column_labels(name: str, values: np.ndarray) -> ClassLabels:
-    """A column as the class: ids when it looks like ids, a quantity otherwise."""
-    values = np.asarray(values, dtype=np.float64)
-    finite = values[np.isfinite(values)]
-    unique = np.unique(finite) if finite.size else finite
-    discrete = bool(
-        unique.size <= MAX_DISCRETE_VALUES and unique.size > 1 and np.all(unique == np.round(unique))
-    )
-    return ClassLabels(values, discrete, name, exclude=(name,))
 
 
 def collect_context(window) -> Optional[RankingContext]:
@@ -119,189 +34,24 @@ def collect_context(window) -> Optional[RankingContext]:
     if source is None or source.empty:
         return None
     control = window.plot_control
-    all_names = list(source.parameter_names)
-    columns: Dict[str, np.ndarray] = {}
-    for index, name in enumerate(all_names):
-        if source.is_text_column(index):
-            continue
-        view = source.column_view(index)
-        if view is not None:
-            columns[name] = view
-
-    settings = getattr(control, "axis_settings", {}) or {}
-    views: Dict[str, ColumnView] = {}
-    for name in columns:
-        entry = settings.get(name)
-        if entry:
-            views[name] = ColumnView(
-                name, str(entry.get("scale", "lin")), entry.get("min"), entry.get("max")
-            )
-        else:
-            views[name] = ColumnView(name)
-
     try:
         selections = [s for s in control.get_selections() if getattr(s, "enabled", True)]
     except Exception:
         logger.debug("could not read the gates", exc_info=True)
         selections = []
-    rows = source.selection_mask(selections) if selections else None
-
-    classes: Dict[str, ClassLabels] = {}
-    class_keys: Dict[str, Tuple] = {}
-    if selections:
-        gated = tuple(sorted({n for s in selections for n in _selection_columns(s, all_names)}))
-        inside = source.selection_mask(selections).astype(np.float64)
-        classes["Gate: inside vs outside"] = ClassLabels(
-            inside, True, "inside vs outside the gate", exclude=gated, use_all_rows=True
-        )
-        if len(selections) >= 2:
-            masks = np.vstack([source.selection_mask([s]) for s in selections])
-            hits = masks.sum(axis=0)
-            labels = np.where(hits == 1, np.argmax(masks, axis=0).astype(np.float64), np.nan)
-            classes["Gates: one population per gate"] = ClassLabels(
-                labels, True, "the gate a burst falls in", exclude=gated, use_all_rows=True
-            )
-    clusters = getattr(window, "_cluster_labels", None)
-    if clusters is not None and len(clusters) == source.size:
-        values = np.asarray(clusters, dtype=np.float64)
-        # HDBSCAN's noise label is "no cluster", not a population of its own.
-        values = np.where(values < 0, np.nan, values)
-        classes["Clusters"] = ClassLabels(values, True, "cluster")
-        class_keys["Clusters"] = (id(clusters),)
     try:
         z_name = control.p3[1]
     except Exception:
         z_name = ""
-    if z_name in columns:
-        caption = f"{Z_CLASS_PREFIX}{z_name}"
-        classes[caption] = _column_labels(z_name, source.column_values(z_name))
-        class_keys[caption] = (z_name,)
-
-    key = (
-        id(source),
-        source.data_version,
-        tuple(columns),
-        tuple(sorted((n, v.scale, v.lo, v.hi) for n, v in views.items())),
-        tuple(repr(s.gate_key()) if hasattr(s, "gate_key") else repr(s) for s in selections),
-    )
-    return RankingContext(columns, views, rows, classes, key, class_keys)
+    return build_context(source, getattr(control, "axis_settings", {}) or {}, selections,
+                         getattr(window, "_cluster_labels", None), z_name)
 
 
-class ProjectionRankModel(VizRankModel):
-    """What the ranking panel binds to in ndX: pairs (x/y) or single parameters (z).
+def _qt_defer(fn) -> None:
+    """Run *fn* from the Qt event loop, after the current callback."""
+    from qtpy import QtCore
 
-    Parameters
-    ----------
-    context_provider : callable
-        Returns a fresh :class:`RankingContext`; called when a ranking starts
-        and whenever the panel asks what classes exist, so a restart always sees
-        the current table and gates.
-    pairs : bool
-        Rank x/y pairs (``True``) or z parameters.
-    **kwargs
-        Passed to :class:`~ndxplorer.ui.vizrank_panel.VizRankModel`.
-    """
-
-    def __init__(self, context_provider: Callable[[], Optional[RankingContext]],
-                 pairs: bool = True, **kwargs):
-        super().__init__(**kwargs)
-        self.pairs = pairs
-        self.title = "Find informative projections" if pairs else "Find informative z parameters"
-        self._context_provider = context_provider
-        self._context: Optional[RankingContext] = context_provider()
-        self.sample_rows = DEFAULT_MAX_ROWS
-        self.classes = ""
-        self.method = "structure"
-        self.sample_note = ""
-        self._pick_defaults()
-
-    # ---- what the spec's choices offer ---------------------------------------------
-
-    def method_options(self) -> list:
-        """``(key, label)`` of the scores this panel ranks by.
-
-        Class separation is offered only when there is something to separate,
-        so the choice cannot land on a score that has no classes to read.
-        """
-        has_classes = bool(self.class_options())
-        options = []
-        for key, (caption, needs, for_pairs, for_single) in METHODS.items():
-            if not ((self.pairs and for_pairs) or (not self.pairs and for_single)):
-                continue
-            if needs and not has_classes:
-                continue
-            options.append((key, caption))
-        return options
-
-    def class_options(self) -> list:
-        """The classes ndX has now, by caption."""
-        context = self._context
-        if context is None:
-            return []
-        return [caption for caption in context.classes
-                if self.pairs or not caption.startswith(Z_CLASS_PREFIX)]
-
-    def _pick_defaults(self) -> None:
-        """Separation when the user has made classes, else structure.
-
-        The z parameter is always there, so it is always *offered* as a class,
-        but it is not a sign that the user wants views separated by it: only a
-        gate or a clustering is. Without one, the question is whether a view
-        shows populations at all.
-        """
-        made = [c for c in self.class_options() if not c.startswith(Z_CLASS_PREFIX)]
-        options = self.class_options()
-        self.classes = made[0] if made else (options[0] if options else "")
-        self.method = "separation" if made else "structure"
-
-    def refresh_context(self) -> None:
-        """Re-read what ndX offers; keep the chosen classes if they still exist."""
-        self._context = self._context_provider()
-        options = self.class_options()
-        if self.classes not in options:
-            self.classes = options[0] if options else ""
-            if not options and self.method == "separation":
-                self.method = "structure"
-        self._changed()
-
-    # ---- the ranking -----------------------------------------------------------------
-
-    def current_settings(self):
-        """Method, classes, sample size -- and the table and gates they read."""
-        context = self._context_provider()
-        classes = self.classes if METHODS.get(self.method, ("", False))[1] else None
-        if context is None:
-            return (self.method, classes, int(self.sample_rows), None, None)
-        return (self.method, classes, int(self.sample_rows), context.key,
-                context.class_keys.get(classes))
-
-    def make_ranker(self):
-        context = self._context_provider()
-        self._context = context
-        if context is None:
-            raise RuntimeError("no table to rank")
-        labels = None
-        if METHODS[self.method][1]:
-            labels = context.classes.get(self.classes)
-            if labels is None:
-                raise RuntimeError("the chosen classes are no longer available")
-        table = RankingTable(context.columns, context.views, rows=context.rows, labels=labels,
-                             max_rows=int(self.sample_rows))
-        ranker = (ProjectionRanker if self.pairs else ParameterRanker)(table, self.method)
-        return ranker
-
-    def prepare_run(self) -> None:
-        super().prepare_run()
-        table = self._run.ranker.table
-        dropped = len(table.columns) - len(table.names)
-        left_out = len(table.names) - len(self._run.ranker.attrs) + dropped
-        note = f"{table.n_rows} of {table.n_eligible} bursts sampled"
-        if left_out:
-            note += f" · {left_out} parameters left out"
-        self.sample_note = note
-
-    def note(self) -> str:
-        return self.sample_note if self._run is not None else ""
+    QtCore.QTimer.singleShot(0, fn)
 
 
 class ProjectionRankController:
@@ -359,7 +109,7 @@ class ProjectionRankController:
             model = None
         if model is None:
             model = ProjectionRankModel(lambda: collect_context(self.window), pairs,
-                                        on_apply=self.apply)
+                                        on_apply=self.apply, defer=_qt_defer)
             self.dialogs[pairs] = VizRankWindow(model, self.window)
         else:
             model.refresh_context()
