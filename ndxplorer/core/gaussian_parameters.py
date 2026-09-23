@@ -401,8 +401,21 @@ def gaussian_mixture_class():
 
 
 def build_gaussian_group(name: str = DEFAULT_GROUP_NAME):
-    """Return an empty mixture group ready to take components."""
-    return gaussian_mixture_class()(name=name)
+    """Return an empty mixture group ready to take components.
+
+    Raises
+    ------
+    ImportError
+        When chisurf's parameter runtime (IMP.bff's ports) is missing -- a
+        browser page without an IMP wheel. The classes import without it, so an
+        empty group would build and then fail on its first component, inside a
+        frame; raising here lets the panel say why instead.
+    """
+    group = gaussian_mixture_class()(name=name)
+    from chisurf.core.fitting.parameter import FittingParameter
+
+    FittingParameter(name="probe", value=1.0)
+    return group
 
 
 @dataclasses.dataclass
