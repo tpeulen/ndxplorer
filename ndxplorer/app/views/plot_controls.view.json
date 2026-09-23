@@ -38,7 +38,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "Number of 1D bins",
        "style": "spin"
       },
@@ -48,7 +48,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "Number of 2D bins",
        "style": "spin"
       },
@@ -94,7 +94,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "Number of 1D bins",
        "style": "spin"
       },
@@ -104,7 +104,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "Number of 2D bins",
        "style": "spin"
       },
@@ -247,7 +247,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "Number of 1D bins",
        "style": "spin"
       },
@@ -257,7 +257,7 @@
        "kind": "int",
        "minimum": 1,
        "maximum": 100000,
-       "width": 58,
+       "width": 48,
        "description": "The z axis has no 2D bins",
        "style": "spin"
       },
