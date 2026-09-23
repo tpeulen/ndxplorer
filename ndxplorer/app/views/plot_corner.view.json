@@ -89,7 +89,8 @@
      "kind": "float",
      "style": "scientific",
      "decimals": 2,
-     "description": "Lower colour limit of the 2-D histogram."
+     "description": "Lower colour limit of the 2-D histogram.",
+     "spin": true
     },
     {
      "type": "value",
@@ -97,7 +98,8 @@
      "kind": "float",
      "style": "scientific",
      "decimals": 2,
-     "description": "Upper colour limit of the 2-D histogram."
+     "description": "Upper colour limit of the 2-D histogram.",
+     "spin": true
     }
    ]
   },
