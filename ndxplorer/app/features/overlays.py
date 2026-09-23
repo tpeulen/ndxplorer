@@ -346,6 +346,15 @@ class ConstantsPanel(_ParameterPanel):
         return self._cache.get(constant_rows(self.values(), params,
                                              cg.vectors_state(self.group)))
 
+    def parameter_columns(self) -> List[dict]:
+        """The spec's columns; *Link* only while some constant is linked (it is sparse)."""
+        section = next(s for s in load_spec("parameters")["sections"]
+                       if s.get("key") == "data_table")
+        columns = section["options"]["columns"]
+        if any(r.get("link") for r in self.parameter_rows()):
+            return columns
+        return [c for c in columns if c["key"] != "link"]
+
     def _parameter(self, record):
         if not isinstance(record, dict):
             return None

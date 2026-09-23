@@ -38,7 +38,8 @@
      },
      {
       "key": "value",
-      "title": "Value"
+      "title": "Value",
+      "align": "right"
      },
      {
       "key": "fixed",
@@ -59,7 +60,7 @@
       "key": "link",
       "title": "Link",
       "editable": false,
-      "tooltip": "The fit parameter this constant follows (right-click to link or unlink)."
+      "tooltip": "The fit parameter this constant follows (right-click to link or unlink). Shown while a constant is linked."
      }
     ],
     "tree_key": "parent",
@@ -69,7 +70,8 @@
     "fit_columns": true,
     "min_column_width": 34,
     "expand": true,
-    "reserve": 64
+    "reserve": 64,
+    "columns_source": "parameter_columns"
    }
   },
   {
