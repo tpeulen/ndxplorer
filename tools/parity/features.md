@@ -19,7 +19,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## global — applies to every scenario
 
-- [ ] Window title "ndX" (plus the file name once data is loaded) — emtk app: the host titles the window "ndX"; no host API yet to retitle it with the file name
+- [x] Window title "ndX" (plus the file name once data is loaded) — `NdxApp.window_title`, carried onto the window by every emtk host (emtk b49285a: native, Tk, Qt, the page title)
 - [x] Layout: a panel column on the left with tabs Plot controls / Parameters / Overlays, plus Equations and Gaussian Fit (hidden until the View menu shows them), and a "Plot" area on the right; the column is about ¼ of the width
 - [~] Panel tabs can be rearranged (drag or split) and have a context menu (the ChiSurf DockArea) — emtk app: fixed dock layout with tab strips (left: Plot controls/Parameters/Overlays + feature tabs; right: Plot + feature tabs); View > Plot controls hides the column
 - [x] Menu bar: File, Settings, View, Help
@@ -102,19 +102,19 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [x] X pixel / Y pixel columns are detected as image axes: pixel bins, pixel ranges, and a map shown as an image (not upside down) — `axis_helpers.image_axes`, shared; applied however the table was opened
 - [x] Photon weighting is switched on automatically
 - [x] NaN / inf masking is turned off for pixel axes
-- [ ] The Frame column drives playback (see playback_image_frames)
+- [x] The Frame column drives playback (see playback_image_frames: axis Frame, 10 steps, 269923 of 449532 at step 5)
 
 ## menu_file — File menu (+ Import, Save submenus)
 
-- [ ] File > Import > "Import Text files (*.csv,*.dat)" (Ctrl+O)
-- [ ] File > Import > "Analysis file (*.zip, *.hdf)"
-- [ ] File > Import > "Analysis-Folder" (Ctrl+I)
-- [ ] File > Import > "ChiSurf-Sampling"
-- [ ] File > Save > "Burst IDs"
-- [ ] File > Save > "Histograms" (Qt: broken, not connected to anything)
-- [ ] File > "Make Report"
-- [ ] File > "Print window" (Qt: broken, not connected)
-- [ ] File > "Exit" (Qt: broken, not connected; the window close button works)
+- [x] File > Import > "Import Text files (*.csv,*.dat)" (Ctrl+O)
+- [x] File > Import > "Analysis file (*.zip, *.hdf)"
+- [x] File > Import > "Analysis-Folder" (Ctrl+I)
+- [x] File > Import > "ChiSurf-Sampling"
+- [x] File > Save > "Burst IDs"
+- [x] File > Save > "Histograms" (Qt: broken, not connected to anything) — works in the emtk app: the marginals and the 2-D map as one tab-separated file (features/window.py)
+- [x] File > "Make Report"
+- [~] File > "Print window" (Qt: broken, not connected) — saves a picture of the window (the Screenshot action) for the user to print; no printing system
+- [x] File > "Exit" (Qt: broken, not connected; the window close button works) — closes the window through its host; disabled in a browser page, which has no window to close
 
 ## menu_settings — Settings menu (+ Save settings submenu)
 
@@ -155,7 +155,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [x] Normalized-density check on the y marginal
 - [x] Manual x min / max
 - [x] Logarithmic x axis check (log ticks label 0.6..4 inside one decade, emtk 0821285)
-- [ ] Changing bins disables mask drawing and clears the mask (Qt behaviour)
+- [x] Changing bins disables mask drawing and clears the mask (Qt behaviour) — selection feature, with a status line saying so
 
 ## weights — Weighted histograms
 
@@ -168,7 +168,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [~] "log #" check for a log10 colour scale of the counts — toggling it re-derives vmin/vmax in log10 units; the Qt window keeps its linear limits over the log image (1..200 on values 0..2.3), which washes the map out
 - [x] "Contrast" button sets vmin / vmax automatically
 - [x] vmin / vmax spin boxes (±1e10, "%.2e", debounced) — arrows and wheel; applied on the next frame, which is the debounce
-- [ ] Buttons: "Screenshot", "Data", "Clear", "Update", "Contrast", "Export…"
+- [x] Buttons: "Screenshot", "Data", "Clear", "Update", "Contrast", "Export…"
 - [x] Count fields visible / total
 - [x] "inf" and "NaN" masking checks (on by default)
 
@@ -225,7 +225,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 ## z_add_selection — z range → gate ('select')
 
 - [x] "select" adds the current z range as a range gate on the z parameter (1725 / 12237, as Qt)
-- [ ] During playback gating the current slice is added as a gate too (playback group)
+- [x] During playback gating the current slice is added as a gate too (playback group) — PanelModel.z_select calls Feature.on_z_select (be26939); playback adds the slice once
 
 ## draw_mask — Draw Mask panel: paint and apply
 
