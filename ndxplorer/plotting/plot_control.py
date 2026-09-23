@@ -1827,25 +1827,17 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     def _load_playback_fps(self) -> int:
         """Playback rate from the settings file, in steps per second."""
-        default_fps = 10
+        from ..core.playback import DEFAULT_FPS, fps_from_settings
+
         try:
             settings_path = pathlib.Path(__file__).parent.parent / 'settings' / 'mfd.settings.json'
             if not settings_path.exists():
-                return default_fps
+                return DEFAULT_FPS
             with open(settings_path, 'r') as f:
-                settings = json.load(f)
-            playback = settings.get('playback', {})
-            if 'fps' in playback:
-                return max(1, int(playback['fps']))
-            # The rate used to be written as a frame duration. Reading both
-            # keeps a settings file from before this change working, and there
-            # is no migration to run.
-            duration = playback.get('frame_duration_ms')
-            if duration:
-                return max(1, int(round(1000.0 / float(duration))))
+                return fps_from_settings(json.load(f))
         except Exception as exc:
             logging.warning("Failed to read playback settings: %s", exc)
-        return default_fps
+        return DEFAULT_FPS
 
     def setup_playback(self, data_source):
         """Point the playback at whatever the loaded data can be played back along.

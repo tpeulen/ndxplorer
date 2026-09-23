@@ -47,8 +47,12 @@ __all__ = [
     "MODE_WINDOW",
     "PlaybackController",
     "axis_geometry",
+    "fps_from_settings",
     "macro_time_column",
 ]
+
+#: Steps per second when the settings say nothing.
+DEFAULT_FPS = 10
 
 
 #: One slice at a time: ``edges[i] <= v < edges[i + 1]``.
@@ -104,6 +108,33 @@ def macro_time_column(param_names: typing.Sequence[str]) -> typing.Optional[str]
         if "macro" in text and "time" in text:
             return name
     return None
+
+
+def fps_from_settings(settings: typing.Optional[dict]) -> int:
+    """The playback rate a settings mapping asks for, in steps per second.
+
+    Parameters
+    ----------
+    settings : dict or None
+        The parsed ``*.settings.json``; its ``playback`` entry is read.
+
+    Returns
+    -------
+    int
+        ``playback.fps``; else the older ``playback.frame_duration_ms`` turned
+        into a rate (a settings file from before the change keeps working, and
+        there is no migration to run); else :data:`DEFAULT_FPS`.
+    """
+    playback = (settings or {}).get("playback") or {}
+    try:
+        if "fps" in playback:
+            return max(1, int(playback["fps"]))
+        duration = playback.get("frame_duration_ms")
+        if duration:
+            return max(1, int(round(1000.0 / float(duration))))
+    except (TypeError, ValueError) as exc:
+        logging.warning("Unreadable playback settings %r: %s", playback, exc)
+    return DEFAULT_FPS
 
 
 def unit_of(name: str) -> str:
