@@ -83,12 +83,32 @@ def _fill(spec: dict, **words: str) -> dict:
     return spec
 
 
+#: Whether chisurf's parameters can be built here, and why not.
+_CHISURF: Dict[str, Any] = {}
+
+
 def _has_chisurf() -> bool:
-    try:
-        import chisurf.core.fitting.parameter  # noqa: F401
-    except Exception:  # noqa: BLE001 - any failure: no parameter groups
-        return False
-    return True
+    """Whether a chisurf :class:`FittingParameter` can be made (checked once).
+
+    Importing is not enough: a parameter needs chisurf's compiled port runtime,
+    which a browser does not have and a half-rebuilt desktop may not load.
+    """
+    if "ok" not in _CHISURF:
+        try:
+            from chisurf.core.fitting.parameter import FittingParameter
+
+            FittingParameter(name="probe", value=1.0)
+            _CHISURF.update(ok=True, why="")
+        except Exception as exc:  # noqa: BLE001 - any failure: no parameter groups
+            _CHISURF.update(ok=False, why=str(exc).splitlines()[0][:300])
+            logger.warning("chisurf parameters are not available: %s", _CHISURF["why"])
+    return bool(_CHISURF["ok"])
+
+
+def _no_chisurf_text() -> str:
+    return ("chisurf's parameters are not available here, so the constants are plain "
+            "numbers (no bounds, no links) and curves cannot be added"
+            + (f": {_CHISURF.get('why')}" if _CHISURF.get("why") else "."))
 
 
 def _in_browser() -> bool:
@@ -282,6 +302,13 @@ class ConstantsPanel(_ParameterPanel):
 
     def values(self) -> Dict[str, float]:
         return {str(k): float(v) for k, v in dict(self.mapping).items()}
+
+    @property
+    def degraded(self) -> bool:
+        return self.group is None
+
+    def degraded_text(self) -> str:
+        return _no_chisurf_text()
 
     def parameters(self) -> list:
         return list(self.group.parameters_all) if self.group is not None else []
@@ -712,8 +739,7 @@ class OverlaysPanel:
         from emtk.view_form import draw_form
 
         if not _has_chisurf():
-            emtk.text_wrapped("Overlay curves need chisurf (its parameter groups); "
-                              "it is not importable here.")
+            emtk.text_wrapped(_no_chisurf_text())
             return
         for panel in list(self.panels):
             emtk.separator()

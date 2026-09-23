@@ -2,6 +2,14 @@
  "_comment": "The Parameters tab: nDXplorer's constants (Qt: ui/parameter_editor.py). An edit re-derives the columns that read the constant.",
  "sections": [
   {
+   "type": "info",
+   "source": "degraded_text",
+   "hidden_when": {
+    "attr": "degraded",
+    "equals": false
+   }
+  },
+  {
    "type": "button_row",
    "buttons": [
     {
@@ -67,15 +75,20 @@
    "text": "Right-click a row to copy, paste, link or unlink it."
   },
   {
-   "type": "button_row",
-   "buttons": [
+   "type": "row",
+   "sections": [
     {
-     "label": "Add parameter",
-     "action": "add_parameter",
-     "description": "Add a new constant (name + value)"
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "Add parameter",
+       "action": "add_parameter",
+       "description": "Add a new constant (name + value)"
+      }
+     ],
+     "width": 130
     }
-   ],
-   "width": 130
+   ]
   }
  ]
 }
