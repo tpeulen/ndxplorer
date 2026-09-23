@@ -231,7 +231,9 @@ class ExplorerModel:
         self.error = ""
         self.path = str(path)
         p = pathlib.Path(path)
-        self.working_path = str(p if p.is_dir() else p.parent)
+        # The folder the data came from sits in, as the Qt window shows it:
+        # the parent of an opened folder, the folder of an opened file.
+        self.working_path = str(p.resolve().parent)
         self.set_source(source)
         return True
 

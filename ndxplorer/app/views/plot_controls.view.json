@@ -39,7 +39,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "Number of 1D bins"
+       "description": "Number of 1D bins",
+       "style": "spin"
       },
       {
        "type": "value",
@@ -48,7 +49,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "Number of 2D bins"
+       "description": "Number of 2D bins",
+       "style": "spin"
       },
       {
        "type": "toggle",
@@ -93,7 +95,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "Number of 1D bins"
+       "description": "Number of 1D bins",
+       "style": "spin"
       },
       {
        "type": "value",
@@ -102,7 +105,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "Number of 2D bins"
+       "description": "Number of 2D bins",
+       "style": "spin"
       },
       {
        "type": "toggle",
@@ -144,13 +148,15 @@
        "attr": "x_min",
        "label": "x:",
        "kind": "float",
-       "description": "X axis minimum value"
+       "description": "X axis minimum value",
+       "style": "spin"
       },
       {
        "type": "value",
        "attr": "x_max",
        "kind": "float",
-       "description": "X axis maximum value"
+       "description": "X axis maximum value",
+       "style": "spin"
       },
       {
        "type": "button_row",
@@ -168,13 +174,15 @@
        "attr": "y_min",
        "label": "y:",
        "kind": "float",
-       "description": "Y axis minimum value"
+       "description": "Y axis minimum value",
+       "style": "spin"
       },
       {
        "type": "value",
        "attr": "y_max",
        "kind": "float",
-       "description": "Y axis maximum value"
+       "description": "Y axis maximum value",
+       "style": "spin"
       },
       {
        "type": "button_row",
@@ -240,7 +248,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "Number of 1D bins"
+       "description": "Number of 1D bins",
+       "style": "spin"
       },
       {
        "type": "value",
@@ -249,7 +258,8 @@
        "minimum": 1,
        "maximum": 100000,
        "width": 58,
-       "description": "The z axis has no 2D bins"
+       "description": "The z axis has no 2D bins",
+       "style": "spin"
       },
       {
        "type": "toggle",
@@ -291,13 +301,15 @@
        "attr": "z_min",
        "label": "z range",
        "kind": "float",
-       "description": "Z axis minimum value"
+       "description": "Z axis minimum value",
+       "style": "spin"
       },
       {
        "type": "value",
        "attr": "z_max",
        "kind": "float",
-       "description": "Z axis maximum value"
+       "description": "Z axis maximum value",
+       "style": "spin"
       },
       {
        "type": "toggle",
@@ -380,7 +392,8 @@
        "kind": "int",
        "width": 58,
        "minimum": -1,
-       "description": "Show only this cluster; -1 shows all."
+       "description": "Show only this cluster; -1 shows all.",
+       "style": "spin"
       },
       {
        "type": "toggle",

@@ -29,6 +29,10 @@ NOT_PORTED = frozenset({
     "about", "update_app", "z_bins_2d",
 })
 
+#: What a field a feature owns shows until the feature is there (the Qt
+#: window's initial values): the cluster spin box reads -1, "all clusters".
+FIELD_DEFAULTS = {"selected_cluster": -1, "cluster_colours": False}
+
 #: What stays usable without data: opening something, and leaving.
 WITHOUT_DATA = frozenset({"open_text", "open_analysis_folder", "open_analysis_file",
                           "open_sampling", "browse", "working_path", "colormap", "exit",
@@ -332,6 +336,8 @@ class PanelModel:
         fields = self.__dict__.get("fields", {})
         if name in fields:
             return fields[name][0]()
+        if name in FIELD_DEFAULTS:
+            return FIELD_DEFAULTS[name]
         actions = self.__dict__.get("actions", {})
         if name in actions:
             return actions[name]
