@@ -382,7 +382,7 @@
         {
          "label": "Cluster",
          "action": "cluster",
-         "description": "Find clusters in the data (not ported yet)."
+         "description": "Open clustering dialog: find structure (PCA, UMAP, HDBSCAN, K-means) in chosen columns."
         }
        ]
       },
