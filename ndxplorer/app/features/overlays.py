@@ -158,12 +158,29 @@ def edit_parameter(parameter, key: str, value) -> bool:
     elif key == "bounds":
         parameter.bounds_on = bool(value)
     elif key in ("lo", "hi"):
+        from .constant_rows import is_unbounded_text
+
+        if is_unbounded_text(value):
+            # No bound on this side; the other side's decides enforcement.
+            if not bool(getattr(parameter, "bounds_on", False)):
+                return True
+            other = parameter.ub if key == "lo" else parameter.lb
+            if key == "lo":
+                parameter.lb = float("-inf")
+            else:
+                parameter.ub = float("inf")
+            parameter.bounds_on = math.isfinite(float(other))
+            return True
         number = _number(value)
         if number is None:
             return False
         if key == "lo":
+            if not bool(getattr(parameter, "bounds_on", False)):
+                parameter.ub = float("inf")
             parameter.lb = number
         else:
+            if not bool(getattr(parameter, "bounds_on", False)):
+                parameter.lb = float("-inf")
             parameter.ub = number
         parameter.bounds_on = True
     else:
@@ -260,6 +277,10 @@ class ConstantsPanel(_ParameterPanel):
         self.mapping: Any = None
         self._snapshot: Dict[str, float] = {}
         self._pending: set = set()
+        #: Keys of the vector rows the table shows open (the table shares it).
+        self.expanded: set = set()
+        self._axis_token: Any = None
+        self._axis_checked = 0.0
         self.build()
 
     # -- the group ----------------------------------------------------------
@@ -314,20 +335,203 @@ class ConstantsPanel(_ParameterPanel):
         return list(self.group.parameters_all) if self.group is not None else []
 
     def parameter_rows(self) -> List[dict]:
+        """Scalars one row each; a vector as a parent row over its populations."""
+        from .constant_rows import constant_rows
+
         if self.group is None:
-            return self._cache.get([{"name": k, "value": v, "fixed": True, "lo": None,
-                                     "hi": None, "bounds": False, "link": ""}
-                                    for k, v in self.mapping.items()])
-        return super().parameter_rows()
+            return self._cache.get(constant_rows(self.values()))
+        from ...core import constants_group as cg
+
+        params = self.group.parameters_all_dict
+        return self._cache.get(constant_rows(self.values(), params,
+                                             cg.vectors_state(self.group)))
+
+    def _parameter(self, record):
+        if not isinstance(record, dict):
+            return None
+        name = record.get("param", record.get("name"))
+        return self.group.parameters_all_dict.get(name) if self.group is not None and name \
+            else None
+
+    def _vector_of(self, record) -> str:
+        """The vector a parent row stands for (``""`` for any other row)."""
+        from .constant_rows import parent_key
+
+        if not isinstance(record, dict) or record.get("param"):
+            return ""
+        key = str(record.get("key", ""))
+        return key[:-2] if key.endswith("[]") and key == parent_key(key[:-2]) else ""
+
+    def cell_editable(self, record, key) -> bool:
+        """A vector's parent row takes only *Fixed* (for all its elements)."""
+        if self._vector_of(record):
+            return key == "fixed"
+        if self.group is None:
+            return key == "value"
+        parameter = self._parameter(record)
+        return not (key == "value" and getattr(parameter, "is_linked", False))
 
     def edit_parameter(self, record, key, value) -> None:
+        vector = self._vector_of(record)
+        if vector:
+            if key == "fixed" and self.group is not None:
+                from ...core import constants_group as cg
+
+                for _label, parameter in cg.vector_elements(self.group, vector):
+                    parameter.fixed = bool(value)
+                self.changed()
+            return
         if self.group is None:
             number = _number(value)
             if key == "value" and number is not None:
-                self.mapping[record["name"]] = number
+                self.mapping[record.get("param") or record["name"]] = number
                 self.changed()
             return
         super().edit_parameter(record, key, value)
+
+    # -- vectors --------------------------------------------------------------
+    def parameter_menu(self, record, key, where) -> None:
+        """A vector's own menu on its parent row; *Make vector…* on a scalar."""
+        vector = self._vector_of(record)
+        if vector:
+            values = [r["value"] for r in self.parameter_rows()
+                      if r.get("parent") == record.get("key") and r.get("name") != "(global)"]
+            entries = [
+                ("Copy values", lambda: self.feature.copy_text(
+                    "\t".join(repr(float(v)) for v in values))),
+                ("Paste values", lambda: self.paste_vector(vector)),
+                ("Populations…", lambda: self.feature.open_window(
+                    VectorDialog(self.feature, self, vector))),
+                ("Make scalar", lambda: self.make_scalar(vector)),
+            ]
+            self.feature.open_menu(entries, where)
+            return
+        parameter = self._parameter(record)
+        if parameter is None:
+            return
+        from ...core.vector_constants import split_element
+
+        if self.group is None or record.get("parent"):
+            super().parameter_menu(record, key, where)
+            return
+        name = parameter.name
+        if split_element(name) is not None:
+            super().parameter_menu(record, key, where)
+            return
+        entries = [("Copy", lambda: self.feature.copy_text(repr(float(parameter.value)))),
+                   ("Paste", lambda: self._paste(parameter)),
+                   ("Link…", lambda: self.feature.open_link(parameter, self))]
+        if getattr(parameter, "is_linked", False):
+            entries.append(("Unlink", lambda: self._unlink(parameter)))
+        entries.append(("Make vector…", lambda: self.feature.open_window(
+            VectorDialog(self.feature, self, name))))
+        self.feature.open_menu(entries, where)
+
+    def column_options(self) -> List[str]:
+        """The burst columns a vector can pick its populations by."""
+        from ...core.vector_constants import DEFAULT_COLUMN
+
+        model = self.feature.app.model
+        names = list(model.parameter_names) if model.has_data else []
+        return [DEFAULT_COLUMN] + [n for n in names if n != DEFAULT_COLUMN]
+
+    def set_vector(self, name: str, values: Sequence[float], populations: Sequence[str],
+                   uncertainties: Optional[Sequence[float]] = None, *,
+                   default: Optional[float] = None, column: Optional[str] = None,
+                   probabilities: Optional[Dict[str, str]] = None,
+                   codes: Optional[Dict[str, float]] = None, expand: bool = True) -> None:
+        """Make *name* a per-population vector and re-derive what reads it.
+
+        The API a calibration uses (see :func:`ndxplorer.core.constants_group.set_vector`):
+        *values* and *uncertainties* one per population, *default* the global
+        value (a burst in no population), *column* the burst column that picks
+        the population, *probabilities* ``label -> column`` of per-burst
+        assignment probabilities (then a burst gets the weighted mix), *codes*
+        ``label -> value in column``.
+        """
+        from ...core.vector_constants import element_name
+
+        if self.group is not None:
+            from ...core import constants_group as cg
+
+            cg.set_vector(self.group, name, values, populations, uncertainties=uncertainties,
+                          default=default, column=column, probabilities=probabilities,
+                          codes=codes)
+        else:
+            for label, value in zip(populations, values):
+                self.mapping[element_name(name, str(label))] = float(value)
+            if default is not None or name not in self.mapping:
+                self.mapping[name] = float(default if default is not None else
+                                           sum(values) / max(len(values), 1))
+        if expand:
+            from .constant_rows import parent_key
+
+            self.expanded.add(parent_key(name))
+        self.changed()
+
+    def make_vector(self, name: str, populations: Sequence[str],
+                    column: Optional[str] = None) -> None:
+        """A scalar becomes a vector, every element at the scalar's value."""
+        value = float(self.values()[name])
+        self.set_vector(name, [value] * len(populations), populations, default=value,
+                        column=column)
+
+    def make_scalar(self, name: str) -> None:
+        """A vector becomes its global value: the elements go."""
+        from ...core.vector_constants import split_element
+
+        if self.group is not None:
+            from ...core import constants_group as cg
+
+            cg.to_scalar(self.group, name)
+        else:
+            for key in [k for k in self.mapping if (split_element(k) or ("",))[0] == name]:
+                del self.mapping[key]
+        self.changed()
+
+    def paste_vector(self, name: str) -> None:
+        """Paste one number per population (tabs, commas or spaces between)."""
+        from ...core.vector_constants import element_name
+
+        text = str(self.feature.clipboard).replace(",", " ").split()
+        numbers = [_number(t) for t in text]
+        labels = [r["name"] for r in self.parameter_rows()
+                  if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
+        if len(numbers) != len(labels) or any(n is None for n in numbers):
+            self.feature.app.message = ("Paste values",
+                                        f"{name} has {len(labels)} populations; the clipboard "
+                                        f"holds {len(numbers)} number(s).")
+            return
+        for label, number in zip(labels, numbers):
+            parameter = self._parameter({"param": element_name(name, label)})
+            if parameter is not None and not getattr(parameter, "is_linked", False):
+                parameter.value = number
+            elif self.group is None:
+                self.mapping[element_name(name, label)] = number
+        self.changed()
+
+    def _axes_token(self) -> Any:
+        """What the vectors' label and probability columns hold (checked twice a second).
+
+        Re-clustering rewrites ``Cluster Label``; what reads a vector must follow.
+        """
+        import time
+
+        now = time.monotonic()
+        if now - self._axis_checked < 0.5:
+            return self._axis_token
+        self._axis_checked = now
+        from ...core.equation_graph import constant_vectors
+
+        model = self.feature.app.model
+        vectors = constant_vectors(self.mapping) if model.has_data else {}
+        parts = []
+        for name, vector in vectors.items():
+            for column in vector.axis.columns():
+                values = model.source.column_values(column)
+                parts.append((name, column, None if values is None else
+                              hash(np.ascontiguousarray(values).tobytes())))
+        return tuple(parts)
 
     # -- following the data manager ------------------------------------------
     def install(self) -> None:
@@ -356,6 +560,11 @@ class ConstantsPanel(_ParameterPanel):
         values = self.values()
         changed = {k for k, v in values.items() if self._snapshot.get(k) != v}
         changed |= {k for k in self._snapshot if k not in values}
+        axes = self._axes_token()
+        if axes != self._axis_token:
+            changed |= {name for name, _column, _hash in axes or ()}
+            changed |= {name for name, _column, _hash in self._axis_token or ()}
+            self._axis_token = axes
         if not changed:
             return False
         self._snapshot = dict(values)
@@ -398,13 +607,24 @@ class ConstantsPanel(_ParameterPanel):
     def add_parameter(self) -> None:
         self.feature.open_window(AddParameterDialog(self.feature, self))
 
-    def add(self, name: str, value: float) -> Optional[str]:
-        """Append a constant; returns why not, or ``None``."""
+    def add(self, name: str, value: float, populations: Optional[Sequence[str]] = None,
+            column: Optional[str] = None) -> Optional[str]:
+        """Append a constant (a vector with *populations*); returns why not, or ``None``."""
+        from ...core.vector_constants import split_element
+
         name = str(name).strip()
         if not name:
             return "A parameter needs a name."
         if name in dict(self.mapping):
             return f"A parameter named '{name}' already exists."
+        if populations is not None:
+            if not populations:
+                return "A vector needs its populations: how many, or their names."
+            if split_element(name) is not None:
+                return "A vector's name cannot end in [...]."
+            self.set_vector(name, [float(value)] * len(populations), list(populations),
+                            default=float(value), column=column)
+            return None
         if self.group is not None:
             from ...core import constants_group as cg
 
@@ -467,7 +687,7 @@ class AddParameterDialog(Dialog):
     """Parameters > Add parameter: a name, then a value."""
 
     spec_name = "add_parameter"
-    size = (340.0, 130.0)
+    size = (380.0, 200.0)
 
     def __init__(self, feature, panel: ConstantsPanel) -> None:
         super().__init__(feature, "Add parameter")
@@ -475,6 +695,17 @@ class AddParameterDialog(Dialog):
         self.step = "name"
         self.name = ""
         self.value = 0.0
+        #: "Scalar", or "Vector": one value per population.
+        self.kind = "Scalar"
+        self.populations = "2"
+        self.column = panel.column_options()[0]
+
+    @property
+    def vector_hidden(self) -> bool:
+        return self.step != "value" or self.kind != "Vector"
+
+    def column_options(self) -> List[str]:
+        return self.panel.column_options()
 
     def spec(self) -> dict:
         return _fill(load_spec(self.spec_name), value_label=f"Value for '{self.name}':")
@@ -493,9 +724,68 @@ class AddParameterDialog(Dialog):
             self.name = name
             self.step = "value"
             return
-        problem = self.panel.add(self.name, float(self.value))
+        from .constant_rows import parse_populations
+
+        populations = parse_populations(self.populations) if self.kind == "Vector" else None
+        problem = self.panel.add(self.name, float(self.value), populations, self.column)
         if problem:
             self.feature.app.message = ("Add parameter", problem)
+        self.close()
+
+
+class VectorDialog(Dialog):
+    """Make vector… / Populations…: a constant's populations and the column picking them."""
+
+    spec_name = "vector"
+    size = (400.0, 170.0)
+
+    def __init__(self, feature, panel: ConstantsPanel, name: str) -> None:
+        from ...core.vector_constants import DEFAULT_COLUMN
+
+        self.panel = panel
+        self.name = name
+        self.is_vector = any(r.get("key") == f"{name}[]" for r in panel.parameter_rows())
+        super().__init__(feature, f"Populations of {name}" if self.is_vector
+                         else f"Make {name} a vector")
+        labels = [r["name"] for r in panel.parameter_rows()
+                  if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
+        self.populations = ", ".join(labels) if labels else "2"
+        column = DEFAULT_COLUMN
+        if self.is_vector and panel.group is not None:
+            from ...core import constants_group as cg
+
+            column = cg.vector_axis(panel.group, name).column
+        self.column = column
+
+    @property
+    def hint(self) -> str:
+        return (f"One value of {self.name} per population; a burst takes its population's "
+                "value, and a burst in no population the global one.")
+
+    def column_options(self) -> List[str]:
+        options = self.panel.column_options()
+        return options if self.column in options else [self.column] + options
+
+    def ok(self) -> None:
+        from .constant_rows import parse_populations
+
+        labels = parse_populations(self.populations)
+        if not labels:
+            self.feature.app.message = ("Populations", "Give how many populations, or their "
+                                                       "names (HF, LF).")
+            return
+        if not self.is_vector:
+            self.panel.make_vector(self.name, labels, self.column)
+        else:
+            values = self.panel.values()
+            from ...core.vector_constants import element_name
+
+            default = values.get(self.name)
+            numbers = [values.get(element_name(self.name, l), default) for l in labels]
+            fallback = default if default is not None else sum(
+                n for n in numbers if n is not None) / max(sum(n is not None for n in numbers), 1)
+            self.panel.set_vector(self.name, [fallback if n is None else n for n in numbers],
+                                  labels, column=self.column)
         self.close()
 
 

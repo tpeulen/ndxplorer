@@ -1,5 +1,5 @@
 {
- "_comment": "The Parameters tab: nDXplorer's constants (Qt: ui/parameter_editor.py). An edit re-derives the columns that read the constant.",
+ "_comment": "The Parameters tab: nDXplorer's constants (Qt: ui/parameter_editor.py). A vector constant is an expandable row with one child per population. An edit re-derives the columns that read the constant.",
  "sections": [
   {
    "type": "info",
@@ -28,13 +28,13 @@
     "editable": true,
     "edited_call": "edit_parameter",
     "context_call": "parameter_menu",
-    "row_key": "name",
-    "height": 420,
+    "row_key": "key",
     "columns": [
      {
       "key": "name",
       "title": "Name",
-      "editable": false
+      "editable": false,
+      "tooltip": "A vector (▸ gamma [2]) holds one value per population; open it for the elements."
      },
      {
       "key": "value",
@@ -43,36 +43,38 @@
      {
       "key": "fixed",
       "title": "Fixed",
-      "width": 52
+      "tooltip": "Fixed: a fit that reads this constant leaves it alone."
      },
      {
       "key": "lo",
       "title": "Lo",
-      "width": 60
+      "tooltip": "Lower bound. −∞: none. Type a number to set it, nothing (or ∞) to remove it."
      },
      {
       "key": "hi",
       "title": "Hi",
-      "width": 60
-     },
-     {
-      "key": "bounds",
-      "title": "Bounds",
-      "width": 62
+      "tooltip": "Upper bound. ∞: none. Type a number to set it, nothing (or ∞) to remove it."
      },
      {
       "key": "link",
       "title": "Link",
-      "width": 70,
       "editable": false,
       "tooltip": "The fit parameter this constant follows (right-click to link or unlink)."
      }
-    ]
+    ],
+    "tree_key": "parent",
+    "expanded_attr": "expanded",
+    "tooltip_key": "note",
+    "editable_call": "cell_editable",
+    "fit_columns": true,
+    "min_column_width": 34,
+    "expand": true,
+    "reserve": 64
    }
   },
   {
    "type": "info",
-   "text": "Right-click a row to copy, paste, link or unlink it."
+   "text": "Right-click a row to copy, paste, link, or make it a vector (one value per population)."
   },
   {
    "type": "row",

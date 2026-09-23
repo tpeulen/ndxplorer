@@ -1,10 +1,18 @@
 {
- "_comment": "Parameters > Add parameter: the name, then the value (Qt: two QInputDialogs).",
+ "_comment": "Parameters > Add parameter: the name, then the value -- and, for a vector, its populations and the column that picks them (Qt: two QInputDialogs).",
  "sections": [
   {"type": "value", "attr": "name", "label": "Parameter name:", "kind": "str",
    "hidden_when": {"attr": "step", "equals": "value"}},
   {"type": "value", "attr": "value", "label": "{value_label}", "kind": "float",
    "hidden_when": {"attr": "step", "equals": "name"}},
+  {"type": "choice", "attr": "kind", "label": "Kind:", "options": ["Scalar", "Vector"], "style": "radio",
+   "hidden_when": {"attr": "step", "equals": "name"}},
+  {"type": "value", "attr": "populations", "label": "Populations:", "kind": "str",
+   "description": "How many (3: populations 0, 1, 2), or their names (HF, LF).",
+   "hidden_when": {"attr": "vector_hidden", "equals": true}},
+  {"type": "choice", "attr": "column", "label": "Picked by:", "options_source": "column_options",
+   "description": "The burst column whose value says which population a burst is in.",
+   "hidden_when": {"attr": "vector_hidden", "equals": true}},
   {"type": "button_row", "buttons": [
    {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
  ]

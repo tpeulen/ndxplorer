@@ -1,0 +1,12 @@
+{
+ "_comment": "Parameters > right-click > Make vector / Populations: one value per population, and the burst column that says which population a burst is in.",
+ "sections": [
+  {"type": "info", "source": "hint"},
+  {"type": "value", "attr": "populations", "label": "Populations:", "kind": "str",
+   "description": "How many (3: populations 0, 1, 2), or their names (HF, LF)."},
+  {"type": "choice", "attr": "column", "label": "Picked by:", "options_source": "column_options",
+   "description": "The burst column whose value says which population a burst is in."},
+  {"type": "button_row", "buttons": [
+   {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
+ ]
+}
