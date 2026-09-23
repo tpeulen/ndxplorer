@@ -1614,9 +1614,18 @@ class OverlaysFeature(Feature):
         dialog = self.top or self.window
         return dialog.box if dialog is not None else None
 
+    def _open_lists(self) -> list:
+        """The choice lists emtk has up (a view_form combo draws its own)."""
+        from emtk.overlays import open_panels
+
+        return open_panels(self.app.storage)
+
     def _popup_box(self, _replay):
         popup = self.app.popup
-        return popup[0].panel_rect if popup is not None else None
+        if popup is not None:
+            return popup[0].panel_rect
+        lists = self._open_lists()
+        return lists[-1].panel_rect if lists else None
 
     def _op_tab(self, replay, step):
         title = step.get("title")
@@ -1634,7 +1643,16 @@ class OverlaysFeature(Feature):
         replay.settle()
         popup = self.app.popup
         labels = self.overlays.equation_options()
-        if popup is None or step["value"] not in labels:
+        lists = self._open_lists()
+        if popup is None and lists and step["value"] in labels:
+            # the combo's own list (emtk.overlays): click the row
+            rect = lists[-1].row_rect(labels.index(step["value"]))
+            if rect is not None:
+                replay.click_rect(rect)
+            else:
+                lists[-1].close()
+                self.overlays.equation_choice = step["value"]
+        elif popup is None or step["value"] not in labels:
             self.overlays.equation_choice = step["value"]
         else:
             items = popup[1]
@@ -1685,6 +1703,8 @@ class OverlaysFeature(Feature):
             if self.app.popup is not None:
                 self.app.popup[0].close()
                 self.app.popup = None
+            for panel in self._open_lists():
+                panel.close()
             replay.settle()
             return True
         if "dockWidget_Equations" in code:
