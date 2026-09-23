@@ -24,13 +24,10 @@ except ImportError:
 
 
 def get_available_colormaps() -> List[str]:
-    if PYQTGRAPH_AVAILABLE:
-        try:
-            return sorted(set(pg.colormap.listMaps()))
-        except Exception as e:
-            logging.warning(f"Failed to get colormap list from pyqtgraph: {e}")
+    """The colormap names (see :mod:`.colormap_lut`, which reads them without Qt)."""
+    from .colormap_lut import available_colormaps
 
-    return ["viridis", "plasma", "inferno", "magma", "cividis"]
+    return list(available_colormaps())
 
 
 def create_colormap_lut(
@@ -38,35 +35,10 @@ def create_colormap_lut(
     n_colors: int = 256,
     gamma: float = 1.0
 ) -> np.ndarray:
-    """
-    Create lookup table (LUT) for specified colormap.
-    
-    Args:
-        colormap_name: Name of the colormap
-        n_colors: Number of colors in LUT
-        gamma: Gamma correction factor
-        
-    Returns:
-        Array of RGBA color values (shape: n_colors, 4)
-    """
-    if PYQTGRAPH_AVAILABLE:
-        try:
-            cmap = pg.colormap.get(colormap_name)
-            positions = np.linspace(0.0, 1.0, n_colors)
-            colors = cmap.map(positions, mode="float")
-            if gamma != 1.0:
-                colors[:, :3] = np.power(colors[:, :3], gamma)
-            return (np.clip(colors, 0.0, 1.0) * 255).astype(np.uint8)
-        except Exception as e:
-            logging.warning(f"Failed to create pyqtgraph LUT for {colormap_name}: {e}")
+    """``(n_colors, 4)`` uint8 RGBA lookup table; see :func:`.colormap_lut.lookup_table`."""
+    from .colormap_lut import lookup_table
 
-    logging.warning("pyqtgraph colormap lookup failed for %s, using grayscale LUT", colormap_name)
-    lut = np.zeros((n_colors, 4), dtype=np.uint8)
-    lut[:, 0] = np.linspace(0, 255, n_colors)
-    lut[:, 1] = np.linspace(0, 255, n_colors)
-    lut[:, 2] = np.linspace(0, 255, n_colors)
-    lut[:, 3] = 255
-    return lut
+    return lookup_table(colormap_name, n_colors, gamma)
 
 
 def apply_colormap_to_data(
@@ -76,53 +48,10 @@ def apply_colormap_to_data(
     vmax: Optional[float] = None,
     gamma: float = 1.0
 ) -> np.ndarray:
-    """
-    Apply colormap to 2D data array.
-    
-    Args:
-        data: 2D data array
-        colormap_name: Name of colormap to apply
-        vmin: Minimum data value for mapping
-        vmax: Maximum data value for mapping
-        gamma: Gamma correction factor
-        
-    Returns:
-        RGBA image array (shape: height, width, 4)
-    """
-    if data.ndim != 2:
-        raise ValueError("Data must be 2-dimensional")
-    
-    # Determine data range
-    if vmin is None:
-        vmin = np.nanmin(data)
-    if vmax is None:
-        vmax = np.nanmax(data)
-    
-    # Handle case where vmin == vmax
-    if vmin == vmax:
-        vmin = vmin - 0.5
-        vmax = vmax + 0.5
-    
-    # Normalize data to [0, 1]
-    norm_data = (data - vmin) / (vmax - vmin)
-    norm_data = np.clip(norm_data, 0, 1)
-    
-    # Apply gamma correction
-    if gamma != 1.0:
-        norm_data = np.power(norm_data, gamma)
-    
-    if PYQTGRAPH_AVAILABLE:
-        try:
-            cmap = pg.colormap.get(colormap_name)
-            colored_data = cmap.map(norm_data, mode="float")
-            return (np.clip(colored_data, 0.0, 1.0) * 255).astype(np.uint8)
-        except Exception as e:
-            logging.warning(f"Failed to apply pyqtgraph colormap '{colormap_name}': {e}")
+    """Colour a 2-D array as ``(h, w, 4)`` uint8 RGBA; see :func:`.colormap_lut.apply_colormap`."""
+    from .colormap_lut import apply_colormap
 
-    logging.warning("pyqtgraph colormap %s failed, using grayscale", colormap_name)
-    gray_data = (norm_data * 255).astype(np.uint8)
-    rgba_data = np.stack([gray_data, gray_data, gray_data, np.full_like(gray_data, 255)], axis=-1)
-    return rgba_data
+    return apply_colormap(data, colormap_name, vmin, vmax, gamma)
 
 
 def get_colormap_limits(

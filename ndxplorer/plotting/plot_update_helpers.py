@@ -572,30 +572,13 @@ def auto_contrast(ndxplorer: "NDXplorer", skip_if_preserve: bool = True):
             ndxplorer.on_vmin_vmax_changed()
             return
 
-        if ndxplorer.checkBoxLogCounts.isChecked():
-            min_positive = np.min(hist[hist > 0]) if np.any(hist > 0) else 1e-10
-            hist_processed = np.maximum(hist, min_positive / 10)
-            hist_processed = np.log10(hist_processed)
-            hist_processed = np.nan_to_num(hist_processed)
-        else:
-            hist_processed = hist
+        from ..core.histograms import auto_contrast_limits
 
-        non_zero_values = hist_processed[hist_processed > 0]
-        if non_zero_values.size > 0:
-            vmin, vmax = compute_percentile_range_optimized(non_zero_values, 1, 99)
-            if vmin == vmax:
-                vmin = 0.9 * vmin if vmin != 0 else 0
-                vmax = 1.1 * vmax if vmax != 0 else 1
-
-            logging.debug("Setting auto contrast: vmin=%s vmax=%s", vmin, vmax)
-            ndxplorer.vmin = vmin
-            ndxplorer.vmax = vmax
-            ndxplorer.on_vmin_vmax_changed()
-        else:
-            logging.debug("No non-zero values in histogram – using defaults")
-            ndxplorer.vmin = 0
-            ndxplorer.vmax = 1
-            ndxplorer.on_vmin_vmax_changed()
+        vmin, vmax = auto_contrast_limits(hist, ndxplorer.checkBoxLogCounts.isChecked())
+        logging.debug("Setting auto contrast: vmin=%s vmax=%s", vmin, vmax)
+        ndxplorer.vmin = vmin
+        ndxplorer.vmax = vmax
+        ndxplorer.on_vmin_vmax_changed()
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         logging.warning("Error in auto contrast: %s", exc)
         ndxplorer.vmin = 0
@@ -643,22 +626,13 @@ def update_spinbox_limits(ndxplorer, *, low_pct: float = 0.1, high_pct: float = 
         logging.debug("update_spinbox_limits: histogram missing")
         return
 
-    mask = np.isfinite(H)
-    if not np.any(mask):
+    if not np.any(np.isfinite(H)):
         logging.debug("update_spinbox_limits: no finite bins")
         return
 
-    data = H[mask]
-    if ndxplorer.checkBoxLogCounts.isChecked():
-        data = data[data > 0]
-        if data.size == 0:
-            return
-        data = np.log10(data)
+    from ..core.histograms import colour_limits
 
-    vmin, vmax = compute_percentile_range_optimized(data, low_pct, high_pct)
-    if ndxplorer.checkBoxLogCounts.isChecked():
-        vmin = 10 ** vmin
-        vmax = 10 ** vmax
+    vmin, vmax = colour_limits(H, ndxplorer.checkBoxLogCounts.isChecked(), low_pct, high_pct)
     ndxplorer.vmin = vmin
     ndxplorer.vmax = vmax
     ndxplorer.on_vmin_vmax_changed()

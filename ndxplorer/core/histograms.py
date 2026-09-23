@@ -218,3 +218,74 @@ class Histogram3D:
         """Get Z marginal histogram (sum along X and Y axes)."""
         counts = np.sum(self.H, axis=(1, 2))
         return Histogram1D(edges=self.z_edges, counts=counts)
+
+
+# ---------------------------------------------------------------------------
+# What the 2-D map shows, and the colour limits on it
+# ---------------------------------------------------------------------------
+# These were computed inline in the Qt window, three times over (the map's
+# log transform in ``update_2d_plot``, the Contrast button's limits in
+# ``auto_contrast`` and the limits every redraw sets in
+# ``update_spinbox_limits``). Both GUIs call these now.
+
+def display_counts(H: np.ndarray, log_counts: bool = False) -> np.ndarray:
+    """The counts the 2-D map colours: *H*, or ``log10`` of it with "log #".
+
+    Empty bins are drawn a decade below the smallest filled one, so they stay
+    darker than anything filled instead of becoming ``-inf``.
+    """
+    data = np.array(H, dtype=np.float64)
+    if not log_counts:
+        return data
+    positive = data[data > 0]
+    smallest = float(np.min(positive)) if positive.size else 1e-10
+    return np.nan_to_num(np.log10(np.maximum(data, smallest / 10.0)))
+
+
+def auto_contrast_limits(H: np.ndarray, log_counts: bool = False) -> Tuple[float, float]:
+    """The Contrast button's limits: the 1st to 99th percentile of the filled bins.
+
+    In the units :func:`display_counts` draws in. ``(0, 1)`` for an empty map.
+    """
+    from ..utils.performance import compute_percentile_range_optimized
+
+    H = np.asarray(H, dtype=np.float64)
+    if H.size == 0 or not np.any(np.isfinite(H)) or np.all(np.nan_to_num(H) == 0):
+        return 0.0, 1.0
+    shown = display_counts(H, log_counts)
+    filled = shown[shown > 0]
+    if filled.size == 0:
+        return 0.0, 1.0
+    vmin, vmax = compute_percentile_range_optimized(filled, 1, 99)
+    if vmin == vmax:
+        vmin = 0.9 * vmin if vmin != 0 else 0.0
+        vmax = 1.1 * vmax if vmax != 0 else 1.0
+    return float(vmin), float(vmax)
+
+
+def colour_limits(H: np.ndarray, log_counts: bool = False, low_pct: float = 0.1,
+                  high_pct: float = 99.0) -> Tuple[float, float]:
+    """The limits a redraw sets: percentiles of the filled bins.
+
+    Parameters
+    ----------
+    H : numpy.ndarray
+        The 2-D histogram.
+    log_counts : bool
+        Whether the map is drawn in ``log10`` counts; the limits are then in
+        those units too, so they apply to what is drawn.
+    low_pct, high_pct : float
+        Percentiles in ``[0, 100]``.
+    """
+    H = np.asarray(H, dtype=np.float64)
+    filled = H[np.isfinite(H) & (H > 0)]
+    data = np.log10(filled) if log_counts else filled
+    if data.size < 2:
+        # Too few filled bins for percentiles: the whole range.
+        shown = display_counts(H, log_counts)
+        shown = shown[np.isfinite(shown)]
+        if shown.size == 0:
+            return 0.0, 1.0
+        return float(np.min(shown)), float(np.max(shown))
+    vmin, vmax = np.percentile(data, [low_pct, high_pct])
+    return float(vmin), float(vmax)

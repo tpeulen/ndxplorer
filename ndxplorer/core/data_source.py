@@ -996,7 +996,8 @@ class DataSource:
 
     # ---- merge ----
 
-    def merge(self, other_source: "DataSource", mode: str = 'columns') -> bool:
+    def merge(self, other_source: "DataSource", mode: str = 'columns',
+              warn=None) -> bool:
         """
         Merge data from another DataSource.
 
@@ -1004,17 +1005,20 @@ class DataSource:
         a name already present keeps this table's column). ``'rows'`` stacks the
         other table's rows under these, keeping only the columns both have.
 
+        ``warn(title, message)`` is told why rows or columns were left out or
+        the merge refused; without one the reason is logged. The GUI passes
+        its message box -- the table does not raise dialogs itself.
+
         Returns
         -------
         bool
             True on success, False otherwise.
         """
         def _warn(title: str, msg: str) -> None:
-            try:
-                from qtpy.QtWidgets import QMessageBox  # type: ignore
-                QMessageBox.warning(None, title, msg)
-            except Exception:
-                print(f"[merge:{title}] {msg}", file=sys.stderr)
+            if warn is not None:
+                warn(title, msg)
+            else:
+                logging.warning("merge: %s: %s", title, msg)
 
         own_names = list(self.parameter_names)
         other_names = list(other_source.parameter_names)

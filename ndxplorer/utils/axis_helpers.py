@@ -290,3 +290,41 @@ def compute_axis_min(values, scale: str = "lin") -> float:
 
 def compute_axis_max(values, scale: str = "lin") -> float:
     return robust_axis_range(values, scale)[1]
+
+
+def settings_for_axis(name: str, axis_settings, with_2d: bool = True) -> Optional[dict]:
+    """How an axis showing parameter *name* is set up, from the axis settings.
+
+    Parameters
+    ----------
+    name : str
+        The parameter the axis now shows.
+    axis_settings : mapping
+        Parameter name -> ``{"min", "max", "scale", "n_bins_1d", "n_bins_2d"}``
+        (``mfd.axis.json``).
+    with_2d : bool
+        Whether the axis has a 2-D bin count (x and y do, z does not).
+
+    Returns
+    -------
+    dict or None
+        ``{"bins_1d", "bins_2d", "min", "max", "scale"}``; ``min``/``max`` are
+        ``None`` where the settings do not say (the caller auto-ranges those),
+        ``bins_2d`` is ``None`` without a 2-D axis. ``None`` altogether when the
+        parameter has no settings: the axis is auto-ranged.
+
+    A pixel axis gets one 2-D bin per pixel -- as many bins as its maximum.
+    """
+    d = axis_settings.get(name) if axis_settings else None
+    if not isinstance(d, dict):
+        return None
+    bins_2d = None
+    if with_2d:
+        bins_2d = int(d.get("max", 256)) if "pixel" in name.lower() else d.get("n_bins_2d", 50)
+    return {
+        "bins_1d": d.get("n_bins_1d", 50),
+        "bins_2d": bins_2d,
+        "min": d.get("min"),
+        "max": d.get("max"),
+        "scale": d.get("scale", "lin"),
+    }

@@ -67,7 +67,10 @@ def _handle_append(ndxplorer: "NDXplorer", new_source, merge_mode: str) -> None:
     """Append/replace loaded data followed by UI updates."""
     current = ndxplorer.data_source
     if current is not None and not current.empty:
-        if current.merge(new_source, mode=merge_mode):
+        def warn(title: str, message: str) -> None:
+            QtWidgets.QMessageBox.warning(ndxplorer, title, message)
+
+        if current.merge(new_source, mode=merge_mode, warn=warn):
             # Re-assign through the property so the data manager sees the
             # merged frame and its caches are invalidated.
             ndxplorer.data_source = current

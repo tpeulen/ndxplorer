@@ -13,7 +13,6 @@ except ImportError:
     PYQTGRAPH_AVAILABLE = False
     SpinBox = None
 
-from ..core.data_source import RectangularDataSelection, Gaussian2DSelection, MaskDataSelection
 from ..logging_config import logging
 from ..widgets.mask_drawing_widget import MaskDrawingWidget
 from .controls import ScaleControlMixin, AxisControlMixin, HistogramControlMixin
@@ -697,27 +696,18 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         props = axis_properties[axis]
         _, name = props['property']
 
-        if name in self.axis_settings:
-            d = self.axis_settings[name]
+        from ..utils.axis_helpers import settings_for_axis
 
-            # Set the 1D histogram bins
-            setattr(self, props['hist_1d'], d.get('n_bins_1d', 50))
-
-            # Set the 2D histogram bins if applicable
+        setup = settings_for_axis(name, self.axis_settings, with_2d=props['hist_2d'] is not None)
+        if setup is not None:
+            setattr(self, props['hist_1d'], setup["bins_1d"])
             if props['hist_2d'] is not None:
-                # Special handling for pixel - adjust 2d hist bins to max value
-                if "pixel" in name.lower():
-                    setattr(self, props['hist_2d'], int(d.get('max', 256)))
-                    logging.log(0, f"{name} selected: Setting {props['hist_2d']} to {getattr(self, props['hist_2d'])}")
-                else:
-                    setattr(self, props['hist_2d'], d.get('n_bins_2d', 50))
-
-            # Set the min, max, and scale
-            setattr(self, props['min'], d.get('min', getattr(self.parent, props['parent_min'])))
-            setattr(self, props['max'], d.get('max', getattr(self.parent, props['parent_max'])))
-            setattr(self, props['scale'], d.get('scale', "lin"))
-
-            logging.log(0, f"{axis.upper()} axis changed to settings: {d}")
+                setattr(self, props['hist_2d'], setup["bins_2d"])
+            lo, hi = setup["min"], setup["max"]
+            setattr(self, props['min'], lo if lo is not None else getattr(self.parent, props['parent_min']))
+            setattr(self, props['max'], hi if hi is not None else getattr(self.parent, props['parent_max']))
+            setattr(self, props['scale'], setup["scale"])
+            logging.log(0, f"{axis.upper()} axis changed to settings: {setup}")
         else:
             logging.log(0, f"{axis.upper()} axis settings for {name} not found. Using auto range.")
             props['auto_range']()
@@ -1360,195 +1350,67 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.parent.update_plots()
         self.parent._preserve_contrast = False
     def get_selections(self):
-        selections = list()
+        """The table's gates as selections: its rows read as plain data.
+
+        What a row means is decided by :func:`ndxplorer.core.gates.selections_from_rows`,
+        which the emtk app uses too; this only reads the cells.
+        """
+        from ..core.gates import GateRow, selections_from_rows
+
         table = self.tableWidget
-        n_rows = int(table.rowCount())
-        
-        # Log the internal selections list state for debugging
-        logging.debug(f"get_selections: table_rows={n_rows}, internal_list_size={len(self._selections)}")
-        
-        for r in range(n_rows):
+        rows, texts = [], []
+        for r in range(int(table.rowCount())):
             item0 = table.item(r, 0)
             if item0 is None:
                 continue
-                
-            idx = int(item0.data(1))
-            name = str(item0.text()) # Use text() directly for comparison
             lower_item = table.item(r, 1)
             upper_item = table.item(r, 2)
-            
-            # Use safe conversion for lower/upper bounds
-            def safe_float(item):
-                if item is None:
-                    return 0.0
-                try:
-                    # Try data role 0 first (stored numeric value)
-                    data_val = item.data(0)
-                    if data_val is not None:
-                        try:
-                            return float(data_val)
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # Fallback to display text
-                    txt = item.text().strip()
-                    if txt in ("Bitmap", "Mask", "G2D", "---"):
-                        return 0.0
-                    return float(txt)
-                except (ValueError, TypeError):
-                    return 0.0
-
-            lower = safe_float(lower_item)
-            upper = safe_float(upper_item)
-            
-            # Get invert and enabled states from checkboxes
             cb_invert = table.cellWidget(r, 3)
             cb_enable = table.cellWidget(r, 4)
-            invert = cb_invert.isChecked() if cb_invert else False
-            enabled = cb_enable.isChecked() if cb_enable else True
-            logging.debug(f"Row {r} ({name}): invert={invert}, enabled={enabled}")
-            
-            # Try to decode metadata
-            meta = None
-            try:
-                # Try multiple roles for metadata
-                # Use a larger set of roles to be safe
-                for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10, QtCore.Qt.UserRole + 100]:
-                    meta_raw = item0.data(role)
-                    if meta_raw:
-                        try:
-                            if isinstance(meta_raw, dict):
-                                meta = meta_raw
-                            else:
-                                meta = json.loads(str(meta_raw))
-                            if meta and isinstance(meta, dict) and "type" in meta: 
-                                break
-                        except Exception:
-                            continue
-            except Exception:
-                meta = None
-            
-            # Identify selection type with heavy fallback
-            sel_type = None
-            if isinstance(meta, dict):
-                sel_type = meta.get("type")
-            
-            # Fallback identification based on cell text if metadata missing or corrupted
-            if sel_type is None:
-                txt1 = lower_item.text() if lower_item else ""
-                txt2 = upper_item.text() if upper_item else ""
-                if "Bitmap" in txt1 or "Bitmap" in txt2 or "Mask" in name:
-                    sel_type = "Mask"
-                    logging.info(f"Row {r}: Identified as 'Mask' via text fallback (name='{name}')")
-                elif "G2D" in name:
-                    sel_type = "G2D"
-                    logging.info(f"Row {r}: Identified as 'G2D' via text fallback (name='{name}')")
-
-            # RECONSTRUCTION
-            if sel_type == "G2D":
-                try:
-                    idx1 = int(meta.get("idx1", idx)) if meta else idx
-                    idx2 = int(meta.get("idx2", idx)) if meta else idx
-                    mu = meta.get("mu", [0.0, 0.0]) if meta else [0.0, 0.0]
-                    cov = meta.get("cov", [[1.0, 0.0], [0.0, 1.0]]) if meta else [[1.0, 0.0], [0.0, 1.0]]
-                    sigma = float(meta.get("sigma", 1.0)) if meta else 1.0
-                    log_x = bool(meta.get("log_x", False)) if meta else False
-                    log_y = bool(meta.get("log_y", False)) if meta else False
-                    
-                    selections.append(
-                        Gaussian2DSelection(
-                            parameter_idx1=idx1,
-                            parameter_idx2=idx2,
-                            mu=mu,
-                            cov=cov,
-                            sigma=sigma,
-                            invert=invert,
-                            enabled=enabled,
-                            name=name,
-                            log_x=log_x,
-                            log_y=log_y
-                        )
-                    )
-                    continue # Success
-                except Exception as e:
-                    logging.error(f"Error recreating G2D selection '{name}': {e}")
-                    # NEVER fall through to rectangular for suspected G2D
-                    continue
-
-            elif sel_type == "Region":
-                sel_id = meta.get('selection_id') if meta else None
-                recovered = next(
-                    (
-                        x for x in self._selections
-                        if getattr(x, 'selection_id', None) == sel_id
-                        and hasattr(x, 'roi')
-                    ),
-                    None,
-                )
-                if recovered is not None:
-                    recovered.enabled = enabled
-                    recovered.invert = invert
-                    recovered.name = name
-                    selections.append(recovered)
-                else:
-                    logging.warning(f"Region selection '{name}' has no stored region")
-                continue
-
-            elif sel_type == "Mask":
-                try:
-                    mask_found = False
-                    meta_idx1 = int(meta.get('idx1', -1)) if meta else -1
-                    meta_idx2 = int(meta.get('idx2', -1)) if meta else -1
-                    sel_id = meta.get('selection_id') if meta else None
-                    
-                    # Recover the MaskDataSelection object from the internal list
-                    for s in self._selections:
-                        if isinstance(s, MaskDataSelection):
-                            # 1. Try matching by selection_id
-                            if sel_id and hasattr(s, 'selection_id') and s.selection_id == sel_id:
-                                mask_found = True
-                            
-                            # 2. Fallback to indices and name matching
-                            if not mask_found:
-                                # If meta is missing, idx matching will use -1, so we rely on name or single-mask assumption
-                                idx_match = (s.idx1 == meta_idx1 and s.idx2 == meta_idx2) or (meta is None)
-                                # Compare against current table text 'name' and original 'meta_name'
-                                name_match = (s.name == name or name.startswith(s.name) or s.name.startswith(name))
-                                
-                                if idx_match and (name_match or len([x for x in self._selections if isinstance(x, MaskDataSelection)]) == 1):
-                                    mask_found = True
-                            
-                            if mask_found:
-                                s.enabled = enabled
-                                s.invert = invert
-                                s.name = name # Keep in sync with UI
-                                selections.append(s)
-                                logging.debug(f"Recovered MaskDataSelection object for '{name}' (id={getattr(s, 'selection_id', 'None')[:8]})")
-                                break
-                    
-                    if not mask_found:
-                        available = [f"{x.name}(id={getattr(x, 'selection_id', 'None')[:8]}, idxs={x.idx1},{x.idx2})" for x in self._selections if isinstance(x, MaskDataSelection)]
-                        logging.warning(f"MaskDataSelection object NOT FOUND for '{name}' (id={sel_id}, idxs={meta_idx1},{meta_idx2}). Available: {available}")
-                    
-                    continue # CRITICAL: never fall through to rectangular for Mask type
-                except Exception as e:
-                    logging.error(f"Error retrieving MaskDataSelection '{name}': {e}")
-                    continue
-
-            # Default rectangular selection
-            selections.append(
-                RectangularDataSelection(
-                    parameter_idx=idx,
-                    lower=lower,
-                    upper=upper,
-                    invert=invert,
-                    enabled=enabled,
-                    name=name
-                )
-            )
-        
+            rows.append(GateRow(
+                parameter_idx=int(item0.data(1)),
+                name=str(item0.text()),
+                lower=self._cell_bound(lower_item),
+                upper=self._cell_bound(upper_item),
+                invert=cb_invert.isChecked() if cb_invert else False,
+                enabled=cb_enable.isChecked() if cb_enable else True,
+                meta=self._row_meta(item0),
+            ))
+            texts.append((lower_item.text() if lower_item else "",
+                          upper_item.text() if upper_item else ""))
+        selections = selections_from_rows(rows, stored=self._selections, bound_texts=texts)
         logging.debug(f"get_selections: Returning {len(selections)} valid selection objects")
         return selections
+
+    @staticmethod
+    def _cell_bound(item) -> float:
+        """A bound cell's number: the stored value, else the text."""
+        from ..core.gates import parse_bound
+
+        if item is None:
+            return 0.0
+        value = item.data(0)
+        if value is not None:
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                pass
+        return parse_bound(item.text())
+
+    @staticmethod
+    def _row_meta(item0):
+        """The metadata record a non-interval row stashes in its first cell."""
+        for role in (QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10, QtCore.Qt.UserRole + 100):
+            raw = item0.data(role)
+            if not raw:
+                continue
+            try:
+                meta = raw if isinstance(raw, dict) else json.loads(str(raw))
+            except Exception:
+                continue
+            if isinstance(meta, dict) and "type" in meta:
+                return meta
+        return None
 
     def onSelectionItemChanged(self, item: QtWidgets.QTableWidgetItem):
         """Allow inline editing of rectangular selection bounds and names.

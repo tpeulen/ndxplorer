@@ -1917,48 +1917,26 @@ class NDXplorer(QtWidgets.QMainWindow):
             return
 
         # 1) Ensure a 2D histogram is available. When called from update_plots the
-        #    histograms were just computed, so skip the (expensive) recompute —
+        #    histograms were just computed, so skip the (expensive) recompute --
         #    this previously doubled the histogram work on every interaction.
         h2 = self._histogram.get("2d")
         has_hist = hasattr(h2, "H") or (isinstance(h2, tuple) and len(h2) == 3)
         if recompute or not has_hist:
             self.update_histograms()
-        try:
-            hist_2d = self._histogram["2d"]
-            # Extract data from 2D histogram (handle both old tuple and new clean formats)
-            if hasattr(hist_2d, 'H'):
-                # New clean Histogram2D object
-                H = hist_2d.H
-            elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
-                # Old tuple format (H, x_edges, y_edges)
-                H, *_ = hist_2d
-            else:
-                return
-        except Exception:
+        hist_2d = self._histogram.get("2d")
+        if hasattr(hist_2d, 'H'):
+            H = hist_2d.H
+        elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
+            H = hist_2d[0]
+        else:
             return
 
-        # 2) Decide which data to percentile over
-        if self.checkBoxLogCounts.isChecked():
-            # only positive bins, then log
-            mask = H > 0
-            data = np.log10(H[mask]) if np.any(mask) else np.array([])
-        else:
-            # only positive bins
-            data = H[H > 0]
+        # 2) Robust limits, in the units the map is drawn in.
+        from .histograms import colour_limits
 
-        # 3) Guard against empty data
-        if data.size < 2:
-            # too few nonzero bins → just use the full range
-            raw = H if not self.checkBoxLogCounts.isChecked() else np.log10(np.nan_to_num(H))
-            vmin, vmax = float(np.nanmin(raw)), float(np.nanmax(raw))
-        else:
-            # 4) Compute robust cutoffs
-            vmin, vmax = np.percentile(data, [low_pct, high_pct])
-            # if log scale, convert back to linear for the clim
-            if self.checkBoxLogCounts.isChecked():
-                vmin, vmax = 10 ** vmin, 10 ** vmax
+        vmin, vmax = colour_limits(H, self.checkBoxLogCounts.isChecked(), low_pct, high_pct)
 
-        # 5) Push to spin‐boxes and the image
+        # 3) Push to spin-boxes and the image
         self.vmin, self.vmax = vmin, vmax
         self.cax.set_lut_range([vmin, vmax])
         self.g_2dplot.replot()
@@ -2546,15 +2524,9 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.debug(f"Set mask shape to {mask_shape} (ny={ny_bins}, nx={nx_bins}) for TRANSPOSED display, histogram shape {H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
         
         # Optional log counts (safe for zeros)
-        data = H.copy()
-        if self.checkBoxLogCounts.isChecked():
-            if np.any(data > 0):
-                mpos = float(np.min(data[data > 0]))
-            else:
-                mpos = 1e-10
-            data = np.maximum(data, mpos / 10.0)
-            data = np.log10(data)
-            data = np.nan_to_num(data)
+        from .histograms import display_counts
+
+        data = display_counts(H, self.checkBoxLogCounts.isChecked())
 
         # H is already in (ny, nx) shape, no transpose needed for display
         img = np.ascontiguousarray(data)

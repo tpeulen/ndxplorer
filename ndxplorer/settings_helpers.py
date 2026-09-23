@@ -208,40 +208,17 @@ def load_settings(
     except Exception:
         ndxplorer._settings_json_path = None
 
-    if not pathlib.Path(settings_json_fn).exists():
-        logging.warning(f"Settings file not found: {settings_json_fn}. Falling back to defaults.")
-        default_settings_dir = pathlib.Path(__file__).parent / "settings"
-        settings_json_fn = default_settings_dir / "mfd.settings.json"
-        if not settings_json_fn.exists():
-            logging.error(f"Default settings file not found: {settings_json_fn}")
-            return
+    from .settings.bundle import read_settings
 
-    with open(settings_json_fn, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-        ndxplorer.settings.update(data)
+    bundle = read_settings(settings_json_fn)
+    ndxplorer.settings.update(bundle.settings)
 
     if "colormap" in ndxplorer.settings:
         ndxplorer.set_default_colormap(ndxplorer.settings["colormap"])
 
-    settings_dir = pathlib.Path(settings_json_fn).parent
-    default_settings_dir = pathlib.Path(__file__).parent / "settings"
-
-    fn_axis = settings_dir / ndxplorer.settings["axis"]
-    if not fn_axis.exists():
-        fn_axis = default_settings_dir / ndxplorer.settings["axis"]
-    
-    if fn_axis.exists():
-        with open(str(fn_axis), "r") as handle:
-            axis_data = json.load(handle)
-            ndxplorer.plot_control.axis_settings.update(axis_data)
-    else:
-        logging.warning(f"Axis settings file not found: {fn_axis}")
+    ndxplorer.plot_control.axis_settings.update(bundle.axis_settings)
 
     if "axis_labels" in ndxplorer.settings:
-        fn_axis_labels = settings_dir / ndxplorer.settings["axis_labels"]
-        if not fn_axis_labels.exists():
-            fn_axis_labels = default_settings_dir / ndxplorer.settings["axis_labels"]
-
         ndxplorer.axis_label_settings = {
             "enable_all_labels": True,
             "axis_labels": {
@@ -256,18 +233,8 @@ def load_settings(
                 "color": "#000000",
             },
         }
-
-        if fn_axis_labels.exists():
-            try:
-                with open(str(fn_axis_labels), "r") as handle:
-                    labels_data = yaml.load(handle, Loader=yaml.FullLoader)
-                    if labels_data is not None:
-                        ndxplorer.axis_label_settings.update(labels_data)
-            except Exception as exc:
-                logging.warning("Error loading axis label settings: %s", exc)
-        else:
-            logging.warning("Axis label settings file not found: %s", fn_axis_labels)
-
+        if bundle.axis_labels:
+            ndxplorer.axis_label_settings.update(bundle.axis_labels)
         try:
             fonts = ndxplorer.axis_label_settings.get("fonts", {})
             if not hasattr(ndxplorer, "font_settings"):
@@ -277,26 +244,9 @@ def load_settings(
         except Exception as exc:
             logging.debug("Could not apply font settings: %s", exc)
 
-    fn_equations = settings_dir / ndxplorer.settings["equations"]
-    if not fn_equations.exists():
-        fn_equations = default_settings_dir / ndxplorer.settings["equations"]
-    
-    if fn_equations.exists():
-        with open(str(fn_equations), "r") as handle:
-            ndxplorer.equations = yaml.load(handle, Loader=yaml.FullLoader)
-    else:
-        logging.warning(f"Equations file not found: {fn_equations}")
+    if bundle.equations_path is not None:
+        ndxplorer.equations = bundle.equations
+    ndxplorer.constants.update(bundle.constants)
 
-    fn_constants = settings_dir / ndxplorer.settings["constants"]
-    if not fn_constants.exists():
-        fn_constants = default_settings_dir / ndxplorer.settings["constants"]
-    
-    if fn_constants.exists():
-        from ndxplorer.core.constants_group import values_from_data
-        with open(str(fn_constants), "r") as handle:
-            # Accept both legacy flat and rich per-parameter state formats.
-            ndxplorer.constants.update(values_from_data(json.load(handle)))
-    else:
-        logging.warning(f"Constants file not found: {fn_constants}")
-
-    ndxplorer.equation_editor.load_file(str(fn_equations))
+    if bundle.equations_path is not None:
+        ndxplorer.equation_editor.load_file(str(bundle.equations_path))
