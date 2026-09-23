@@ -39,8 +39,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from . import Feature
 
-__all__ = ["PlaybackExportFeature", "PublicationExportModel", "ToolWindow", "frame_runner",
-           "create"]
+__all__ = ["PlaybackExportFeature", "PublicationExportModel", "frame_runner", "create"]
 
 logger = logging.getLogger(__name__)
 
@@ -190,89 +189,6 @@ def frame_runner(tasks: list, mode: Optional[str] = None):
     return run
 
 
-# --------------------------------------------------------------------------- #
-# A floating tool window
-# --------------------------------------------------------------------------- #
-class ToolWindow:
-    """A titled window over the main one: dragged by its title, closed by ✕.
-
-    emtk windows carry no chrome of their own, so the title row is drawn here:
-    the title, the caller's header buttons and ✕.
-    """
-
-    HEADER_H = 26.0
-
-    def __init__(self, key: str, title: str, size=(520.0, 640.0)) -> None:
-        self.key = key
-        self.title = title
-        self.size = size
-        self.pos: Optional[tuple] = None
-        self.open = False
-        self.box = (0.0, 0.0, float(size[0]), float(size[1]))
-        self._drag = None
-
-    def place(self, frame_box) -> tuple:
-        x0, y0, fw, fh = frame_box
-        w, h = min(self.size[0], fw - 20.0), min(self.size[1], fh - 40.0)
-        if self.pos is None:
-            self.pos = (x0 + fw - w - 24.0, y0 + 40.0)
-        x = min(max(self.pos[0], x0), x0 + fw - 40.0)
-        y = min(max(self.pos[1], y0), y0 + fh - self.HEADER_H)
-        self.box = (x, y, w, h)
-        return self.box
-
-    def begin(self, frame_box, buttons=()) -> Optional[str]:
-        """Open the window and draw its title row; returns the header button
-        pressed (``"close"`` for ✕), or ``None``."""
-        import emtk
-
-        from emtk.im_core import Col
-
-        x, y, w, h = self.place(frame_box)
-        emtk.begin(f"{self.title}##{self.key}", (x, y, w, h))
-        # An emtk window has no background of its own; a window over the
-        # plots needs one (the style's popup colour, and its border).
-        style = emtk.get_style()
-        draw = emtk.get_window_draw_list()
-        r, g, b = style.color(Col.WINDOW_BG)[:3]
-        draw.add_rect_filled((x, y), (x + w, y + h), (r, g, b, 255))
-        draw.add_rect_filled((x, y), (x + w, y + self.HEADER_H), style.color(Col.TITLE_BG_ACTIVE))
-        draw.add_rect((x, y), (x + w, y + h), style.color(Col.BORDER))
-        io = emtk.get_io()
-        header = (x, y, w, self.HEADER_H)
-        mx, my = io.mouse_pos
-        over = header[0] <= mx < header[0] + header[2] and header[1] <= my < header[1] + header[3]
-        emtk.set_cursor_screen_pos((x + 8.0, y + 5.0))
-        emtk.text(self.title)
-        pressed = None
-        labels = list(buttons) + ["✕"]
-        widths = [emtk.calc_text_size(label)[0] + 16.0 for label in labels]
-        bx = x + w - sum(widths) - 6.0 * len(labels) - 4.0
-        for label, bw in zip(labels, widths):
-            emtk.same_line()
-            emtk.set_cursor_screen_pos((bx, y + 3.0))
-            if emtk.button(f"{label}##{self.key}.{label}", (bw, 0.0)):
-                pressed = "close" if label == "✕" else label
-            bx += bw + 6.0
-        on_button = emtk.is_any_item_hovered()
-        if io.mouse_clicked[0] and over and not on_button and pressed is None:
-            self._drag = (mx - x, my - y)
-        if self._drag is not None:
-            if io.mouse_down[0]:
-                self.pos = (mx - self._drag[0], my - self._drag[1])
-            else:
-                self._drag = None
-        emtk.begin_child((x + 8.0, y + self.HEADER_H + 6.0, w - 16.0, h - self.HEADER_H - 12.0))
-        return pressed
-
-    @staticmethod
-    def end() -> None:
-        import emtk
-
-        emtk.end_child()
-        emtk.end()
-
-
 def help_lines(columns: int) -> List[str]:
     """``vizrank_help.md`` as plain lines of at most *columns* characters:
     paragraphs and list items wrapped, emphasis marks dropped."""
@@ -310,6 +226,7 @@ class RankingPanel:
     """One *Find informative …* window: its model, form, help and tour."""
 
     def __init__(self, feature: "PlaybackExportFeature", pairs: bool) -> None:
+        from emtk.dialog_window import DialogWindow
         from emtk.view_form import FormState
 
         from ...analysis.vizrank_model import load_spec as load_vizrank_spec
@@ -322,10 +239,10 @@ class RankingPanel:
         feature.app.forms[f"playback_export.rank.{pairs}"] = self.state
         self.model = None
         title = "Find informative projections" if pairs else "Find informative z parameters"
-        self.window = ToolWindow(f"rank{int(pairs)}", title)
+        self.window = DialogWindow(title, size=(520.0, 640.0), key=f"rank{int(pairs)}")
         self.show_help = False
-        self._help_window = ToolWindow(f"rankhelp{int(pairs)}",
-                                       "Find informative projections - help", size=(560.0, 520.0))
+        self._help_window = DialogWindow("Find informative projections - help",
+                                         size=(560.0, 520.0), key=f"rankhelp{int(pairs)}")
         self._help_top = 0
         self.tour: Optional[int] = None
         self._tour_steps: Optional[list] = None
@@ -380,6 +297,9 @@ class RankingPanel:
 
         if not self.window.open or self.model is None:
             return
+        if self.window.pos is None:
+            fx, fy, fw, _fh = frame_box
+            self.window.pos = (fx + fw - min(self.window.size[0], fw - 20.0) - 24.0, fy + 40.0)
         pressed = self.window.begin(frame_box, buttons=("Guide", "?"))
         draw_form(self.spec, self.model, self.state, titles=False)
         self._draw_note()
@@ -456,6 +376,7 @@ class RankingPanel:
         """The guided tour: each step outlines its control; an ``await`` step
         waits for the user to press it."""
         import emtk
+        from emtk.dialog_window import DialogWindow
 
         steps = self._steps()
         if not steps or self.tour >= len(steps):
@@ -468,9 +389,8 @@ class RankingPanel:
             rx, ry, rw, rh = rect
             emtk.get_foreground_draw_list().add_rect((rx - 3, ry - 3), (rx + rw + 3, ry + rh + 3),
                                                      (255, 200, 0, 255), 3.0, 0, 2.5)
-        window = ToolWindow(f"ranktour{int(self.pairs)}",
-                            f"Guide {self.tour + 1}/{len(steps)}: {step.get('title', '')}",
-                            size=(360.0, 220.0))
+        window = DialogWindow(f"Guide {self.tour + 1}/{len(steps)}: {step.get('title', '')}",
+                              size=(360.0, 220.0), key=f"ranktour{int(self.pairs)}")
         x, y, w, h = self.window.box
         window.pos = (max(frame_box[0], x - 370.0), y + h - 230.0)
         if window.begin(frame_box) == "close":
@@ -576,6 +496,7 @@ class PlaybackExportFeature(Feature):
 
     def __init__(self, app, task_mode: Optional[str] = None) -> None:
         super().__init__(app)
+        from emtk.dialog_window import DialogWindow
         from emtk.view_form import FormState
 
         from ...core.playback import PlaybackController, fps_from_settings
@@ -598,7 +519,7 @@ class PlaybackExportFeature(Feature):
         self.export_spec = load_spec("publication_export")
         self.export_state = FormState()
         app.forms["playback_export.export"] = self.export_state
-        self.export_window = ToolWindow("export", "Publication export", size=(380.0, 210.0))
+        self.export_window = DialogWindow("Publication export", size=(380.0, 210.0), key="export")
         self.on_data_changed()
 
     # ----------------------------------------------------------------- hooks
@@ -810,10 +731,6 @@ class PlaybackExportFeature(Feature):
 
         if not self.export_window.open or self.export_model is None:
             return False
-        x0, y0, w, h = box
-        ew, eh = self.export_window.size
-        if self.export_window.pos is None:
-            self.export_window.pos = (x0 + (w - ew) / 2.0, y0 + (h - eh) / 2.0)
         if self.export_window.begin(box) == "close":
             self.export_window.open = False
         draw_form(self.export_spec, self.export_model, self.export_state, titles=False)
