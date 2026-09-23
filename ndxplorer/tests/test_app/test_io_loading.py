@@ -144,3 +144,26 @@ def test_a_burst_files_trailing_delimiter_is_not_a_nameless_parameter(tmp_path):
                    "0\t10\t11\t\n20\t35\t16\t\n")
     source = read_csv([str(bur)])
     assert list(source.parameter_names) == ["First Photon", "Last Photon", "Number of Photons"]
+
+
+def test_without_chisurf_interval_gates_still_save_and_load(tmp_path, monkeypatch):
+    """A browser page has no ChiSurf: interval gates go out in the list format,
+    which reads back without it; a drawn region says why it cannot."""
+    import sys
+
+    from ndxplorer.core.data_source import RectangularDataSelection
+    from ndxplorer.core.region_selection import load_selections, save_selections
+
+    monkeypatch.setitem(sys.modules, "chisurf.core.roi", None)
+    gates = [RectangularDataSelection(2, 1.0, 3.0, False, True, "petal length")]
+    path = tmp_path / "g.selection.json"
+    save_selections(gates, str(path))
+    back = load_selections(str(path))
+    assert [(g.parameter_idx, g.lower, g.upper, g.name) for g in back] == \
+        [(2, 1.0, 3.0, "petal length")]
+
+    class Region:
+        roi = object()
+
+    with pytest.raises(RuntimeError, match="chisurf.core.roi"):
+        save_selections([Region()], str(tmp_path / "r.selection.json"))

@@ -196,6 +196,27 @@ def save_selections(
     str
         The path written.
     """
+    selections = list(selections or [])
+    try:
+        import chisurf.core.roi  # noqa: F401 - the region file format
+    except ImportError:
+        # Without ChiSurf (a browser page) the interval gates still go out,
+        # in the list format load_selections reads without it.
+        from .data_source import RectangularDataSelection
+
+        if not all(isinstance(s, RectangularDataSelection) for s in selections):
+            raise RuntimeError(
+                "Saving drawn regions, masks or Gaussian gates needs ChiSurf's region "
+                "module (chisurf.core.roi), which is not installed here; interval "
+                "gates alone can be saved.") from None
+        import json
+
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump([{"parameter_idx": int(s.parameter_idx), "lower": float(s.lower),
+                        "upper": float(s.upper), "invert": bool(s.invert),
+                        "enabled": bool(s.enabled), "name": s.name} for s in selections],
+                      handle, indent=2)
+        return str(path)
     return to_collection(selections, axes=axes).save(path)
 
 
@@ -206,8 +227,6 @@ def load_selections(path: str, axes: Tuple[int, int] = (0, 1)) -> list:
     saver produced, so files written before this change still open.
     """
     import json
-
-    from chisurf.core.roi import RegionCollection
 
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -224,6 +243,8 @@ def load_selections(path: str, axes: Tuple[int, int] = (0, 1)) -> list:
             for entry in data
             if "parameter_idx" in entry
         ]
+
+    from chisurf.core.roi import RegionCollection
 
     return from_collection(RegionCollection.from_dict(data), axes=axes)
 
