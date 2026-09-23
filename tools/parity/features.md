@@ -238,18 +238,19 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## playback — Playback panel (window mode)
 
-- [ ] "Axis" combo (blank plus every parameter; defaults to the Frame or mean-macro-time column)
-- [ ] "Steps" (1..100000, default 100; one step per value on an index axis, capped at 1024)
-- [ ] "Step" slider (0..steps-1); its tooltip shows the slice and the surviving count
-- [ ] Transport buttons: ◀◀ One step back, ◀ Play backward, ⏸ Stop, ▶ Play forward, ▶▶ One step forward (pressing the running direction again stops)
-- [ ] "Mode": Window / Integrate / Stack (Stack does no gating)
-- [ ] "Speed" slider, 1..60 fps (default from settings playback.fps = 10)
-- [ ] Window and Integrate modes gate the plots to the current slice
+- [x] "Axis" combo (blank plus every parameter; defaults to the Frame or mean-macro-time column)
+- [x] "Steps" (1..100000, default 100; one step per value on an index axis, capped at 1024)
+- [x] "Step" slider (0..steps-1); its tooltip shows the slice and the surviving count (emtk: the hover tooltip of the Step slider and its field)
+- [~] Transport buttons: ◀◀ One step back, ◀ Play backward, ⏸ Stop, ▶ Play forward, ▶▶ One step forward (pressing the running direction again stops). emtk and Qt now both label Stop ■, because no font in the emtk atlas or a browser has ⏸ (it drew as a placeholder). Playing is timed by the frame loop (PlaybackViewModel.tick), not a QTimer, so it also runs in a browser.
+- [x] "Mode": Window / Integrate / Stack (Stack does no gating)
+- [~] "Speed" slider, 1..60 fps. The emtk app reads the rate from the user's settings file (~/.ndxplorer/mfd.settings.json, through settings.bundle), so the old frame_duration_ms 25 there shows as 40 fps. The Qt window reads only the packaged file (10 fps) and ignores the user's.
+- [x] Window and Integrate modes gate the plots to the current slice (87 of 12237 at step 5 of 20, the same as the Qt window)
+- [~] The panel is always there. The Qt window hides it until data is loaded; emtk draws it disabled instead, because the fold belongs to the core spec.
 
 ## playback_image_frames — Playback over image frames
 
-- [ ] With image data the playback axis is Frame; stepping walks the frames
-- [ ] Integrate mode accumulates frames 0..k
+- [x] With image data the playback axis is Frame; stepping walks the frames (10 steps, one per frame)
+- [x] Integrate mode accumulates frames 0..k. The emtk shot shows Tau/Proximity axes instead of x/y pixel with a weight, because image mode on open belongs to open_image_h5 (io group). The playback state matches: Frame, 10 steps, Integrate, step 5.
 
 ## clustering_dialog — Clustering dialog ('Find structure'), every method page
 
@@ -399,12 +400,12 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## publication_export — Export… (publication figure)
 
-- [ ] "Export…" button next to Screenshot (tooltip "Publication export… (vector PDF/SVG or high-DPI PNG)")
-- [ ] "Format:" PDF (vector, default) / SVG (vector) / PNG (raster)
-- [ ] "DPI (raster):" (default 300), enabled only for PNG
-- [ ] "Include X/Y marginal histograms" (on)
-- [ ] "Transparent background" (off)
-- [ ] "Export…" asks for the file, then writes the figure (vector through matplotlib); "Cancel"
+- [x] "Export…" button next to Screenshot (core spec plot_corner; its tooltip is the core spec's "Export a publication figure.")
+- [x] "Format:" PDF (vector, default) / SVG (vector) / PNG (raster)
+- [x] "DPI (raster):" (default 300), enabled only for PNG
+- [x] "Include X/Y marginal histograms" (on)
+- [x] "Transparent background" (off)
+- [x] "Export…" asks for the file, then writes the figure (vector through matplotlib); "Cancel". emtk: the bytes go to app.io_service.save_bytes, which asks for a path on a desktop and downloads in a browser. Without data it says why (Qt: the same message).
 
 ## screenshot_button — Screenshot button
 
@@ -425,24 +426,24 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## find_projections — View > Find informative projections…
 
-- [ ] Window "Find informative projections" (520×640) with a "Ranking" toolbar holding Help (?) and Guide
-- [ ] "Score" choice: Class separation (k-NN) (only when classes exist), Population structure (2-means), Correlation (Pearson), Correlation (Spearman)
-- [ ] "Classes" choice (for separation only): Gate: inside vs outside, Gates: one population per gate, Clusters, z parameter: <name>
-- [ ] "Sample" (200..200000, default 5000)
-- [ ] Start / Pause; the Start label reads Start / Continue / Restart with new settings / Finished
-- [ ] Status "n/N scored (p %) · paused / finished / k failed" and sample info "n of N bursts sampled · k parameters left out"
-- [ ] "Ranked views - click one to show it" table: score bar, x, y, with a filter; clicking a row sets the axes
-- [ ] Guided tour: What this panel does → Score → Start → table
+- [~] Window "Find informative projections" (520×640) with Help (?) and Guide. emtk: a tool window inside the app (dragged by its title, closed with ✕), with Guide and ? in its title row, because a browser has no second top-level window.
+- [x] "Score" choice: Class separation (k-NN) (only when classes exist), Population structure (2-means), Correlation (Pearson), Correlation (Spearman)
+- [x] "Classes" choice (for separation only): Gate: inside vs outside, Gates: one population per gate, Clusters, z parameter: <name>. Clusters come from a feature's cluster_labels (analysis group).
+- [x] "Sample" (200..200000, default 5000)
+- [x] Start / Pause; the Start label reads Start / Continue / Restart with new settings / Finished
+- [x] Status "n/N scored (p %) · paused / finished / k failed" and sample info "n of N bursts sampled · k parameters left out"
+- [x] "Ranked views - click one to show it" table: score bar, x, y, with a filter; clicking a row sets the axes; the selected row's note sits under the table. Scoring runs through emtk.tasks in slices: a thread on a desktop, steps between frames in a browser.
+- [x] Guided tour: What this panel does → Score → Start (waits for the press) → table. emtk: the control is outlined and a step card sits beside the window.
 
 ## find_projections_iris — Find informative projections on iris (class separation)
 
-- [ ] Class separation works with an integer class column as the z parameter ("z parameter: class")
-- [ ] Best-ranked view is petal length × petal width (known answer)
+- [x] Class separation works with an integer class column as the z parameter ("z parameter: class")
+- [x] Best-ranked view is petal length × petal width (known answer; 0.927, the same six scores as the Qt window), applied to the axes
 
 ## find_projections_z — View > Find informative projections (z axis)…
 
-- [ ] Window "Find informative z parameters"; the table has a "Parameter" column instead of x / y
-- [ ] Clicking a row sets the z parameter
+- [x] Window "Find informative z parameters"; the table has a "Parameter" column instead of x / y
+- [x] Clicking a row sets the z parameter (and turns the z gate on, as the Qt window's checkBoxEnableZ)
 
 ## save_burst_ids — Save Burst IDs ('BID' / File > Save > Burst IDs)
 
