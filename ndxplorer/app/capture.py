@@ -237,6 +237,10 @@ class Replay:
             self.step(step)
         for step in self.scenario.get("steps", []):
             self.step(step)
+        if "main" not in self.shots:
+            # The Qt harness photographs the window at the end of every
+            # scenario that names no "main" shot; so does this.
+            self.shots["main"] = self.draw().copy()
         return self.shots
 
     def step(self, step: dict) -> None:
