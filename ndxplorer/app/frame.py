@@ -496,6 +496,14 @@ class NdxApp:
                 return
         self.open_path(str(paths[0]))
 
+    @property
+    def window_title(self) -> str:
+        """"ndX", plus the file name once data is loaded -- read by the host
+        after each frame (:func:`emtk.app.window_title`), as the Qt window does."""
+        from ..io.loading import window_title
+
+        return window_title(self.model.path if self.model.has_data else [])
+
     def animating(self) -> bool:
         """Whether the host should keep drawing without input: a feature is
         playing back or streaming results."""

@@ -522,3 +522,10 @@ def test_every_file_the_app_reads_is_package_data():
         assert any(fnmatch.fnmatch(relative, pattern) for pattern in patterns), relative
         shipped.append(relative)
     assert "views/plot_controls.view.json" in shipped
+
+
+@pytest.mark.skipif(not MFD.exists(), reason="the MFD test folder is not in this checkout")
+def test_the_window_title_names_the_opened_data(app):
+    assert app.window_title == "ndX"
+    assert app.model.open(str(MFD))
+    assert app.window_title == "ndX - burstwise_All 0.1500#30"
