@@ -28,6 +28,28 @@ from matplotlib.colors import LogNorm, Normalize
 
 Marginal = Optional[Tuple[np.ndarray, np.ndarray]]  # (edges, counts)
 
+#: What the export offers: label -> (file suffix, is vector, media type). The
+#: Qt dialog and the emtk app's dialog both list these.
+EXPORT_FORMATS = {
+    "PDF (vector)": (".pdf", True, "application/pdf"),
+    "SVG (vector)": (".svg", True, "image/svg+xml"),
+    "PNG (raster)": (".png", False, "image/png"),
+}
+
+
+def figure_bytes(fig: Figure, suffix: str, *, dpi: int = 300, transparent: bool = False) -> bytes:
+    """The figure as the bytes of a file of type *suffix* (``".pdf"``, ``".svg"``, ``".png"``).
+
+    In memory, so a browser (where a save is a download) gets the same file a
+    desktop writes; ``bbox_inches="tight"`` as the file export does.
+    """
+    import io
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format=suffix.lstrip(".").lower(), dpi=dpi, transparent=transparent,
+                bbox_inches="tight")
+    return buffer.getvalue()
+
 
 def render_publication_figure(
     H: np.ndarray,
@@ -206,4 +228,4 @@ def render_current_view(ndxplorer, *, dpi: int = 300, with_marginals: bool = Tru
     )
 
 
-__all__ = ["render_publication_figure", "render_current_view"]
+__all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure", "render_current_view"]

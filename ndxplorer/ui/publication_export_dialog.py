@@ -17,12 +17,7 @@ from qtpy import QtCore, QtWidgets
 from ..logging_config import logging
 
 
-# Format -> (file suffix, is_vector)
-_FORMATS = {
-    "PDF (vector)": (".pdf", True),
-    "SVG (vector)": (".svg", True),
-    "PNG (raster)": (".png", False),
-}
+from ..export.publication_figure import EXPORT_FORMATS
 
 
 def export_publication_figure(
@@ -74,7 +69,7 @@ class PublicationExportDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout()
 
         self.combo_format = QtWidgets.QComboBox()
-        self.combo_format.addItems(list(_FORMATS.keys()))
+        self.combo_format.addItems(list(EXPORT_FORMATS.keys()))
         self.combo_format.setToolTip(
             "Vector (PDF/SVG) is resolution-independent and best for print; "
             "PNG is a high-resolution raster."
@@ -112,12 +107,12 @@ class PublicationExportDialog(QtWidgets.QDialog):
         self._sync_dpi_enabled(self.combo_format.currentText())
 
     def _sync_dpi_enabled(self, format_label: str) -> None:
-        _suffix, is_vector = _FORMATS.get(format_label, (".png", False))
+        _suffix, is_vector, _mime = EXPORT_FORMATS.get(format_label, (".png", False, ""))
         self.spin_dpi.setEnabled(not is_vector)
 
     def options(self) -> dict:
         label = self.combo_format.currentText()
-        suffix, is_vector = _FORMATS[label]
+        suffix, is_vector, _mime = EXPORT_FORMATS[label]
         return {
             "suffix": suffix,
             "is_vector": is_vector,
@@ -144,7 +139,7 @@ def open_publication_export(ndxplorer) -> None:
     opts = dialog.options()
 
     default_path = _default_export_path(ndxplorer, opts["suffix"])
-    label = next(k for k, v in _FORMATS.items() if v[0] == opts["suffix"])
+    label = next(k for k, v in EXPORT_FORMATS.items() if v[0] == opts["suffix"])
     filter_str = f"{label} (*{opts['suffix']})"
     filename, _ = QtWidgets.QFileDialog.getSaveFileName(
         ndxplorer, "Export publication figure", default_path, filter_str
