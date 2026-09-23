@@ -84,7 +84,7 @@ if HAS_CHISURF:
                 self._cg = _cg
                 self._group = _cg.build_group_from_data(data)
                 self._table = ParameterGroupTableWidget(
-                    self._group.parameters_all,
+                    self._table_params(),
                     section=_CompactColumns(),
                     parent=self,
                     on_change=self._on_change,
@@ -101,6 +101,14 @@ if HAS_CHISURF:
                 # explicit stretch after it, the table starts at the top of the
                 # tab instead of floating in the middle of it.
                 layout.addWidget(self._table, 0, QtCore.Qt.AlignTop)
+                # Vector constants (one value per population) are shown, not
+                # edited, here: the emtk window edits them. Their elements
+                # still reach the equations and the Global View by name.
+                self._vectors = QtWidgets.QLabel()
+                self._vectors.setWordWrap(True)
+                self._vectors.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+                layout.addWidget(self._vectors, 0, QtCore.Qt.AlignTop)
+                self._show_vectors()
                 layout.addStretch(1)
                 # Add-parameter affordance so a new constant can be created
                 # without hand-editing the JSON.
@@ -310,7 +318,7 @@ if HAS_CHISURF:
                 return
             self._cg.apply_value_dict(self._group, {name: float(value)})
             try:
-                self._table.set_params(self._group.parameters_all)
+                self._table.set_params(self._table_params())
             except Exception:
                 self._refresh_table()
             self._on_change()  # host re-diffs constants -> recompute + names update
@@ -361,12 +369,45 @@ if HAS_CHISURF:
                 self._cg.apply_group_state(self._group, state)
                 self._refresh_table()
 
+        def _table_params(self):
+            """The scalar constants: a vector's elements are summed up below the table."""
+            from ..core.vector_constants import split_element
+
+            vectors = set(self._cg.vector_names(self._group))
+            return [p for p in self._group.parameters_all
+                    if p.name not in vectors
+                    and (split_element(p.name) or ("",))[0] not in vectors]
+
+        def _show_vectors(self):
+            """One read-only line per vector constant: ``gamma [2]: 0.61, 0.83``."""
+            label = getattr(self, "_vectors", None)
+            if label is None or self._group is None:
+                return
+            from ..core.vector_constants import summary_text
+
+            lines = []
+            for name in self._cg.vector_names(self._group):
+                elements = self._cg.vector_elements(self._group, name)
+                pairs = ", ".join(f"{l} {float(p.value):.4g}" for l, p in elements)
+                glob = self._group.parameters_all_dict.get(name)
+                if glob is not None:
+                    pairs += f"; global {float(glob.value):.4g}"
+                lines.append(f"{name} [{len(elements)}]: "
+                             f"{summary_text([p.value for _l, p in elements])} ({pairs})")
+            label.setText("Per population (edit in the new ndX window):\n" + "\n".join(lines)
+                          if lines else "")
+            label.setVisible(bool(lines))
+
         def _refresh_table(self):
             if self._table is not None:
                 try:
+                    known = {id(p) for p in self._table_params()}
+                    if known != {id(p) for p in getattr(self._table, "_params", ())}:
+                        self._table.set_params(self._table_params())
                     self._table.sync()
                 except Exception:
                     pass
+            self._show_vectors()
 
         @property
         def json_file(self):
