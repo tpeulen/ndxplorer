@@ -1,0 +1,23 @@
+{
+ "_comment": "Data > Table Editor: every column of the data, edited on a copy (Qt: ui/store_editor.py over chisurf's ChiTableDialog).",
+ "sections": [
+  {"type": "row", "n_col": 2, "sections": [
+   {"type": "toggle_row", "items": [
+    {"attr": "hide_empty", "label": "Hide empty", "description": "Hide columns that contain no values"},
+    {"attr": "colour_cells", "label": "Colour by value", "description": "Shade numeric cells by their value"},
+    {"attr": "colour_table", "label": "∥ One scale", "description": "Scale colours across all columns instead of per column"}]},
+   {"type": "button_row", "buttons": [
+    {"label": "☑ Columns…", "action": "choose_columns", "description": "Choose which columns are shown"},
+    {"label": "Export CSV…", "action": "export_csv", "description": "Export the visible rows and columns as CSV"}]}
+  ]},
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "arrays", "columns_source": "columns", "editable": true, "filter": true,
+    "edited_call": "edit_cell", "context_call": "cell_menu", "colour_source": "colour_mode",
+    "min_column_width": 96, "expand": true, "reserve": 64, "height": 380}},
+  {"type": "info", "source": "status_text"},
+  {"type": "button_row", "buttons": [
+   {"label": "↺ Reset", "action": "reset", "description": "Discard every change made in this dialog"},
+   {"label": "✓ Apply", "action": "apply", "description": "Write the changes back to the data and redraw"},
+   {"label": "✕ Cancel", "action": "cancel", "description": "Close without writing any change back"}]}
+ ]
+}

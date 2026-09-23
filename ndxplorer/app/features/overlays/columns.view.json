@@ -1,0 +1,12 @@
+{
+ "_comment": "The Table Editor's column picker.",
+ "sections": [
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "rows", "editable": true, "edited_call": "edit", "filter": true, "height": 330,
+    "row_key": "column",
+    "columns": [{"key": "shown", "title": "Shown", "width": 56}, {"key": "column", "title": "Column", "editable": false}]}},
+  {"type": "button_row", "buttons": [
+   {"label": "Show all", "action": "show_all"}, {"label": "Hide all", "action": "hide_all"},
+   {"label": "Close", "action": "close"}]}
+ ]
+}

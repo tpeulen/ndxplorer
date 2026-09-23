@@ -1,0 +1,53 @@
+{
+ "_comment": "The Overlays tab: curves drawn over the 2-D map (Qt: plotting/curve_overlay.py CurveOverlayWidget).",
+ "sections": [
+  {
+   "type": "row",
+   "n_col": 2,
+   "sections": [
+    {
+     "type": "choice",
+     "attr": "equation_choice",
+     "label": "Equation:",
+     "options_source": "equation_options",
+     "description": "The curve to add: Custom Equation (type your own) or one of the curves in curve_equations.yaml."
+    },
+    {
+     "type": "button_row",
+     "buttons": [
+      {
+       "label": "Add Curve",
+       "action": "add_curve",
+       "description": "Add the chosen curve to the plot."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "value",
+   "attr": "num_points",
+   "label": "Number of points:",
+   "kind": "int",
+   "minimum": 10,
+   "maximum": 999,
+   "style": "spin",
+   "description": "Points an equation curve is drawn with."
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Save CSV",
+     "action": "save_csv",
+     "description": "Save visible overlay curves as CSV (curve, x, y)"
+    }
+   ],
+   "width": 130
+  },
+  {
+   "type": "custom",
+   "key": "overlay_curves"
+  }
+ ]
+}

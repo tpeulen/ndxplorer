@@ -1,0 +1,13 @@
+{
+ "_comment": "Link a parameter to another one: every parameter group that is registered for linking (fits, curves, Gaussians, the constants).",
+ "sections": [
+  {"type": "info", "source": "hint"},
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "targets", "selected_call": "pick", "activated_call": "link", "filter": true,
+    "height": 260, "row_key": "id",
+    "columns": [{"key": "owner", "title": "Owner"}, {"key": "name", "title": "Parameter"},
+                {"key": "value", "title": "Value"}]}},
+  {"type": "button_row", "buttons": [
+   {"label": "Link", "action": "link_selected"}, {"label": "Cancel", "action": "cancel"}]}
+ ]
+}

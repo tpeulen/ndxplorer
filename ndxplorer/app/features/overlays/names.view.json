@@ -1,0 +1,10 @@
+{
+ "_comment": "Names & functions: what an equation may reference; a double click inserts it into the selected equation.",
+ "sections": [
+  {"type": "info", "text": "Double-click a name to insert it into the focused expression."},
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "rows", "activated_call": "insert", "filter": true, "height": 330,
+    "columns": [{"key": "label", "title": "Name"}]}},
+  {"type": "button_row", "buttons": [{"label": "Close", "action": "close"}]}
+ ]
+}

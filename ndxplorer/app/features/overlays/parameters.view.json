@@ -1,0 +1,81 @@
+{
+ "_comment": "The Parameters tab: nDXplorer's constants (Qt: ui/parameter_editor.py). An edit re-derives the columns that read the constant.",
+ "sections": [
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Save",
+     "action": "save_parameters",
+     "description": "Save parameters"
+    }
+   ],
+   "width": 130
+  },
+  {
+   "type": "custom",
+   "key": "data_table",
+   "options": {
+    "source": "parameter_rows",
+    "editable": true,
+    "edited_call": "edit_parameter",
+    "context_call": "parameter_menu",
+    "row_key": "name",
+    "height": 420,
+    "columns": [
+     {
+      "key": "name",
+      "title": "Name",
+      "editable": false
+     },
+     {
+      "key": "value",
+      "title": "Value"
+     },
+     {
+      "key": "fixed",
+      "title": "Fixed",
+      "width": 52
+     },
+     {
+      "key": "lo",
+      "title": "Lo",
+      "width": 60
+     },
+     {
+      "key": "hi",
+      "title": "Hi",
+      "width": 60
+     },
+     {
+      "key": "bounds",
+      "title": "Bounds",
+      "width": 62
+     },
+     {
+      "key": "link",
+      "title": "Link",
+      "width": 70,
+      "editable": false,
+      "tooltip": "The fit parameter this constant follows (right-click to link or unlink)."
+     }
+    ]
+   }
+  },
+  {
+   "type": "info",
+   "text": "Right-click a row to copy, paste, link or unlink it."
+  },
+  {
+   "type": "button_row",
+   "buttons": [
+    {
+     "label": "Add parameter",
+     "action": "add_parameter",
+     "description": "Add a new constant (name + value)"
+    }
+   ],
+   "width": 130
+  }
+ ]
+}

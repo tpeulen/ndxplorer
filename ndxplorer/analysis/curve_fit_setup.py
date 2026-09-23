@@ -383,7 +383,8 @@ def build_cloud_fit(host, curve, x_edges, y_edges, params=None, counts=None):
         grid = np.linspace(x_edges[0], x_edges[-1], 400)
 
         def function(**values):
-            y = evaluator.evaluate(equation, grid, values)
+            with np.errstate(all="ignore"):
+                y = evaluator.evaluate(equation, grid, values)
             if isinstance(y, tuple):
                 return y
             y = np.asarray(y, dtype=float)

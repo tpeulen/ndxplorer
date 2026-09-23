@@ -1,0 +1,34 @@
+{
+ "_comment": "One overlay curve. {title} and {equation_label} are filled in per curve; a function curve shows its source in a code editor instead of the one-line equation.",
+ "sections": [
+  {"type": "row", "sections": [
+   {"type": "toggle", "attr": "visible", "label": "{title}", "description": "Show the curve on the plot."}]},
+  {"type": "value", "attr": "text", "label": "Equation: y =", "kind": "str", "equation": true,
+   "hidden_when": {"attr": "visible", "equals": false},
+   "description": "y as a function of x; every other name is a parameter."},
+  {"type": "custom", "key": "code_editor", "target": "text", "function": true,
+   "hidden_when": {"attr": "visible", "equals": false},
+   "options": {"height": 150, "language": "python"}},
+  {"type": "value", "attr": "filled", "label": "{filled_label}", "kind": "str", "read_only": true,
+   "hidden_when": {"attr": "visible", "equals": false},
+   "description": "The curve with the parameter values written in (select to copy)."},
+  {"type": "row", "n_col": 2, "hidden_when": {"attr": "visible", "equals": false}, "sections": [
+   {"type": "value", "attr": "color", "label": "Color:", "kind": "color", "description": "The curve's colour."},
+   {"type": "button_row", "buttons": [
+    {"label": "Fit", "action": "fit", "description": "Fit this curve's free parameters to the displayed data (the 2-D distribution, or a marginal histogram)"},
+    {"label": "Delete", "action": "delete", "description": "Remove the curve."}]}
+  ]},
+  {"type": "info", "source": "error_text", "hidden_when": {"attr": "has_error", "equals": false}},
+  {"type": "custom", "key": "data_table", "hidden_when": {"attr": "visible", "equals": false},
+   "options": {"source": "parameter_rows", "editable": true, "edited_call": "edit_parameter",
+    "context_call": "parameter_menu", "row_key": "name", "height": 132,
+    "columns": [
+     {"key": "name", "title": "Name", "editable": false},
+     {"key": "value", "title": "Value"},
+     {"key": "fixed", "title": "Fixed", "width": 52},
+     {"key": "lo", "title": "Lo", "width": 60},
+     {"key": "hi", "title": "Hi", "width": 60},
+     {"key": "bounds", "title": "Bounds", "width": 62},
+     {"key": "link", "title": "Link", "width": 70, "editable": false, "tooltip": "The parameter this one follows (right-click to link or unlink)."}]}}
+ ]
+}

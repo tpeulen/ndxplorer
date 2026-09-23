@@ -1,0 +1,38 @@
+{
+ "_comment": "Fit curve to data (Qt: ui/curve_fit_dialog.py). The curve's parameters, and nDXplorer's constants the equations read; a freed constant moves the data.",
+ "sections": [
+  {"type": "choice", "attr": "target", "label": "Fit to:", "options_source": "target_options",
+   "description": "The displayed data fits y(x) to the two-dimensional distribution (one point per populated x column); a marginal fits the curve to that axis's histogram of counts."},
+  {"type": "row", "n_col": 2, "sections": [
+   {"type": "choice", "attr": "reduction", "label": "Fit through:", "options_source": "reduction_options",
+    "description": "The cloud fits the curve to the distribution itself: every populated bin pulls on it, weighted by what it counted, and a bin more than a couple of bins away stops pulling -- so the curve follows the populations and ignores the junk. Reducing each column to one point instead cannot describe a population: a blob reduces to a horizontal streak across its own columns."},
+   {"type": "toggle", "attr": "scan", "label": "Scan first",
+    "description": "Evaluate a coarse grid over the free parameters before the fit and start it at the best point. A least-squares run only goes downhill from where it starts, so a degenerate pair -- a constant that scales the data against a parameter that scales the curve -- otherwise strands it in the first dip. Costs a fixed number of steps."}
+  ]},
+  {"type": "info", "text": "Free parameters are optimised, fixed ones held. Constants and crosslinked parameters start fixed -- free them to fit them."},
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "curve_rows", "editable": true, "edited_call": "edit_curve_parameter",
+    "row_key": "name", "height": 130,
+    "columns": [
+     {"key": "name", "title": "Name", "editable": false}, {"key": "value", "title": "Value"},
+     {"key": "fixed", "title": "Fixed", "width": 52}, {"key": "lo", "title": "Lo", "width": 60},
+     {"key": "hi", "title": "Hi", "width": 60}, {"key": "bounds", "title": "Bounds", "width": 62}]}},
+  {"type": "info", "text": "nDXplorer parameters -- a freed one moves the data, which is re-derived from the equations at every step.",
+   "hidden_when": {"attr": "has_data_parameters", "equals": false}},
+  {"type": "custom", "key": "data_table", "hidden_when": {"attr": "has_data_parameters", "equals": false},
+   "options": {"source": "data_rows", "editable": true, "edited_call": "edit_data_parameter",
+    "row_key": "name", "height": 200,
+    "columns": [
+     {"key": "name", "title": "Name", "editable": false}, {"key": "value", "title": "Value"},
+     {"key": "fixed", "title": "Fixed", "width": 52}, {"key": "lo", "title": "Lo", "width": 60},
+     {"key": "hi", "title": "Hi", "width": 60}, {"key": "bounds", "title": "Bounds", "width": 62}]}},
+  {"type": "info", "source": "status_text"},
+  {"type": "row", "n_col": 2, "hidden_when": {"attr": "running", "equals": false}, "sections": [
+   {"type": "info", "source": "progress_text"},
+   {"type": "button_row", "buttons": [{"label": "Cancel", "action": "cancel_fit", "description": "Stop the fit after the step it is on."}]}
+  ]},
+  {"type": "button_row", "buttons": [
+   {"label": "Fit", "action": "run_fit", "description": "Optimise every free parameter against the selected data"},
+   {"label": "Close", "action": "close"}]}
+ ]
+}

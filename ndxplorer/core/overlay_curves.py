@@ -270,7 +270,10 @@ def curve_points(evaluator: CurveEvaluator, equation, parameters: Mapping[str, f
     y_edges = np.asarray(y_edges, dtype=float)
     xs = sample_x(float(x_edges[0]), float(x_edges[-1]), num_points, x_log)
     try:
-        result = evaluator.evaluate(equation, xs, dict(parameters))
+        # A line through a pole (x = tauD0) divides by zero there; that is the
+        # curve, not an error.
+        with np.errstate(all="ignore"):
+            result = evaluator.evaluate(equation, xs, dict(parameters))
     except Exception as exc:  # noqa: BLE001 - a bad equation draws nothing
         evaluator.last_error = str(exc)
         return np.empty(0), np.empty(0)

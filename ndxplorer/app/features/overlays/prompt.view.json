@@ -1,0 +1,8 @@
+{
+ "_comment": "A one-line question (Filter this column...).",
+ "sections": [
+  {"type": "value", "attr": "text", "label": "{label}", "kind": "str"},
+  {"type": "button_row", "buttons": [
+   {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
+ ]
+}

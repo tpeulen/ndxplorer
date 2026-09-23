@@ -1,0 +1,21 @@
+{
+ "_comment": "The Equations tab: the equations that derive columns from columns and constants (Qt: widgets/equation_editor.py; unreachable there).",
+ "sections": [
+  {"type": "button_row", "buttons": [
+   {"label": "+", "action": "add_equation", "description": "Add an equation"},
+   {"label": "−", "action": "remove_equation", "description": "Remove the selected equation"},
+   {"label": "Names", "action": "show_names", "description": "Names & functions you can use"},
+   {"label": "Load…", "action": "load_equations", "description": "Read equations from a YAML file"},
+   {"label": "Save…", "action": "save_equations_file", "description": "Write the equations to a YAML file"},
+   {"label": "Apply", "action": "apply_equations", "description": "Validate all equations and recompute the derived columns"}]},
+  {"type": "custom", "key": "data_table",
+   "options": {"source": "rows", "editable": true, "edited_call": "edit_row", "selected_call": "select_row",
+    "delete_call": "delete_row", "tooltip_key": "message", "expand": true, "reserve": 52, "height": 480,
+    "columns": [
+     {"key": "output", "title": "Output", "width": 130},
+     {"key": "expression", "title": "Expression"},
+     {"key": "status", "title": "✓", "width": 26, "editable": false, "tooltip": "✓ valid; ✗ the problem is shown under the table when the row is selected."}]}},
+  {"type": "info", "source": "preview_text"},
+  {"type": "info", "source": "status_text"}
+ ]
+}

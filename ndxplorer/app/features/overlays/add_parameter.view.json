@@ -1,0 +1,11 @@
+{
+ "_comment": "Parameters > Add parameter: the name, then the value (Qt: two QInputDialogs).",
+ "sections": [
+  {"type": "value", "attr": "name", "label": "Parameter name:", "kind": "str",
+   "hidden_when": {"attr": "step", "equals": "value"}},
+  {"type": "value", "attr": "value", "label": "{value_label}", "kind": "float",
+   "hidden_when": {"attr": "step", "equals": "name"}},
+  {"type": "button_row", "buttons": [
+   {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
+ ]
+}
