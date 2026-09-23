@@ -3,67 +3,15 @@ GMM Settings dialog for ndxplorer.
 Configure parameters for the built-in Gaussian Mixture (EM) implementation
 and persist them in the ndxplorer user settings folder.
 """
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 from qtpy import QtWidgets, QtCore
 
 from .glyphs import Glyphs, label as glyph_label
 
-import json
-from ..logging_config import logging
-from ..settings import get_settings_path, ensure_default_settings
+from ..analysis.gaussian_mixture import GMM_DEFAULTS as _DEFAULTS
+from ..analysis.gaussian_mixture import load_gmm_settings, save_gmm_settings
 from .feedback import FriendlyErrorPresenter
-
-_DEFAULTS: Dict[str, Any] = {
-    "tol": 1e-3,                         # float > 0
-    "reg_covar": 1e-6,                   # float >= 0
-    "max_iter": 200,                     # int > 0
-    "verbose": 0,                        # int >= 0
-    "local_window_bins": 10,             # int >= 1, half-window size in bins for local covariance
-    "weight_floor": 0.0,                 # float >= 0, minimum component weight (0 disables clamping)
-    "fix_new_means": True                # bool, fix mean when adding new Gaussians from point selection
-}
-
-_SETTINGS_FILENAME = "gmm_settings.json"
-
-
-def load_gmm_settings() -> Dict[str, Any]:
-    """Load user GMM settings or return defaults if missing/corrupt."""
-    ensure_default_settings()
-    settings_path = get_settings_path()
-    fn = settings_path / _SETTINGS_FILENAME
-    if not fn.exists():
-        # write defaults
-        try:
-            with open(fn, "w", encoding="utf-8") as f:
-                json.dump(_DEFAULTS, f, indent=2)
-        except Exception:
-            return dict(_DEFAULTS)
-        return dict(_DEFAULTS)
-    try:
-        with open(fn, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        # merge with defaults to keep compatibility
-        merged = dict(_DEFAULTS)
-        merged.update({k: data.get(k, v) for k, v in _DEFAULTS.items()})
-        return merged
-    except Exception:
-        return dict(_DEFAULTS)
-
-
-def save_gmm_settings(cfg: Dict[str, Any]) -> None:
-    """Persist GMM settings to the user settings folder."""
-    ensure_default_settings()
-    settings_path = get_settings_path()
-    fn = settings_path / _SETTINGS_FILENAME
-    # sanitize types
-    out = dict(_DEFAULTS)
-    out.update({k: cfg.get(k, v) for k, v in _DEFAULTS.items()})
-    try:
-        with open(fn, "w", encoding="utf-8") as f:
-            json.dump(out, f, indent=2)
-    except Exception:
-        pass
 
 
 class GaussianSettingsDialog(QtWidgets.QDialog):
@@ -179,6 +127,3 @@ class GaussianSettingsDialog(QtWidgets.QDialog):
         save_gmm_settings(cfg)
         super().accept()
 
-
-# Backward compatibility for older imports
-GMMSettingsDialog = GaussianSettingsDialog
