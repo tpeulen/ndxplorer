@@ -175,14 +175,24 @@ class Replay:
         bottom = min(below) if below else left[1] + left[3]
         return (start[0], start[1], start[2], bottom - start[1])
 
-    def box_of(self, target: str):
+    def feature_box(self, target: str):
+        """The box a feature locates *target* at; ``None`` when none has it on screen.
+
+        A locator that returns ``None`` means "not mine now", so two features
+        can both answer ``"dialog"``.
+        """
         for feature in self.app.features:
             locate = feature.capture_targets().get(target)
             if locate is not None:
                 box = locate(self)
-                if box is None:
-                    raise Unsupported(f"capture target {target!r} is not on screen")
-                return box
+                if box is not None:
+                    return box
+        return None
+
+    def box_of(self, target: str):
+        box = self.feature_box(target)
+        if box is not None:
+            return box
         kind = TARGETS.get(target)
         if kind is None:
             raise Unsupported(f"capture target {target!r}")
@@ -231,12 +241,12 @@ class Replay:
 
     def step(self, step: dict) -> None:
         """Replay one step: a feature's op first (they extend the vocabulary),
-        then the core's."""
+        then the core's. A feature handler that returns ``False`` passes the
+        step on, so several features can share an op name (``click``)."""
         op = step.get("op")
         for feature in self.app.features:
             handler = feature.capture_ops().get(op)
-            if handler is not None:
-                handler(self, step)
+            if handler is not None and handler(self, step) is not False:
                 return
         handler: Optional[Callable[[dict], None]] = getattr(self, f"op_{op}", None)
         if handler is None:
@@ -372,10 +382,11 @@ class Replay:
             shot = image.copy()
         elif target == "menu":
             shot = image.crop(_ints(self.menu_box(), pad=2))
-        elif target.startswith("dialog") and not any(
-                target in f.capture_targets() for f in self.app.features):
-            box = getattr(self.app, "message_box", None) if self.app.message is not None else \
-                getattr(self.app, "dialog_box", None) if self.app.dialog is not None else None
+        elif target.startswith("dialog"):
+            box = self.feature_box(target)
+            if box is None:
+                box = getattr(self.app, "message_box", None) if self.app.message is not None else \
+                    getattr(self.app, "dialog_box", None) if self.app.dialog is not None else None
             if box is None:
                 raise Unsupported("no dialog is open")
             shot = image.crop(_ints(box, pad=2))

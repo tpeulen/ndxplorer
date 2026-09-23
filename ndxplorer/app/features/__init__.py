@@ -60,7 +60,9 @@ The hooks (all optional; the base class does nothing):
     The table was replaced or merged.
 ``capture_ops()``
     ``{op name: fn(replay, step)}`` -- scenario steps the capture replay
-    (:mod:`ndxplorer.app.capture`) should understand, beyond the core's.
+    (:mod:`ndxplorer.app.capture`) should understand, beyond the core's. A
+    handler that returns ``False`` passes the step on to the next feature and
+    then the core.
 ``capture_actions()``
     ``{Qt action name: app action}`` -- the Qt menu actions a scenario's
     ``trigger``/``open`` steps name (``actionLoad_settings``), merged into
@@ -71,6 +73,8 @@ The hooks (all optional; the base class does nothing):
 ``capture_targets()``
     ``{target: fn(replay) -> (x, y, w, h)}`` -- ``capture`` targets it can
     photograph (``"dialog:QFileDialog"``, ``"widget:pc.widgetSelection"``).
+    ``None`` from ``fn`` means "not on screen now": the next feature, then
+    the core, is asked.
 """
 
 from __future__ import annotations
