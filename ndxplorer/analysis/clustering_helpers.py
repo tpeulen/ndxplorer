@@ -108,7 +108,7 @@ def _ensure_algorithm_available(ndxplorer: "NDXplorer", method: str) -> bool:
         if get_hdbscan() is not None:
             return True
         try:
-            from .deps_installer import ensure_package_gui
+            from ..deps_installer import ensure_package_gui
 
             desc = (
                 "HDBSCAN is a density-based clustering algorithm useful "

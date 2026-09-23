@@ -70,7 +70,7 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
     from .lazy_imports import get_umap
     if get_umap() is None:
         try:
-            from .deps_installer import ensure_package_gui
+            from ..deps_installer import ensure_package_gui
             desc = (
                 "UMAP (Uniform Manifold Approximation and Projection) is a dimensionality "
                 "reduction technique used to project high-dimensional data into 2D/3D for visualization."

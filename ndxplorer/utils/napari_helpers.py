@@ -63,7 +63,7 @@ def prompt_install_napari(ndxplorer) -> bool:
     """Prompt user via deps_installer to install napari."""
     logging.debug("prompt_install_napari")
     try:
-        from .deps_installer import ensure_package_gui
+        from ..deps_installer import ensure_package_gui
     except Exception as exc:
         logging.error("deps_installer unavailable: %s", exc)
         return False
@@ -87,7 +87,7 @@ def install_napari_via_conda(ndxplorer) -> Tuple[bool, Optional[str]]:
     """Install napari via deps_installer conda helpers."""
     logging.info("Starting napari installation via deps_installer (conda)")
     try:
-        from .deps_installer import conda_install, try_import, find_conda_executable
+        from .package_install import conda_install, try_import, find_conda_executable
     except Exception as exc:
         logging.error("deps_installer not available: %s", exc)
         return False, str(exc)
