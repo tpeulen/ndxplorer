@@ -263,8 +263,11 @@ class RankingPanel:
         if model is None:
             self.model = ProjectionRankModel(
                 self.feature.ranking_context, self.pairs, on_apply=self.feature.apply_view,
+                on_change=self.feature.islands_maybe_changed,
                 runner=frame_runner(self.feature.tasks, self.feature.task_mode),
                 defer=self.feature.defer)
+            # This app paints the islands of the view on the map (map_image).
+            self.model.overlay_available = self.pairs
         else:
             model.refresh_context()
         return True
@@ -514,6 +517,9 @@ class PlaybackExportFeature(Feature):
         self.rankings = {True: RankingPanel(self, True), False: RankingPanel(self, False)}
         self._axes_seen = None
         self._applying = False
+        #: What the islands overlay was last drawn for, and its labels.
+        self._islands_key = None
+        self._islands_labels = None
         self.export_model: Optional[PublicationExportModel] = None
         self.export_spec = load_spec("publication_export")
         self.export_state = FormState()
@@ -545,6 +551,63 @@ class PlaybackExportFeature(Feature):
         if mask is None:
             return {}
         return {"slice_mask": mask, "slice_key": self.controller.slice_key()}
+
+    def _islands_request(self):
+        """``(key, model)`` of the islands the map should show, or ``(None, None)``."""
+        panel = self.rankings[True]
+        model = panel.model
+        app_model = self.app.model
+        if model is None or not model.show_islands or model.method != "populations" \
+                or model._run is None or not app_model.has_data:
+            return None, None
+        hist = app_model.histograms
+        key = (model._run.generation, app_model.x.name, app_model.y.name,
+               None if hist is None else hist.revision)
+        return key, model
+
+    def islands_maybe_changed(self) -> None:
+        """The ranking model changed: repaint the map if the islands overlay did."""
+        key, _model = self._islands_request()
+        if key != self._islands_key:
+            self.app.plots.image_revision += 1
+
+    def map_image(self, values):
+        """The map coloured by the islands the Separation score found in this view,
+        when *Show islands on the map* is on (each bin takes its main island's colour)."""
+        import numpy as np
+
+        from ...plotting.cluster_overlay import cluster_rgb_image
+
+        key, model = self._islands_request()
+        self._islands_key = key
+        if key is None:
+            return None
+        app_model = self.app.model
+        names = [app_model.x.name, app_model.y.name]
+        if key != getattr(self, "_islands_for", None):
+            source = app_model.source
+            try:
+                self._islands_labels = model.islands(
+                    names, [source.column_values(n) for n in names])
+            except Exception:  # noqa: BLE001 - the density map stands in
+                logger.debug("islands overlay failed", exc_info=True)
+                self._islands_labels = None
+            self._islands_for = key
+        labels = self._islands_labels
+        hist = app_model.histograms
+        if labels is None or hist is None:
+            return None
+        keep = app_model._keep_mask()
+        if keep is not None:
+            labels = labels[keep]
+        rgb = cluster_rgb_image(app_model._visible_values(app_model.index_of(names[0])),
+                                app_model._visible_values(app_model.index_of(names[1])),
+                                labels, hist.x_edges, hist.y_edges,
+                                log_counts=app_model.log_counts, include_noise=False)
+        if rgb is None or rgb.shape[:2] != np.shape(values):
+            return None
+        alpha = np.full(rgb.shape[:2] + (1,), 255, dtype=np.uint8)
+        return np.concatenate([rgb, alpha], axis=2)
 
     def on_data_changed(self) -> None:
         """Point the playback at the frame index or the macro time, as the Qt window does."""

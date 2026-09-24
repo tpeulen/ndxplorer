@@ -218,6 +218,42 @@ def test_ranking_iris_by_class_finds_the_petals_and_applies_them(app):
     assert panel.window.open
 
 
+def test_separation_is_the_default_and_its_islands_colour_the_map(app):
+    """The best view is the one where the bursts split; its islands paint the map."""
+    from ndxplorer.analysis.vizrank import RunState
+
+    rng = np.random.default_rng(3)
+    n = 3000
+    species = rng.random(n) < 0.4
+    _load(app, DataSource.from_columns({
+        "E": np.where(species, rng.normal(0.2, 0.05, n), rng.normal(0.8, 0.05, n)),
+        "S": np.where(species, rng.normal(0.3, 0.04, n), rng.normal(0.6, 0.04, n)),
+        "Rate": rng.normal(20.0, 4.0, n),
+    }))
+    f = feature(app)
+    f.task_mode = "inline"
+    draw(app)
+    assert app.run_action("find_projections")
+    model = f.rankings[True].model
+    assert model.method == "populations" and model.overlay_available
+    for _ in range(200):
+        draw(app)
+        if model.run_state == RunState.Done:
+            break
+    assert model.run_state == RunState.Done
+    assert {model.rows[0]["name0"], model.rows[0]["name1"]} == {"E", "S"}
+    assert model.rows[0]["name2"] == "2"
+    assert {app.model.x.name, app.model.y.name} == {"E", "S"}
+    values = app.model.map_values()
+    assert f.map_image(values) is None, "off until asked for"
+    model.show_islands = True
+    model.islands_changed()
+    rgba = f.map_image(values)
+    assert rgba is not None and rgba.shape[:2] == np.shape(values)
+    colours = {tuple(c) for c in rgba[..., :3].reshape(-1, 3) if c.any()}
+    assert len(colours) > 10, "two island hues, shaded by density"
+
+
 def test_the_z_ranking_sets_the_z_parameter(app):
     from ndxplorer.analysis.vizrank import RunState
 

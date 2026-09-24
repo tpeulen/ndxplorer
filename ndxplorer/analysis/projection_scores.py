@@ -652,16 +652,16 @@ METHODS: Dict[str, Tuple[str, bool, bool, bool]] = {
 
 #: What each method means, for the panel's tooltip.
 METHOD_HELP = {
-    "populations": "Separation - how many bursts fall into clearly separated islands: "
-                   "donor-only, acceptor-only and FRET species in E vs S, a dynamic "
-                   "population off the static FRET line. 0 is one population, 0.5 two "
-                   "equal islands with empty space between them, 0.67 three.",
-    "correlation": "Correlation - |Spearman rho| of the two parameters: finds pairs that "
-                   "measure related things (E and a lifetime, a rate and its count), not "
-                   "populations. Parameters that are the same quantity are ranked once.",
-    "separation": "Classes - do the bursts of one label (a gate, the clusters) sit together "
-                  "in this view? Share of each burst's 10 nearest neighbours with its label, "
-                  "above chance.",
+    "populations": "How many bursts fall into clearly separated islands: donor-only, "
+                   "acceptor-only and FRET species in E vs S, a dynamic population off the "
+                   "static FRET line. 0: one population; 0.5: two equal islands with empty "
+                   "space between; 0.67: three.",
+    "correlation": "|Spearman rho| of the pair: parameters that measure related things (E and "
+                   "a lifetime, a rate and its count), not populations. Parameters that are "
+                   "the same quantity are ranked once.",
+    "separation": "Do the bursts of one label (a gate, the clusters) sit together in this "
+                  "view? Share of each burst's 10 nearest neighbours with its label, above "
+                  "chance.",
 }
 
 

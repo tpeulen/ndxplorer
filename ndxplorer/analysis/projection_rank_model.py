@@ -365,7 +365,7 @@ class ProjectionRankModel(VizRankModel):
         if getattr(ranker, "_columns_ready", True):
             left_out = len(table.columns) - len(ranker.attrs)
             if left_out:
-                note += f" · {left_out} parameters set aside or ranked as the same view"
+                note += f" · {left_out} parameters left out or merged"
         return note
 
     def ranked_key(self):
