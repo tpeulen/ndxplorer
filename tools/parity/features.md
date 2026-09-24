@@ -448,13 +448,16 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 ## find_projections — View > Find informative projections…
 
 - [~] Window "Find informative projections" (520×640) with Help (?) and Guide. emtk: a tool window inside the app (dragged by its title, closed with ✕), with Guide and ? in its title row, because a browser has no second top-level window.
-- [x] "Score" choice: Class separation (k-NN) (only when classes exist), Population structure (2-means), Correlation (Pearson), Correlation (Spearman)
-- [x] "Classes" choice (for separation only): Gate: inside vs outside, Gates: one population per gate, Clusters, z parameter: <name>. Clusters come from a feature's cluster_labels (analysis group).
+- [~] DELIBERATE CHANGE vs Qt (2026-09-24, tpeulen: "in FRET you do not want to find correlations, you want projections where populations split"): the "Score" choice is now a "Rank by" switch, Separation (default: bursts in clearly separated islands, analysis/separation.py) | Correlation (Spearman) | Classes (k-NN, only when classes exist). Population structure (2-means) and the Pearson/Spearman pair are gone. Both GUIs draw the same spec over the same model, so the Qt window changes with it; the old Qt baseline (parity/qt) shows the retired choice.
+- [x] "Classes" choice (for Classes only): Gate: inside vs outside, Gates: one population per gate, Clusters, z parameter: <name> when z holds labels (a quantity is no longer offered). Clusters come from a feature's cluster_labels (analysis group).
+- [x] NEW (Separation only): "Bursts" choice (All bursts / Weight by photons / Only bursts with at least Min photons, the last two with a Number of Photons column) and "Min photons"
+- [x] NEW (emtk only): "Show islands on the map" colours the map by the islands of the view on the axes (PlaybackExportFeature.map_image); hidden in the Qt host, which does not paint it
+- [x] NEW: the table has an "Islands" column (populations in the view); flags, the acquisition clock and folds are left out and same-quantity parameters ranked once (named in the row note)
 - [x] "Sample" (200..200000, default 5000)
 - [x] Start / Pause; the Start label reads Start / Continue / Restart with new settings / Finished
-- [x] Status "n/N scored (p %) · paused / finished / k failed" and sample info "n of N bursts sampled · k parameters left out"
+- [x] Status "n/N scored (p %) · paused / finished / k failed" and sample info "n of N bursts sampled · k parameters left out or merged"
 - [x] "Ranked views - click one to show it" table: score bar, x, y, with a filter; clicking a row sets the axes; the selected row's note sits under the table. Scoring runs through emtk.tasks in slices: a thread on a desktop, steps between frames in a browser.
-- [x] Guided tour: What this panel does → Score → Start (waits for the press) → table. emtk: the control is outlined and a step card sits beside the window.
+- [x] Guided tour: What this panel does → Rank by → Start (waits for the press) → table. emtk: the control is outlined and a step card sits beside the window.
 
 ## find_projections_iris — Find informative projections on iris (class separation)
 

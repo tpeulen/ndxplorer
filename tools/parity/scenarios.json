@@ -741,7 +741,7 @@
     {
       "id": "find_projections",
       "title": "View > Find informative projections…",
-      "description": "VizRank window (already emtk/AutoForm, hosted in Qt): Score method, Classes, Sample, Start/Pause, status, ranked x/y table. Ranked on MFD data with the gate as classes.",
+      "description": "VizRank window (already emtk/AutoForm, hosted in Qt): Rank by Separation (default) | Correlation | Classes, Bursts, Sample, Start/Pause, status, ranked x/y table with an Islands column. Ranked on MFD data (a gate makes Classes available; Separation stays the default).",
       "data": "mfd",
       "setup": "mfd",
       "steps": [
@@ -759,7 +759,7 @@
     {
       "id": "find_projections_iris",
       "title": "Find informative projections on iris (class separation)",
-      "description": "Iris with its class column as the z parameter: Score 'Class separation (k-NN)', Classes 'z parameter: class' (set on the panel's view model, which is what the two choice widgets bind to), Start. Known answer: the petal pair separates best.",
+      "description": "Iris with its class column as the z parameter: Rank by 'Classes', Classes 'z parameter: class' (set on the panel's view model, which is what the two choice widgets bind to), Start. Known answer: the petal pair separates best.",
       "data": "iris",
       "setup": "iris_petals",
       "steps": [
