@@ -10,10 +10,11 @@ a passing run.
 This file is the one place that says so out loud. It is a single named failure
 that points at the cause, rather than a silence spread across a dozen files.
 ChiSurf is a declared dependency in ``pyproject.toml`` -- region and lasso gates
-are ``chisurf.core.roi`` shapes, the parameter and constants tables are
-``chisurf.core.fitting.parameter`` groups, the table editor and glyphs come
-from ``chisurf.gui`` -- so a run without it is a broken environment, not a
-supported configuration.
+are ``chisurf.core.roi`` shapes, the table editor and glyphs come from
+``chisurf.gui`` -- so a run without it is a broken environment, not a
+supported configuration. (The parameter tables, the curve fit and the
+Gaussian EM are nDXplorer's own and run without it:
+``test_works_without_chisurf.py``.)
 
 Deliberately **not** in ``conda-recipe/meta.yaml``: no chisurf conda package
 exists on the channels that recipe builds against. See the comment there.
@@ -32,8 +33,6 @@ import pytest
 #: fallback and are covered by their own tests.
 REQUIRED = {
     "chisurf.core.roi": "region and lasso gates (ndxplorer.core.region_selection)",
-    "chisurf.core.fitting.parameter": "the parameter and constants tables",
-    "chisurf.core.models.parse": "the curve-fit equation models",
 }
 
 

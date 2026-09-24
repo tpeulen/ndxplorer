@@ -1,14 +1,13 @@
 """Fitting a *parametric* overlay curve — a FRET line — to the displayed data.
 
 The predefined FRET lines are not ``y = f(x)``: they sweep a mean distance and
-return the ``(tau, E)`` pair of arrays they trace. There is no ``ParseModel`` to
-build from that, so they are optimised through the function itself, over the
+return the ``(tau, E)`` pair of arrays they trace, so they are optimised
+through the function itself, over the
 parameters that are already in the curve's table.
 """
 import numpy as np
 import pytest
 
-pytest.importorskip("chisurf.core.fitting.parameter", reason="ChiSurf not importable")
 
 from ndxplorer.analysis.curve_fit import (  # noqa: E402
     CurveFitError,

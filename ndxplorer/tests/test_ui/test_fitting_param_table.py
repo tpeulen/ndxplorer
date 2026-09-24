@@ -82,7 +82,7 @@ def test_persistence_roundtrip_rich_state(qapp, tmp_path):
     try:
         p2 = ed2._group.parameters_all_dict["tauD0"]
         assert p2.value == 4.0 and p2.fixed is False
-        assert tuple(p2.bounds) == (1.0, 8.0) and p2.bounds_on is True
+        assert (p2.lb, p2.ub) == (1.0, 8.0) and p2.bounds_on is True
         # legacy flat consumers still get plain values from the rich file
         from ndxplorer.core.constants_group import values_from_data
         assert values_from_data(json.loads(out.read_text()))["tauD0"] == 4.0

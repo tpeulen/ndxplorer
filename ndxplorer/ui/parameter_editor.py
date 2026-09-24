@@ -34,9 +34,10 @@ if HAS_CHISURF:
     class ParameterEditor(QtWidgets.QWidget):
         """ndXplorer constants as a chisurf fitting-parameter table.
 
-        Renders the constants as ``FittingParameter``s (value/fixed/bounds + a
-        link menu) and registers the group so a constant can be crosslinked to a
-        chisurf fit's parameter. Falls back to the legacy dict editor if the
+        Renders the constants -- an nDXplorer parameter group -- through their
+        ChiSurf ``FittingParameter`` mirrors (value/fixed/bounds + a link menu)
+        and registers the group so a constant can be crosslinked to a chisurf
+        fit's parameter. Falls back to the legacy dict editor if the
         fitting-table stack is unavailable. Keeps the same public surface
         (``dict``, ``set_callback``, ``json_file``) so ``plot_main`` is untouched.
         """
@@ -165,23 +166,17 @@ if HAS_CHISURF:
 
         # -- crosslink registration ---------------------------------------
         def _register_group(self):
-            try:
-                from chisurf.core.parameter_group_registry import register_parameter_group
-                register_parameter_group(
-                    self._group, owner_id=_NDX_OWNER_ID, label="ndX"
-                )
-                self._registered = True
-            except Exception as exc:
-                logging.debug("Could not register constants group: %s", exc)
+            from ..core.parameters import register_group
+
+            register_group(self._group, _NDX_OWNER_ID, "ndX")
+            self._registered = True
 
         def _unregister_group(self):
             if not self._registered:
                 return
-            try:
-                from chisurf.core.parameter_group_registry import unregister_parameter_group
-                unregister_parameter_group(_NDX_OWNER_ID)
-            except Exception:
-                pass
+            from ..core.parameters import unregister_group
+
+            unregister_group(_NDX_OWNER_ID)
             self._registered = False
 
         def closeEvent(self, event):  # noqa: N802 (Qt override)
@@ -207,7 +202,7 @@ if HAS_CHISURF:
 
         @property
         def parameter_group(self):
-            """The constants as a ``FittingParameterGroup`` (``None`` fallback).
+            """The constants as a :class:`~ndxplorer.core.parameters.ParameterGroup` (``None`` fallback).
 
             The group is what a fit is given when a constant is freed to be
             optimised, so callers take it from here rather than reaching into
@@ -370,11 +365,20 @@ if HAS_CHISURF:
                 self._refresh_table()
 
         def _table_params(self):
-            """The scalar constants: a vector's elements are summed up below the table."""
+            """The scalar constants, as the ChiSurf table edits them: their mirrors.
+
+            A vector's elements are summed up below the table. The group is
+            nDXplorer's own; ChiSurf's widget edits its ``FittingParameter``
+            mirror (:mod:`ndxplorer.core.chisurf_binding`), which the group
+            takes over on its next read.
+            """
+            from ..core.chisurf_binding import chisurf_group, mirrored
             from ..core.vector_constants import split_element
 
+            if chisurf_group(self._group) is None:
+                raise RuntimeError("ChiSurf's parameter table needs chisurf")
             vectors = set(self._cg.vector_names(self._group))
-            return [p for p in self._group.parameters_all
+            return [mirrored(p) for p in self._group.parameters_all
                     if p.name not in vectors
                     and (split_element(p.name) or ("",))[0] not in vectors]
 

@@ -239,31 +239,23 @@ class GaussianFit(QtCore.QObject):
         file, "Clear".
         """
         if self._table is not None:
-            self._table.set_params(self.group.rows())
+            self._table.set_params(self.view.mirrored.rows())
         self._register_group()
 
     def _register_group(self) -> None:
         """Publish the Gaussians so another parameter table can link to them."""
-        try:
-            from chisurf.core.parameter_group_registry import register_parameter_group
+        from ..core.parameters import register_group
 
-            register_parameter_group(
-                self.group, owner_id=GAUSSIAN_OWNER_ID, label="ndX Gaussians"
-            )
-            self._registered = True
-        except Exception as exc:
-            logging.debug("Could not register Gaussian parameter group: %s", exc)
+        register_group(self.group, GAUSSIAN_OWNER_ID, "ndX Gaussians")
+        self._registered = True
 
     def _unregister_group(self) -> None:
         """Drop the registry entry, and with it any link into these parameters."""
         if not self._registered:
             return
-        try:
-            from chisurf.core.parameter_group_registry import unregister_parameter_group
+        from ..core.parameters import unregister_group
 
-            unregister_parameter_group(GAUSSIAN_OWNER_ID)
-        except Exception:
-            pass
+        unregister_group(GAUSSIAN_OWNER_ID)
         self._registered = False
 
     # -- links from outside -------------------------------------------------

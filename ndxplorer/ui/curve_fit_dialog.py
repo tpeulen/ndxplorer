@@ -1,10 +1,10 @@
 """Dialog to fit an overlay curve to the displayed data via the fitting table.
 
-The curve's parameters are the ChiSurf ``ParseModel``'s own ``FittingParameter``
-objects, rendered in the shared fitting-parameter table (value / fixed / bounds),
-seeded from the overlay's own parameter table so fix/free and bounds are set in
-one place. The user presses **Fit** and ChiSurf's least-squares optimiser runs
-over the free parameters, holding the fixed ones. Parameters that name an
+The curve fit's own parameters (:mod:`ndxplorer.analysis.curve_fit`), rendered
+through their ChiSurf mirrors in ChiSurf's fitting-parameter table (value / fixed
+/ bounds), seeded from the overlay's own parameter table so fix/free and bounds
+are set in one place. The user presses **Fit** and the least-squares optimiser
+runs over the free parameters, holding the fixed ones. Parameters that name an
 nDXplorer constant — and parameters crosslinked to another parameter — arrive
 fixed (see :mod:`ndxplorer.analysis.curve_fit`).
 
@@ -261,9 +261,11 @@ class CurveFitDialog(QtWidgets.QDialog):
             self._table_slot.addWidget(self._data_table, 1)
 
     def _make_table(self, params, cap: int = 360):
-        """Build one capped parameter table over ``params``."""
+        """Build one capped parameter table over ``params`` (their ChiSurf mirrors)."""
+        from ..core.chisurf_binding import mirrored_list
+
         table = ParameterGroupTableWidget(
-            params,
+            mirrored_list(params, "ndX curve fit"),
             section=_CompactColumns(),
             parent=self,
             # These belong to a local throw-away fit the backend knows nothing
@@ -352,7 +354,9 @@ class CurveFitDialog(QtWidgets.QDialog):
             if table is None:
                 continue
             try:
-                table.set_params(params)
+                from ..core.chisurf_binding import mirrored_list
+
+                table.set_params(mirrored_list(params or [], "ndX curve fit"))
             except Exception:
                 try:
                     table.sync()

@@ -14,7 +14,7 @@ Conventions
 * ``log_x``/``log_y`` say that an axis is fitted and drawn in log space. The
   Gaussian lives in that space; means and covariances are stored in value
   space, mapped through the linearisation ``J = diag(1/mu)`` of ``log``.
-* The Gaussians themselves are the chisurf parameter group of
+* The Gaussians themselves are the parameter group of
   :mod:`ndxplorer.core.gaussian_parameters`; functions here take the
   components it reads out (:class:`~ndxplorer.core.gaussian_parameters.GaussianComponent`)
   or plain ``(mu, cov, w)`` rows.
@@ -148,9 +148,10 @@ def save_gmm_settings(cfg: Dict[str, Any]) -> Optional[str]:
 class GaussianMixtureFixedEM:
     """2D GMM EM with per-component mean/covariance locking.
 
-    Thin wrapper over :class:`chisurf.core.ml.GaussianMixture`, which has the
-    ``fix_means`` / ``fix_covariances`` masks. Works in the caller's "fit space"
-    (log-transformed axes as needed).
+    Full-covariance EM (numpy only) that holds the masked mean and covariance
+    elements at their starting values -- the same contract as ChiSurf's
+    ``GaussianMixture(fix_means=..., fix_covariances=...)``. Works in the
+    caller's "fit space" (log-transformed axes as needed).
     """
 
     def __init__(self, means_init, covs_init, weights_init=None,
@@ -192,31 +193,84 @@ class GaussianMixtureFixedEM:
         mu_fixed_vals, cov_fixed_vals : numpy.ndarray
             Anchor values for the locked parameters.
         """
-        from chisurf.core.ml import GaussianMixture
-
-        self._em = GaussianMixture(
-            n_components=self.means_init.shape[0],
-            covariance_type="full",
-            means_init=np.asarray(mu_fixed_vals, dtype=float),
-            covariances_init=np.asarray(cov_fixed_vals, dtype=float),
-            weights_init=self.weights_init,
-            reg_covar=self.reg_covar,
-            max_iter=self.max_iter,
-            tol=self.tol,
-            init_params="random",
-            fix_means=np.asarray(fix_mu_mask, dtype=bool),
-            fix_covariances=np.asarray(fix_cov_mask, dtype=bool),
-        ).fit(np.asarray(X, dtype=float))
-        self.means_ = self._em.means_
-        self.covs_ = self._em.covariances_
-        self.weights_ = self._em.weights_
+        means, covs, weights, n_iter, lower = _fixed_em(
+            np.asarray(X, dtype=float), np.asarray(mu_fixed_vals, dtype=float),
+            np.asarray(cov_fixed_vals, dtype=float), self.weights_init,
+            np.asarray(fix_mu_mask, dtype=bool), np.asarray(fix_cov_mask, dtype=bool),
+            self.reg_covar, self.max_iter, self.tol)
+        self._em = None
+        self.means_, self.covs_, self.weights_ = means, covs, weights
         if self.weight_floor > 0:
             w = np.maximum(np.asarray(self.weights_, dtype=float), self.weight_floor)
             self.weights_ = w / w.sum()
-        self.converged_ = self._em.converged_
-        self.n_iter_ = self._em.n_iter_
-        self.lower_bound_ = self._em.lower_bound_
+        self.converged_ = n_iter < self.max_iter
+        self.n_iter_ = n_iter
+        self.lower_bound_ = lower
         return self
+
+
+def _log_densities(X: np.ndarray, means: np.ndarray, covs: np.ndarray) -> np.ndarray:
+    """``(N, K)`` log densities of *X* under each full-covariance Gaussian."""
+    out = np.empty((X.shape[0], means.shape[0]))
+    d = X.shape[1]
+    for k in range(means.shape[0]):
+        try:
+            chol = np.linalg.cholesky(covs[k])
+        except np.linalg.LinAlgError:  # a held element broke positive definiteness
+            chol = np.linalg.cholesky(_floored(covs[k], 1e-9))
+        z = np.linalg.solve(chol, (X - means[k]).T)
+        out[:, k] = -0.5 * np.sum(z * z, axis=0) - np.log(np.diag(chol)).sum() \
+            - 0.5 * d * np.log(2.0 * np.pi)
+    return out
+
+
+def _floored(cov: np.ndarray, reg: float) -> np.ndarray:
+    """*cov* symmetric, its eigenvalues floored, plus the ridge *reg*."""
+    cov = 0.5 * (cov + cov.T)
+    vals, vecs = np.linalg.eigh(cov)
+    vals = np.maximum(vals, np.finfo(float).tiny)
+    return (vecs * vals) @ vecs.T + reg * np.eye(cov.shape[0])
+
+
+def _fixed_em(X, means, covs, weights, fix_mu, fix_cov, reg, max_iter, tol):
+    """EM for a full-covariance mixture holding the masked elements.
+
+    A held mean element keeps its starting value; a held covariance element is
+    stamped back after each M-step, its off-diagonal mate mirrored. Returns
+    ``(means, covs, weights, iterations, log-likelihood)``.
+    """
+    means, covs = means.copy(), np.array([_floored(c, 0.0) for c in covs])
+    weights = np.asarray(weights, dtype=float).copy()
+    anchor_mu, anchor_cov = means.copy(), covs.copy()
+    n, k = X.shape[0], means.shape[0]
+    tiny = np.finfo(float).tiny
+    previous, iteration, lower = -np.inf, 0, -np.inf
+    for iteration in range(1, int(max_iter) + 1):
+        log_p = _log_densities(X, means, covs) + np.log(np.maximum(weights, tiny))[None, :]
+        top = log_p.max(axis=1, keepdims=True)
+        top[~np.isfinite(top)] = 0.0
+        log_norm = top[:, 0] + np.log(np.exp(log_p - top).sum(axis=1))
+        lower = float(np.mean(log_norm))
+        resp = np.exp(log_p - log_norm[:, None])
+        resp[~np.isfinite(resp)] = 1.0 / k
+        nk = np.maximum(resp.sum(axis=0), tiny)
+        weights = nk / n
+        new_means = (resp.T @ X) / nk[:, None]
+        new_means[fix_mu] = anchor_mu[fix_mu]
+        means = new_means
+        for c in range(k):
+            diff = X - means[c]
+            cov = _floored((resp[:, c][:, None] * diff).T @ diff / nk[c], reg)
+            mask = np.array(fix_cov[c], dtype=bool)
+            if mask.any():
+                mask[0, 1] = mask[1, 0] = bool(mask[0, 1] or mask[1, 0])
+                cov[mask] = anchor_cov[c][mask]
+                cov = 0.5 * (cov + cov.T)
+            covs[c] = cov
+        if lower - previous < tol:
+            break
+        previous = lower
+    return means, covs, weights, iteration, lower
 
 
 # ---------------------------------------------------------------- transforms

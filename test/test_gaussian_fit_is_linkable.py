@@ -103,8 +103,10 @@ def test_the_gaussians_are_published_for_crosslinking(panel):
 
     from chisurf.core.parameter_group_registry import get_registered_parameter_group
 
+    from ndxplorer.core.chisurf_binding import chisurf_group
+
     published = get_registered_parameter_group(GAUSSIAN_OWNER_ID)
-    assert published is panel.group
+    assert published is chisurf_group(panel.group)      # ChiSurf's mirror of the model
     assert [p.name for p in published.parameters_all][:2] == ["x_1", "y_1"]
 
 

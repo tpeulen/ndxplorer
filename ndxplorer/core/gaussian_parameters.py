@@ -1,15 +1,14 @@
-"""The fit panel's 2-D Gaussians as a chisurf parameter group.
+"""The fit panel's 2-D Gaussians as a parameter group.
 
-Each Gaussian drawn on the two-dimensional map is six numbers — its centre
+Each Gaussian drawn on the two-dimensional map is six numbers -- its centre
 ``(x, y)``, its widths ``(sd_x, sd_y)``, the correlation ``rho`` between them
-and its weight ``w``. They used to live as text in a home-made table, with a
-checkbox in the corner of each cell standing in for "hold this one". They are a
-``FittingParameterGroup`` of the ordinary kind now, so the panel gets what every
-other parameter in chisurf and nDXplorer has — value / fixed / bounds, the
-wheel, copy-paste, the detail popup — and, once the group is published in the
-parameter-group registry, lets a Gaussian be **crosslinked**: pin a population's
-centre to a parameter of an actual fit, or pin two populations' widths to each
-other, and the EM holds them there.
+and its weight ``w``. They are a :class:`~ndxplorer.core.parameters.ParameterGroup`
+of the ordinary kind, so the panel gets what every other parameter of
+nDXplorer has -- value / fixed / bounds, copy-paste, the shared parameter table
+-- and, once the group is registered, a Gaussian can be **crosslinked**: pin a
+population's centre to another parameter (a constant, a curve's, and with
+ChiSurf present a fit's), or pin two populations' widths to each other, and the
+EM holds them there.
 
 A **linked** parameter is held fixed by the fit and never written back: its
 value belongs to the master it follows, so optimising it would either be
@@ -17,17 +16,9 @@ discarded or fight the link. That is the same contract
 :mod:`ndxplorer.analysis.curve_fit` uses for the overlay curves.
 
 The group is a **variable-length list of components** with ``append`` and
-``pop``, which is the contract chisurf's ``dynamic_group`` view section is
-written against: :class:`GaussianMixtureView` declares one such section
-(``style: "table"``, ``row_width: 6``) and ``AutoForm`` renders it exactly like
-the lifetime and rotation tables of a model editor — one component per row, with
-the same add / remove controls and the same columns. The structural definition
-of "what a row is" therefore stays here, in the group, and the panel carries no
-table code at all.
-
-Qt-free, so the bookkeeping is headless-testable; the widget wiring lives in
-:mod:`ndxplorer.analysis.gaussian_fit`. chisurf is imported lazily throughout,
-because nDXplorer also installs standalone.
+``pop``. Pure Python and numpy: no chisurf needed. The Qt window renders it
+through ChiSurf's ``dynamic_group`` section (:class:`GaussianMixtureView`),
+which is the only part that needs chisurf.
 """
 
 from __future__ import annotations
@@ -37,6 +28,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
+
+from .parameters import Parameter, ParameterGroup, is_held
 
 #: One component's parameters, in the order they are stored and shown.
 SLOTS: tuple[str, ...] = ("x", "y", "sd_x", "sd_y", "rho", "w")
@@ -137,291 +130,228 @@ def regularized(cov: Sequence[Sequence[float]]) -> np.ndarray:
     return c
 
 
-def is_held(param) -> bool:
-    """Return whether the fit must hold this parameter (fixed **or** linked)."""
-    return bool(getattr(param, "fixed", False)) or bool(getattr(param, "is_linked", False))
-
-
-def _break_links(parameters: Sequence[Any]) -> None:
-    """Unlink removed parameters and any follower pointing back at them.
-
-    A removed Gaussian whose parameter is still some other table's master would
-    leave that follower reading a value nothing updates any more.
-    """
-    try:
-        from chisurf.core.parameter_group_registry import break_links
-
-        break_links(parameters)
-    except Exception:
-        for param in parameters:
-            try:
-                param.link = None
-            except Exception:
-                continue
-
-
 # -- the group ----------------------------------------------------------------
 
-_MIXTURE_CLASS: Any = None
+class GaussianMixture(ParameterGroup):
+    """A variable-length list of 2-D Gaussians, six parameters each.
 
-
-def gaussian_mixture_class():
-    """Return the mixture group class, defining it on first call.
-
-    The base class lives in chisurf, which this module must not import at
-    import time (nDXplorer installs standalone), so the class is built on
-    demand and cached — ``isinstance`` against this return value works as
-    usual.
+    Implements the ``append`` / ``pop`` contract a component table drives
+    (ChiSurf's ``dynamic_group`` section in the Qt window).
     """
-    global _MIXTURE_CLASS
-    if _MIXTURE_CLASS is not None:
-        return _MIXTURE_CLASS
 
-    from chisurf.core.fitting.parameter import FittingParameter, FittingParameterGroup
+    def __init__(self, name: str = DEFAULT_GROUP_NAME, **kwargs):
+        super().__init__(name=name, **kwargs)
+        #: ``() -> (mu, cov)`` for a Gaussian added with no coordinates —
+        #: the shared "add" button calls ``append()`` with none. A unit
+        #: Gaussian at the origin is off the map for axes that run 0 to 1,
+        #: so the host, which knows what is displayed, supplies this.
+        self.default_component = None
 
-    class GaussianMixture(FittingParameterGroup):
-        """A variable-length list of 2-D Gaussians, six parameters each.
+    def _default(self) -> tuple:
+        """Centre and covariance for a Gaussian the caller did not place."""
+        if callable(self.default_component):
+            try:
+                mu, cov = self.default_component()
+                return np.asarray(mu, dtype=float), np.asarray(cov, dtype=float)
+            except Exception:
+                pass
+        return np.zeros(2), np.eye(2)
 
-        Implements the ``append`` / ``pop`` contract chisurf's ``dynamic_group``
-        section drives, so the table, its add/remove buttons and its column
-        layout are the shared renderer's rather than the panel's.
+    # -- structure ------------------------------------------------------
+    def rows(self) -> list:
+        """Return the parameters making up the rows (the section's ``rows_source``)."""
+        return list(self.parameters_all)
+
+    def __len__(self) -> int:
+        """Return the number of Gaussians the group holds."""
+        return len(self.parameters_all) // WIDTH
+
+    def parameters_of(self, index: int) -> dict:
+        """Return ``{slot: Parameter}`` of one component."""
+        params = self.parameters_all
+        start = index * WIDTH
+        if index < 0 or start + WIDTH > len(params):
+            raise IndexError(f"no Gaussian at index {index}")
+        return dict(zip(SLOTS, params[start : start + WIDTH]))
+
+    def append(
+        self,
+        mu: Sequence[float] | None = None,
+        cov: Sequence[Sequence[float]] | None = None,
+        w: float = 1.0,
+        fixed: Mapping[str, bool] | None = None,
+    ) -> int:
+        """Add one Gaussian; return its index.
+
+        Parameters
+        ----------
+        mu : sequence of float, optional
+            Centre ``(x, y)`` in value space. Defaults to whatever
+            :attr:`default_component` says — the shared "add" button calls
+            this with no arguments.
+        cov : array_like, shape (2, 2), optional
+            Covariance; stored as ``sd_x``, ``sd_y`` and ``rho``.
+        w : float, optional
+            Mixture weight.
+        fixed : mapping of str to bool, optional
+            Which of the six slots start held.
         """
-
-        def __init__(self, name: str = DEFAULT_GROUP_NAME, **kwargs):
-            super().__init__(name=name, **kwargs)
-            # ``parameters_all`` reads ``_parameters``, which only exists once
-            # ``find_parameters()`` has run.
-            self.find_parameters()
-            self._parameters[:] = []
-            #: ``() -> (mu, cov)`` for a Gaussian added with no coordinates —
-            #: the shared "add" button calls ``append()`` with none. A unit
-            #: Gaussian at the origin is off the map for axes that run 0 to 1,
-            #: so the host, which knows what is displayed, supplies this.
-            self.default_component = None
-
-        def _default(self) -> tuple:
-            """Centre and covariance for a Gaussian the caller did not place."""
-            if callable(self.default_component):
-                try:
-                    mu, cov = self.default_component()
-                    return np.asarray(mu, dtype=float), np.asarray(cov, dtype=float)
-                except Exception:
-                    pass
-            return np.zeros(2), np.eye(2)
-
-        # -- structure ------------------------------------------------------
-        def rows(self) -> list:
-            """Return the parameters making up the rows (the section's ``rows_source``)."""
-            return list(self.parameters_all)
-
-        def __len__(self) -> int:
-            """Return the number of Gaussians the group holds."""
-            return len(self.parameters_all) // WIDTH
-
-        def parameters_of(self, index: int) -> dict:
-            """Return ``{slot: FittingParameter}`` of one component."""
-            params = self.parameters_all
-            start = index * WIDTH
-            if index < 0 or start + WIDTH > len(params):
-                raise IndexError(f"no Gaussian at index {index}")
-            return dict(zip(SLOTS, params[start : start + WIDTH]))
-
-        def append(
-            self,
-            mu: Sequence[float] | None = None,
-            cov: Sequence[Sequence[float]] | None = None,
-            w: float = 1.0,
-            fixed: Mapping[str, bool] | None = None,
-        ) -> int:
-            """Add one Gaussian; return its index.
-
-            Parameters
-            ----------
-            mu : sequence of float, optional
-                Centre ``(x, y)`` in value space. Defaults to whatever
-                :attr:`default_component` says — the shared "add" button calls
-                this with no arguments.
-            cov : array_like, shape (2, 2), optional
-                Covariance; stored as ``sd_x``, ``sd_y`` and ``rho``.
-            w : float, optional
-                Mixture weight.
-            fixed : mapping of str to bool, optional
-                Which of the six slots start held.
-            """
-            if mu is None or cov is None:
-                default_mu, default_cov = self._default()
-                mu = default_mu if mu is None else mu
-                cov = default_cov if cov is None else cov
-            index = len(self) + 1
-            sd_x, sd_y, rho = sd_rho_from_cov(cov)
-            values = {
-                "x": float(mu[0]), "y": float(mu[1]),
-                "sd_x": sd_x, "sd_y": sd_y, "rho": rho, "w": float(w),
-            }
-            held = dict(fixed or {})
-            for slot in SLOTS:
-                label, lb, ub, bounds_on = _SLOT_SPEC[slot]
-                self._parameters.append(
-                    FittingParameter(
-                        name=f"{slot}_{index}",
-                        value=values[slot],
-                        lb=lb, ub=ub, bounds_on=bounds_on,
-                        fixed=bool(held.get(slot, False)),
-                        label_text=label.format(i=index),
-                    )
+        if mu is None or cov is None:
+            default_mu, default_cov = self._default()
+            mu = default_mu if mu is None else mu
+            cov = default_cov if cov is None else cov
+        index = len(self) + 1
+        sd_x, sd_y, rho = sd_rho_from_cov(cov)
+        values = {
+            "x": float(mu[0]), "y": float(mu[1]),
+            "sd_x": sd_x, "sd_y": sd_y, "rho": rho, "w": float(w),
+        }
+        held = dict(fixed or {})
+        for slot in SLOTS:
+            label, lb, ub, bounds_on = _SLOT_SPEC[slot]
+            self._parameters.append(
+                Parameter(
+                    f"{slot}_{index}", values[slot],
+                    lb=lb, ub=ub, bounds_on=bounds_on,
+                    fixed=bool(held.get(slot, False)),
+                    label_text=label.format(i=index),
                 )
-            return index - 1
+            )
+        self.changed()
+        return index - 1
 
-        def pop(self, index: int | None = None) -> None:
-            """Remove one Gaussian — the given one, or the last — and renumber.
+    def pop(self, index: int | None = None) -> None:
+        """Remove one Gaussian — the given one, or the last — and renumber.
 
-            Renumbering keeps the names the link menu shows in step with the row
-            numbers the user sees. A link already made survives it: a link holds
-            the master *object*, not its name.
-            """
-            if len(self) == 0:
-                return
-            index = len(self) - 1 if index is None else int(index)
-            if not 0 <= index < len(self):
-                return
-            removed = list(self._parameters[index * WIDTH : (index + 1) * WIDTH])
-            del self._parameters[index * WIDTH : (index + 1) * WIDTH]
-            # After the list is cut, so a *surviving* component that followed a
-            # removed one is found as a follower and unlinked too.
-            _break_links(removed)
-            self._renumber()
+        Renumbering keeps the names the link menu shows in step with the row
+        numbers the user sees. A link already made survives it: a link holds
+        the master *object*, not its name.
+        """
+        if len(self) == 0:
+            return
+        index = len(self) - 1 if index is None else int(index)
+        if not 0 <= index < len(self):
+            return
+        kept = self._parameters[: index * WIDTH] + self._parameters[(index + 1) * WIDTH :]
+        # A *surviving* component that followed a removed one is unlinked too.
+        self.replace_parameters(kept)
+        self._renumber()
 
-        def clear(self) -> None:
-            """Remove every Gaussian, breaking any links that pointed at them."""
-            going = list(self.parameters_all)
-            self._parameters[:] = []
-            _break_links(going)
+    def clear(self) -> None:
+        """Remove every Gaussian, breaking any links that pointed at them."""
+        self.replace_parameters([])
 
-        def _renumber(self) -> None:
-            """Re-derive every parameter's name and label from its component index."""
-            params = self.parameters_all
-            for c in range(len(params) // WIDTH):
-                for slot, param in zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]):
-                    label, _, _, _ = _SLOT_SPEC[slot]
-                    param.name = f"{slot}_{c + 1}"
-                    param.__dict__["label_text"] = label.format(i=c + 1)
+    def _renumber(self) -> None:
+        """Re-derive every parameter's name and label from its component index."""
+        params = self.parameters_all
+        for c in range(len(params) // WIDTH):
+            for slot, param in zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]):
+                label, _, _, _ = _SLOT_SPEC[slot]
+                param.name = f"{slot}_{c + 1}"
+                param.label_text = label.format(i=c + 1)
 
-        # -- values ---------------------------------------------------------
-        def components(self) -> list:
-            """Read every Gaussian out of the group, following crosslinks.
+    # -- values ---------------------------------------------------------
+    def components(self) -> list:
+        """Read every Gaussian out of the group, following crosslinks.
 
-            Reading a linked parameter returns its master's current value, so
-            the ellipse drawn is whatever the fit it is pinned to says now.
-            """
-            out = []
-            params = self.parameters_all
-            for c in range(len(params) // WIDTH):
-                p = dict(zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]))
-                w = float(p["w"].value)
-                if not np.isfinite(w) or w < 0:
-                    w = 1.0
-                held_rho = is_held(p["rho"])
-                out.append(
-                    GaussianComponent(
-                        mu=np.array([float(p["x"].value), float(p["y"].value)], dtype=float),
-                        cov=cov_from_sd_rho(p["sd_x"].value, p["sd_y"].value, p["rho"].value),
-                        w=w,
-                        fix_mu=np.array([is_held(p["x"]), is_held(p["y"])], dtype=bool),
-                        fix_cov=np.array(
-                            [[is_held(p["sd_x"]), held_rho],
-                             [held_rho, is_held(p["sd_y"])]], dtype=bool,
-                        ),
-                        fix_w=is_held(p["w"]),
-                    )
-                )
-            return out
-
-        def write(
-            self,
-            index: int,
-            mu: Sequence[float],
-            cov: Sequence[Sequence[float]],
-            w: float | None = None,
-        ) -> None:
-            """Write a fitted component back.
-
-            Linked parameters are skipped — their value is owned by the master
-            they follow, so assigning here would be either discarded or a silent
-            unlink.
-            """
-            p = self.parameters_of(index)
-            sd_x, sd_y, rho = sd_rho_from_cov(cov)
-            values = {
-                "x": float(mu[0]), "y": float(mu[1]),
-                "sd_x": sd_x, "sd_y": sd_y, "rho": rho,
-            }
-            if w is not None:
-                values["w"] = float(w)
-            for slot, value in values.items():
-                param = p[slot]
-                if getattr(param, "is_linked", False):
-                    continue
-                try:
-                    param.value = float(value)
-                except (TypeError, ValueError):
-                    continue
-
-        # -- persistence ----------------------------------------------------
-        def records(self) -> list:
-            """Return one flat ``{field: value}`` record per Gaussian, for saving."""
-            records = []
-            params = self.parameters_all
-            for c in range(len(params) // WIDTH):
-                p = dict(zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]))
-                record: dict[str, Any] = {slot: float(p[slot].value) for slot in SLOTS}
-                for slot in ("x", "y", "sd_x", "sd_y", "rho"):
-                    record[f"fix_{slot}"] = bool(is_held(p[slot]))
-                records.append(record)
-            return records
-
-        def apply_records(self, records: Sequence[Mapping[str, Any]]) -> None:
-            """Replace the Gaussians with the ones in ``records``."""
-            self.clear()
-            for record in records:
-                self.append(
-                    (float(record.get("x", 0.0)), float(record.get("y", 0.0))),
-                    cov_from_sd_rho(
-                        record.get("sd_x", 0.0), record.get("sd_y", 0.0),
-                        record.get("rho", 0.0),
+        Reading a linked parameter returns its master's current value, so
+        the ellipse drawn is whatever the fit it is pinned to says now.
+        """
+        out = []
+        params = self.parameters_all
+        for c in range(len(params) // WIDTH):
+            p = dict(zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]))
+            w = float(p["w"].value)
+            if not np.isfinite(w) or w < 0:
+                w = 1.0
+            held_rho = is_held(p["rho"])
+            out.append(
+                GaussianComponent(
+                    mu=np.array([float(p["x"].value), float(p["y"].value)], dtype=float),
+                    cov=cov_from_sd_rho(p["sd_x"].value, p["sd_y"].value, p["rho"].value),
+                    w=w,
+                    fix_mu=np.array([is_held(p["x"]), is_held(p["y"])], dtype=bool),
+                    fix_cov=np.array(
+                        [[is_held(p["sd_x"]), held_rho],
+                         [held_rho, is_held(p["sd_y"])]], dtype=bool,
                     ),
-                    float(record.get("w", 1.0)),
-                    fixed={
-                        slot: bool(record.get(f"fix_{slot}", False))
-                        for slot in ("x", "y", "sd_x", "sd_y", "rho")
-                    },
+                    fix_w=is_held(p["w"]),
                 )
+            )
+        return out
 
-    _MIXTURE_CLASS = GaussianMixture
-    return _MIXTURE_CLASS
+    def write(
+        self,
+        index: int,
+        mu: Sequence[float],
+        cov: Sequence[Sequence[float]],
+        w: float | None = None,
+    ) -> None:
+        """Write a fitted component back.
+
+        Linked parameters are skipped — their value is owned by the master
+        they follow, so assigning here would be either discarded or a silent
+        unlink.
+        """
+        p = self.parameters_of(index)
+        sd_x, sd_y, rho = sd_rho_from_cov(cov)
+        values = {
+            "x": float(mu[0]), "y": float(mu[1]),
+            "sd_x": sd_x, "sd_y": sd_y, "rho": rho,
+        }
+        if w is not None:
+            values["w"] = float(w)
+        for slot, value in values.items():
+            param = p[slot]
+            if getattr(param, "is_linked", False):
+                continue
+            try:
+                param.value = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    # -- persistence ----------------------------------------------------
+    def records(self) -> list:
+        """Return one flat ``{field: value}`` record per Gaussian, for saving."""
+        records = []
+        params = self.parameters_all
+        for c in range(len(params) // WIDTH):
+            p = dict(zip(SLOTS, params[c * WIDTH : (c + 1) * WIDTH]))
+            record: dict[str, Any] = {slot: float(p[slot].value) for slot in SLOTS}
+            for slot in ("x", "y", "sd_x", "sd_y", "rho"):
+                record[f"fix_{slot}"] = bool(is_held(p[slot]))
+            records.append(record)
+        return records
+
+    def apply_records(self, records: Sequence[Mapping[str, Any]]) -> None:
+        """Replace the Gaussians with the ones in ``records``."""
+        self.clear()
+        for record in records:
+            self.append(
+                (float(record.get("x", 0.0)), float(record.get("y", 0.0))),
+                cov_from_sd_rho(
+                    record.get("sd_x", 0.0), record.get("sd_y", 0.0),
+                    record.get("rho", 0.0),
+                ),
+                float(record.get("w", 1.0)),
+                fixed={
+                    slot: bool(record.get(f"fix_{slot}", False))
+                    for slot in ("x", "y", "sd_x", "sd_y", "rho")
+                },
+            )
 
 
-def build_gaussian_group(name: str = DEFAULT_GROUP_NAME):
-    """Return an empty mixture group ready to take components.
-
-    Raises
-    ------
-    ImportError
-        When chisurf's parameter runtime (IMP.bff's ports) is missing -- a
-        browser page without an IMP wheel. The classes import without it, so an
-        empty group would build and then fail on its first component, inside a
-        frame; raising here lets the panel say why instead.
-    """
-    group = gaussian_mixture_class()(name=name)
-    from chisurf.core.fitting.parameter import FittingParameter
-
-    FittingParameter(name="probe", value=1.0)
-    return group
+def build_gaussian_group(name: str = DEFAULT_GROUP_NAME) -> "GaussianMixture":
+    """Return an empty mixture group ready to take components."""
+    return GaussianMixture(name=name)
 
 
 @dataclasses.dataclass
 class GaussianMixtureView:
     """Renderable view of a mixture group — one ``dynamic_group`` section.
 
+    Qt only (it needs chisurf): ChiSurf's table edits the chisurf mirror of the
+    group (:mod:`ndxplorer.core.chisurf_binding`), which the group takes over.
     ``AutoForm(GaussianMixtureView(group))`` produces the same component table a
     model editor uses for lifetimes and rotations: one Gaussian per row, the
     shared add / remove buttons, the shared columns. Everything particular to
@@ -445,6 +375,11 @@ class GaussianMixtureView:
     on_changed: Any = None
     title: str = DEFAULT_GROUP_NAME
 
+    @property
+    def mirrored(self) -> "_MirroredMixture":
+        """What the section edits: ChiSurf's mirror of the group, grown by the group."""
+        return _MirroredMixture(self.group)
+
     def view_spec(self):
         """Return the view: one panel holding the component table."""
         from chisurf.core.dataspec import DynamicGroupSection, ModelView, PanelSection
@@ -462,7 +397,7 @@ class GaussianMixtureView:
                     # inside the Gaussian-fit panel's construction.
                     sections=(
                         DynamicGroupSection(
-                            target="group",
+                            target="mirrored",
                             rows_source="rows",
                             row_width=WIDTH,
                             # One parameter per row. Six numbers side by side is
@@ -482,6 +417,25 @@ class GaussianMixtureView:
         )
 
 
+class _MirroredMixture:
+    """ChiSurf's view of a mixture: the mirror's parameters, the group's append/pop."""
+
+    def __init__(self, mixture: GaussianMixture) -> None:
+        self.mixture = mixture
+        self.name = mixture.name
+
+    def rows(self) -> list:
+        from .chisurf_binding import chisurf_group
+
+        return list(chisurf_group(self.mixture).parameters_all)
+
+    def append(self) -> int:
+        return self.mixture.append()
+
+    def pop(self, index: int | None = None) -> None:
+        self.mixture.pop(index)
+
+
 __all__ = [
     "SLOTS",
     "SLOT_LABELS",
@@ -492,7 +446,7 @@ __all__ = [
     "GaussianMixtureView",
     "build_gaussian_group",
     "cov_from_sd_rho",
-    "gaussian_mixture_class",
+    "GaussianMixture",
     "is_held",
     "regularized",
     "sd_rho_from_cov",

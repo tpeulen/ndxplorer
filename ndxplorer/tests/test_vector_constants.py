@@ -103,7 +103,6 @@ cg = pytest.importorskip("ndxplorer.core.constants_group")
 
 @pytest.fixture
 def group():
-    pytest.importorskip("chisurf.core.fitting.parameter", reason="chisurf not importable")
     return cg.build_constants_group(OrderedDict([("gamma", 0.7), ("Bg", 1.2)]))
 
 
@@ -124,7 +123,7 @@ def test_an_element_keeps_fixed_bounds_and_link_when_the_vector_is_set_again(gro
     cg.set_vector(group, "gamma", [0.6, 0.8, 0.9], ["a", "b", "c"])
     element = group.parameters_all_dict["gamma[a]"]
     element.fixed = False
-    element.bounds = (0.1, 2.0)
+    element.lb, element.ub = 0.1, 2.0
     element.bounds_on = True
     cg.set_vector(group, "gamma", [0.5, 0.7], ["a", "b"])
     assert group.parameters_all_dict["gamma[a]"] is element

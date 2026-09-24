@@ -1,16 +1,14 @@
-"""ndXplorer constants as a chisurf ``FittingParameterGroup``.
+"""ndXplorer constants as a :class:`~ndxplorer.core.parameters.ParameterGroup`.
 
-ndXplorer's model constants (``Bg``, ``gG/gR``, ``PhiA``, ``tauD0`` …) used to be
-plain floats in a dict. Wrapping them in a :class:`FittingParameterGroup` of
-:class:`FittingParameter` objects lets the GUI render them in chisurf's
-fitting-parameter table (value / fixed / bounds + a **link** menu) and lets a
-constant be *crosslinked* to a parameter of an actual chisurf fit — when the
-linked value changes, ``param.value`` returns the linked master's value, so the
-equation engine recomputes against the fit.
+The model constants (``Bg``, ``gG/gR``, ``PhiA``, ``tauD0`` ...) are parameters
+with value / fixed / bounds and a **link**: a constant can follow another
+parameter -- a curve's, a Gaussian's, and with ChiSurf present a fit's -- and
+``param.value`` then returns the master's value, so the equation engine
+recomputes against it. A vector constant is a family ``base[label]`` of them
+(:mod:`ndxplorer.core.vector_constants`).
 
-This module is deliberately **Qt-free** so it is headless-testable and importable
-wherever chisurf-core is available. The GUI wiring lives in
-``ndxplorer/ui/parameter_editor.py``.
+Pure Python: no chisurf, no Qt. With chisurf present the registered group is
+also published as ChiSurf fitting parameters (:mod:`ndxplorer.core.chisurf_binding`).
 """
 
 from __future__ import annotations
@@ -19,9 +17,7 @@ import collections.abc
 from collections import OrderedDict
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
-# chisurf is imported lazily inside the functions that build parameters, so the
-# pure format helpers (is_state_format / values_from_data) — used by the Qt-free,
-# chisurf-free CLI and settings loaders — import without a chisurf dependency.
+from .parameters import Parameter, ParameterGroup
 
 DEFAULT_GROUP_NAME = "ndX constants"
 
@@ -30,43 +26,30 @@ DEFAULT_GROUP_NAME = "ndX constants"
 def build_constants_group(
     values: Mapping[str, float],
     name: str = DEFAULT_GROUP_NAME,
-) -> FittingParameterGroup:
-    """Build a group of ``fixed=True`` :class:`FittingParameter`s from a mapping.
+) -> ParameterGroup:
+    """Build a group of ``fixed=True`` parameters from a mapping.
 
     Constants default to ``fixed`` — they are constants until the user
     deliberately links or unfixes them.
     """
-    from chisurf.core.fitting.parameter import FittingParameter, FittingParameterGroup
-
-    group = FittingParameterGroup(name=name)
-    # ``parameters_all`` reads ``_parameters``, which is only initialised by
-    # ``find_parameters()`` — appending before that raises.
-    group.find_parameters()
-    for key, value in values.items():
-        group.append_parameter(
-            FittingParameter(name=str(key), value=float(value), fixed=True)
-        )
-    return group
+    return ParameterGroup(name, [Parameter(str(key), float(value), fixed=True)
+                                 for key, value in values.items()])
 
 
-def group_to_value_dict(group: FittingParameterGroup) -> "OrderedDict[str, float]":
+def group_to_value_dict(group: ParameterGroup) -> "OrderedDict[str, float]":
     """Flat, order-preserving ``{name: value}`` snapshot (the legacy ``.dict``)."""
     return OrderedDict((p.name, float(p.value)) for p in group.parameters_all)
 
 
 def apply_value_dict(group, values: Mapping[str, float]) -> None:
     """Set existing parameters' values; append any names not yet in the group."""
-    from chisurf.core.fitting.parameter import FittingParameter
-
     existing = group.parameters_all_dict
     for key, value in values.items():
         key = str(key)
         if key in existing:
             existing[key].value = float(value)
         else:
-            group.append_parameter(
-                FittingParameter(name=key, value=float(value), fixed=True)
-            )
+            group.append_parameter(Parameter(key, float(value), fixed=True))
 
 
 # ------------------------------------------------------------------ vectors
@@ -84,16 +67,6 @@ def _vector_meta(group) -> Dict[str, dict]:
         meta = {}
         group._ndx_vectors = meta
     return meta
-
-
-def _bump(group) -> None:
-    """The group's structure changed: cached factor graphs are stale."""
-    try:
-        from chisurf.core.fitting import factorgraph
-
-        factorgraph.bump_structure_version()
-    except Exception:  # noqa: BLE001 - nothing cached, nothing to invalidate
-        pass
 
 
 def vector_names(group) -> List[str]:
@@ -118,7 +91,7 @@ def vector_labels(group, name: str) -> List[str]:
 
 
 def vector_elements(group, name: str) -> List[Tuple[str, Any]]:
-    """``[(label, FittingParameter), ...]`` of vector *name*."""
+    """``[(label, Parameter), ...]`` of vector *name*."""
     from .vector_constants import element_name
 
     params = group.parameters_all_dict
@@ -137,11 +110,7 @@ def vector_uncertainty(group, name: str, label: str) -> Optional[float]:
 
 
 def _append(group, name: str, value: float, fixed: bool = True):
-    from chisurf.core.fitting.parameter import FittingParameter
-
-    parameter = FittingParameter(name=str(name), value=float(value), fixed=bool(fixed))
-    group.append_parameter(parameter)
-    return parameter
+    return group.append_parameter(Parameter(str(name), float(value), fixed=bool(fixed)))
 
 
 def remove_parameter(group, name: str) -> bool:
@@ -149,10 +118,7 @@ def remove_parameter(group, name: str) -> bool:
     parameter = group.parameters_all_dict.get(str(name))
     if parameter is None:
         return False
-    if getattr(parameter, "is_linked", False):
-        parameter.link = None
-    group.parameters_all.remove(parameter)
-    _bump(group)
+    group.remove_parameter(parameter)
     return True
 
 
@@ -212,7 +178,6 @@ def set_vector(group, name: str, values: Sequence[float], populations: Sequence[
             if u is not None:
                 parameter.error_estimate = float(u)
     _vector_meta(group)[name] = entry
-    _bump(group)
     return out
 
 
@@ -260,7 +225,7 @@ def vectors_state(group) -> Dict[str, dict]:
 
 
 # ------------------------------------------------------------- serialization
-def group_state(group: FittingParameterGroup) -> Dict[str, Any]:
+def group_state(group: ParameterGroup) -> Dict[str, Any]:
     """Rich per-parameter state (value + bounds + fixed) — see group.get_state().
 
     A group with vector constants adds ``"vectors"``: per vector its
@@ -273,18 +238,9 @@ def group_state(group: FittingParameterGroup) -> Dict[str, Any]:
     return state
 
 
-def apply_group_state(group: FittingParameterGroup, state: Mapping[str, Any]) -> None:
-    """Restore value/bounds/fixed from a :func:`group_state` payload.
-
-    Applies per parameter rather than via ``group.set_state`` — the group-level
-    method re-runs ``find_parameters()``, which rebuilds the parameter list from
-    object *attributes* and so wipes a group populated with ``append_parameter``.
-    """
-    params = group.parameters_all_dict
-    for name, pstate in dict(state).get("parameters", {}).items():
-        target = params.get(str(name))
-        if target is not None:
-            target.set_state(dict(pstate))
+def apply_group_state(group: ParameterGroup, state: Mapping[str, Any]) -> None:
+    """Restore value/bounds/fixed (and the vectors) from a :func:`group_state` payload."""
+    group.set_state(dict(state))
     vectors = dict(state).get(VECTORS_KEY)
     if isinstance(vectors, Mapping):
         for name, entry in vectors.items():
@@ -322,10 +278,10 @@ def values_from_data(data: Mapping[str, Any]) -> "OrderedDict[str, float]":
 def build_group_from_data(
     data: Mapping[str, Any],
     name: str = DEFAULT_GROUP_NAME,
-) -> FittingParameterGroup:
+) -> ParameterGroup:
     """Build a group from parsed JSON in *either* the flat or nested format.
 
-    Nested payloads additionally restore bounds/fixed via ``set_state``.
+    Nested payloads additionally restore bounds/fixed.
     """
     group = build_constants_group(values_from_data(data), name=name)
     if is_state_format(data):
@@ -335,19 +291,19 @@ def build_group_from_data(
 
 # --------------------------------------------------------------- live mapping
 class ConstantsMapping(collections.abc.Mapping):
-    """Live ``name -> float`` view over a :class:`FittingParameterGroup`.
+    """Live ``name -> float`` view over a :class:`ParameterGroup`.
 
     ``__getitem__`` returns the parameter's numeric ``value`` (a plain ``float``,
-    never the :class:`FittingParameter` — the value flows straight into NumPy
+    never the :class:`Parameter` — the value flows straight into NumPy
     arithmetic in the equation engine), so a *linked* constant reads its master's
-    current value. Used as ``self.constants`` in Phase 2; exercised by tests now.
+    current value. The data manager reads its constants through one.
     """
 
-    def __init__(self, group: FittingParameterGroup):
+    def __init__(self, group: ParameterGroup):
         self._group = group
 
     @property
-    def group(self) -> FittingParameterGroup:
+    def group(self) -> ParameterGroup:
         return self._group
 
     def __getitem__(self, key: str) -> float:

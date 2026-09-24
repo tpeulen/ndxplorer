@@ -50,8 +50,8 @@ class CurveWidget(QtWidgets.QGroupBox):
     """
     A widget for a single curve equation with parameters and visibility control.
 
-    The parameters are :class:`FittingParameter` objects in a
-    :class:`FittingParameterGroup`, rendered in chisurf's shared fitting-parameter
+    The parameters are an nDXplorer :class:`~ndxplorer.core.parameters.ParameterGroup`,
+    rendered (through its ChiSurf mirror) in chisurf's shared fitting-parameter
     table — the same editor as the ndX constants and a fit's parameters, so they
     behave the same (wheel, bounds, copy/paste, detail popup) and can be
     **crosslinked**: a FRET line's ``tau_d0`` can follow the donor lifetime of an
@@ -69,7 +69,7 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.setCheckable(True)
         self.setChecked(True)
 
-        #: ``name -> FittingParameter`` with the table, ``name -> widget`` without.
+        #: ``name -> Parameter`` with the table, ``name -> widget`` without.
         self.parameters = {}
         self.curve_color = "#ff0000"  # Default color is red
         self.use_sliders = True  # Legacy slider grid only (kept for the fallback)
@@ -224,8 +224,8 @@ class CurveWidget(QtWidgets.QGroupBox):
             changed = cp.sync_curve_group(self._group, names, values=values)
         self.parameters = {p.name: p for p in self._group.parameters_all}
         if changed:
-            self._rebuild_table()
             self._register_group()
+            self._rebuild_table()
 
     def _rebuild_table(self):
         """(Re)create the table view over the current parameters.
@@ -240,8 +240,11 @@ class CurveWidget(QtWidgets.QGroupBox):
             self._table = None
         if self._group is None:
             return
+        from ..core.chisurf_binding import chisurf_group
+
+        # ChiSurf's table edits the group's FittingParameter mirror.
         self._table = ParameterGroupTableWidget(
-            self._group.parameters_all,
+            chisurf_group(self._group).parameters_all,
             section=_CurveColumns(),
             parent=self,
             on_change=self._parameter_changed,
@@ -256,27 +259,19 @@ class CurveWidget(QtWidgets.QGroupBox):
         """Publish the group so other parameter tables can link to these."""
         if self._group is None:
             return
-        try:
-            from chisurf.core.parameter_group_registry import register_parameter_group
+        from ..core.parameters import register_group
 
-            self._group.name = str(self.title())
-            register_parameter_group(
-                self._group, owner_id=self._owner_id, label="ndX %s" % self.title()
-            )
-            self._registered_as = self._owner_id
-        except Exception as exc:
-            logging.debug("Could not register curve parameter group: %s", exc)
+        self._group.name = str(self.title())
+        register_group(self._group, self._owner_id, "ndX %s" % self.title())
+        self._registered_as = self._owner_id
 
     def _unregister_group(self):
         """Drop the registry entry (the curve is gone; its links must go too)."""
         if self._registered_as is None:
             return
-        try:
-            from chisurf.core.parameter_group_registry import unregister_parameter_group
+        from ..core.parameters import unregister_group
 
-            unregister_parameter_group(self._registered_as)
-        except Exception:
-            pass
+        unregister_group(self._registered_as)
         self._registered_as = None
 
     def closeEvent(self, event):  # noqa: N802 (Qt override)

@@ -3,8 +3,9 @@
 An overlay curve is ``y = f(x; p)`` typed as text (``x*tauD0*kf/((tauD0-x)*PhiA)``)
 or a Python function that traces a parametric line and returns ``(x, y)`` (a
 static FRET line from a distance distribution). Its free parameters are a
-chisurf :class:`FittingParameterGroup` (see :mod:`ndxplorer.core.curve_parameters`),
-so they have value / fixed / bounds and can be crosslinked to a fit.
+:class:`~ndxplorer.core.parameters.ParameterGroup` (see
+:mod:`ndxplorer.core.curve_parameters`), so they have value / fixed / bounds and
+can be crosslinked to another parameter (with ChiSurf present, to a fit's).
 
 Everything here is toolkit-free: both windows -- the Qt one
 (``ndxplorer/plotting/curve_overlay.py``) and the emtk one
@@ -394,7 +395,7 @@ class OverlayCurve:
 
     @property
     def parameter_group(self):
-        """The curve's :class:`FittingParameterGroup`: what a fit optimises."""
+        """The curve's :class:`~ndxplorer.core.parameters.ParameterGroup`: what a fit optimises."""
         return self.group
 
     # -------------------------------------------------------- parameters
@@ -428,26 +429,19 @@ class OverlayCurve:
     # ------------------------------------------------------ crosslinking
     def register(self) -> None:
         """Publish the parameters so another table's link menu can reach them."""
-        try:
-            from chisurf.core.parameter_group_registry import register_parameter_group
+        from .parameters import register_group
 
-            self.group.name = self.title
-            register_parameter_group(self.group, owner_id=self.owner_id,
-                                     label=f"ndX {self.title}")
-            self._registered = True
-        except Exception as exc:  # noqa: BLE001 - linking is optional
-            logging.debug("Could not register curve parameter group: %s", exc)
+        self.group.name = self.title
+        register_group(self.group, self.owner_id, f"ndX {self.title}")
+        self._registered = True
 
     def unregister(self) -> None:
         """Drop the registry entry; a deleted curve takes its links with it."""
         if not self._registered:
             return
-        try:
-            from chisurf.core.parameter_group_registry import unregister_parameter_group
+        from .parameters import unregister_group
 
-            unregister_parameter_group(self.owner_id)
-        except Exception:  # noqa: BLE001
-            pass
+        unregister_group(self.owner_id)
         self._registered = False
 
     @classmethod

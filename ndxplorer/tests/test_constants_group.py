@@ -1,10 +1,8 @@
-"""Qt-free tests for the constants FittingParameterGroup adapter."""
+"""Qt-free, chisurf-free tests for the constants parameter group."""
 from collections import OrderedDict
 
 import numpy as np
 import pytest
-
-pytest.importorskip("chisurf.core.fitting.parameter", reason="chisurf not importable")
 
 from ndxplorer.core import constants_group as cg  # noqa: E402
 from ndxplorer.core.equation_graph import compute_values_ast  # noqa: E402
@@ -88,7 +86,7 @@ def test_state_roundtrip_with_bounds_and_fixed():
     p2 = g2.parameters_all_dict["tauD0"]
     assert p2.value == 4.0
     assert p2.fixed is False
-    assert tuple(p2.bounds) == (1.0, 8.0)
+    assert (p2.lb, p2.ub) == (1.0, 8.0)
     assert p2.bounds_on is True
 
 

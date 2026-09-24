@@ -6,7 +6,8 @@ a constant as a **vector over a population axis**:
 
 * every element is an ordinary constant named ``base[label]`` --
   ``gamma[HF]``, ``gamma[LF]`` -- with its own value, fixed flag, bounds and
-  link (each is a chisurf ``FittingParameter`` with its own IMP.bff port);
+  link (each a :class:`~ndxplorer.core.parameters.Parameter`; with ChiSurf
+  present also a ``FittingParameter`` of its own in the Global View);
 * the plain name ``gamma``, when present, is the **global / default** value:
   what a burst that belongs to no population gets;
 * the **axis** says how a burst picks its element: a label column (``Cluster

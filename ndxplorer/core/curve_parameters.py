@@ -1,17 +1,13 @@
-"""Overlay-curve parameters as a chisurf ``FittingParameterGroup``.
+"""Overlay-curve parameters as a :class:`~ndxplorer.core.parameters.ParameterGroup`.
 
-An overlay curve (``a*exp(-(x-mu)**2/(2*sig**2))``, a static FRET line, …) has
-free parameters that used to be a grid of home-made slider widgets. Wrapping
-them in a :class:`FittingParameterGroup` of :class:`FittingParameter` objects
-gives them the same editor every other parameter in chisurf and nDXplorer has —
-value / fixed / bounds, the wheel, copy-paste, the detail popup — and, because
-the group is registered in the parameter-group registry, lets a curve parameter
-be **crosslinked** to a fit's parameter: pin a FRET line's ``tau_d0`` to the
-donor lifetime of an actual TCSPC fit and the line follows the fit.
+An overlay curve (``a*exp(-(x-mu)**2/(2*sig**2))``, a static FRET line, ...) has
+free parameters. As a parameter group they get the table every other parameter
+of nDXplorer has -- value / fixed / bounds, copy-paste -- and, because the group
+is registered, a curve parameter can be **crosslinked**: pin a FRET line's
+``tau_d0`` to a constant, or (with ChiSurf present) to the donor lifetime of an
+actual TCSPC fit, and the line follows it.
 
-Like :mod:`ndxplorer.core.constants_group` this module is deliberately Qt-free,
-so the parameter bookkeeping is headless-testable; the widget wiring lives in
-``ndxplorer/plotting/curve_overlay.py``.
+Pure Python: no chisurf, no Qt.
 """
 
 from __future__ import annotations
@@ -19,8 +15,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
-# chisurf is imported inside the functions so importing this module does not
-# require chisurf (nDXplorer runs standalone, with the legacy slider grid).
+from .parameters import Parameter, ParameterGroup
 
 #: What a parameter that the equation just grew starts out as. The slider grid
 #: used the same three numbers, so a freshly typed equation behaves as before.
@@ -36,7 +31,7 @@ def build_curve_group(
     values: Optional[Mapping[str, float]] = None,
     name: str = DEFAULT_GROUP_NAME,
 ):
-    """Build a group holding one free :class:`FittingParameter` per name.
+    """Build a group holding one free parameter per name.
 
     Parameters
     ----------
@@ -49,17 +44,12 @@ def build_curve_group(
 
     Returns
     -------
-    FittingParameterGroup
+    ParameterGroup
         A group whose parameters are *free* (unlike the ndX constants, which
         default to fixed): they are what the user drags to shape the curve, and
         what a fit to the marginal histogram is allowed to move.
     """
-    from chisurf.core.fitting.parameter import FittingParameterGroup
-
-    group = FittingParameterGroup(name=name)
-    # ``parameters_all`` reads ``_parameters``, which only exists after
-    # ``find_parameters()`` — appending before that raises.
-    group.find_parameters()
+    group = ParameterGroup(name)
     sync_curve_group(group, names, values=values)
     return group
 
@@ -78,7 +68,7 @@ def sync_curve_group(
 
     Parameters
     ----------
-    group : FittingParameterGroup
+    group : ParameterGroup
         The group to update in place.
     names : sequence of str
         The parameter names the equation now has.
@@ -92,8 +82,6 @@ def sync_curve_group(
     bool
         Whether the membership changed (the caller rebuilds the table if so).
     """
-    from chisurf.core.fitting.parameter import FittingParameter
-
     values = dict(values or {})
     existing = {p.name: p for p in group.parameters_all}
     wanted = [str(n) for n in names]
@@ -105,19 +93,11 @@ def sync_curve_group(
     for key in wanted:
         param = existing.get(key)
         if param is None:
-            param = FittingParameter(
-                name=key,
-                value=float(values.get(key, DEFAULT_VALUE)),
-                lb=DEFAULT_LB,
-                ub=DEFAULT_UB,
-                bounds_on=False,
-            )
+            param = Parameter(key, float(values.get(key, DEFAULT_VALUE)),
+                              lb=DEFAULT_LB, ub=DEFAULT_UB, bounds_on=False)
         ordered.append(param)
 
-    # ``FittingParameterGroup`` has ``append_parameter`` but no removal: the
-    # groups it was written for are discovered from model attributes, not edited.
-    # Replacing the list in place is the whole of "the equation lost a name".
-    group._parameters[:] = ordered
+    group.replace_parameters(ordered)
     return True
 
 
@@ -137,7 +117,7 @@ def apply_curve_values(
 ) -> None:
     """Write values (and optional ``[lb, ub]`` ranges) into existing parameters.
 
-    A supplied range **activates** the parameter's bounds. In the slider grid a
+    A supplied range **activates** the parameter's bounds. In the old slider grid a
     range was a hard limit — the widget could not be dragged past it — and the
     predefined-curve definitions were written against that: a width's range
     starts at zero because a negative width is meaningless. Storing the range

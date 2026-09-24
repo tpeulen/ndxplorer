@@ -124,9 +124,11 @@ def test_switching_target_rebuilds_the_fit(qapp):
     assert dlg.current_fit is not None
     assert dlg.current_fit is not first
     # ...and the table follows it, rather than showing the old fit's parameters.
+    from ndxplorer.core.chisurf_binding import mirrored
+
     shown = [dlg._table._model._params[i]
              for i in range(dlg._table._model.rowCount())]
-    assert shown == dlg.current_fit.parameters
+    assert shown == [mirrored(p) for p in dlg.current_fit.parameters]
 
 
 def test_a_target_with_no_data_disables_the_fit_button(qapp):

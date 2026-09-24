@@ -162,8 +162,11 @@ def test_the_curve_keeps_its_rows_after_the_fit_dialog_closes(qapp, monkeypatch)
 
     ndx.on_fit_curve_to_data(cw)
 
+    from ndxplorer.core.chisurf_binding import chisurf_group
+
     table = cw._table
-    for param in cw.parameter_group.parameters_all:
+    # ChiSurf's table edits the group's FittingParameter mirror.
+    for param in chisurf_group(cw.parameter_group).parameters_all:
         assert param.controller is not None
         assert param.controller.parent() is table
 

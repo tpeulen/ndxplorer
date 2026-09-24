@@ -12,12 +12,12 @@ lets that curve be **fitted**, against either of the two things on screen:
     a one-dimensional marginal histogram (bin centres → counts), for curves that
     are a *distribution* of one axis, such as a Gaussian on E.
 
-Either way the equation is wrapped in a ChiSurf ``ParseModel`` and optimised by
-ChiSurf's least-squares ``Fit``, so the same safe formula that draws the overlay
-also drives the fit.
+Either way the equation is evaluated exactly as the overlay draws it and
+optimised by ``scipy.optimize.least_squares``, so the same safe formula that
+draws the overlay also drives the fit.
 
-The model's parameters *are* the fitting group: the curve's own
-:class:`FittingParameter` objects seed them (value, bounds and fix/free straight
+The fit's parameters are seeded from the curve's own
+:class:`~ndxplorer.core.parameters.Parameter` objects (value, bounds and fix/free straight
 from the overlay's parameter table), the fit optimises every **free** one, and
 the result is written back into the curve. Parameters that name an nDXplorer
 constant, and parameters that are *crosslinked* to another parameter, arrive
@@ -35,15 +35,18 @@ edit fix/free, ``run`` repeatedly). :func:`fit_equation_to_marginal` and
 :func:`fit_equation_to_histogram` are the one-shot conveniences used by the
 no-dialog path and the tests.
 
-Qt-free and headless-testable; ChiSurf is imported lazily.
+Qt-free, chisurf-free and headless-testable (numpy and scipy).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from ..core.parameters import is_held
 
 
 class CurveFitError(RuntimeError):
@@ -428,8 +431,7 @@ FINITE_DIFFERENCE_STEP = 1e-3
 CLOUD_SCALE = 2.0
 
 
-#: How many model evaluations the pre-fit scan may spend. ChiSurf's grid scan
-#: is the implementation; this is only what nDXplorer asks it for.
+#: How many model evaluations the pre-fit scan may spend.
 SCAN_BUDGET = 240
 
 
@@ -443,6 +445,34 @@ def _bounds_of(variables: Sequence[Any]) -> Tuple[np.ndarray, np.ndarray]:
     return np.array(lower), np.array(upper)
 
 
+#: Most parameters a grid is tried for; beyond it the grid says nothing.
+SCAN_MAX_PARAMETERS = 4
+
+#: Factor either side of an unbounded parameter's value that the grid spans.
+SCAN_SPAN = 4.0
+
+
+def _scan_axis(parameter: Any, points: int) -> np.ndarray:
+    """Values to try for one parameter: within its bounds, else a factor either side.
+
+    Geometric where unbounded -- a lifetime, a correction factor, an amplitude
+    is a scale, searched in ratios. The current value is always one of them, so
+    a scan never returns a point worse than the start.
+    """
+    value = float(parameter.value)
+    lo, hi = (float(parameter.lb), float(parameter.ub)) if getattr(parameter, "bounds_on", False) \
+        else (-np.inf, np.inf)
+    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+        grid = np.linspace(lo, hi, points)
+    elif value > 0:
+        grid = np.geomspace(value / SCAN_SPAN, value * SCAN_SPAN, points)
+    elif value < 0:
+        grid = -np.geomspace(-value / SCAN_SPAN, -value * SCAN_SPAN, points)
+    else:
+        grid = np.linspace(-1.0, 1.0, points)
+    return np.unique(np.append(grid, value))
+
+
 def _coarse_scan(
     variables: Sequence[Any],
     cost: Callable[[np.ndarray], float],
@@ -450,24 +480,39 @@ def _coarse_scan(
 ) -> bool:
     """Move ``variables`` to the best point of a coarse grid over them.
 
-    A fit that moves the data has a rough, often degenerate landscape — a
+    A fit that moves the data has a rough, often degenerate landscape -- a
     detection-correction factor scales the population while a lifetime scales
     the line, so the two trade off along a valley and a purely local optimiser
     slides a little way down it and reports that as the answer. Scanning first
-    costs a fixed number of evaluations and starts the fit in the right basin.
-
-    The grid itself is ChiSurf's (:mod:`chisurf.core.fitting.grid_scan`), which
-    is where this kind of search belongs — nDXplorer only says what to scan.
-    Returns whether anything was moved; ``False`` when ChiSurf is not available
-    or the grid was skipped, and the local fit then runs from where the user
-    left the parameters.
+    costs a fixed number of evaluations (``budget``) and starts the fit in the
+    right basin. Returns whether the best point beats the start.
     """
-    try:
-        from chisurf.core.fitting.grid_scan import grid_scan
-    except Exception:  # pragma: no cover - depends on environment
+    import itertools
+
+    variables = list(variables)
+    if not variables or len(variables) > SCAN_MAX_PARAMETERS:
         return False
-    result = grid_scan(variables, cost, budget=budget, apply_best=True)
-    return bool(result and result.improved)
+    per_axis = max(3, int(budget ** (1.0 / len(variables))))
+    axes = [_scan_axis(p, per_axis) for p in variables]
+    start = np.array([float(p.value) for p in variables], dtype=float)
+    start_cost = best_cost = np.inf
+    best = None
+    try:
+        for point in itertools.product(*axes):
+            values = np.array(point, dtype=float)
+            try:
+                current = float(cost(values))
+            except CurveFitAborted:
+                raise
+            except Exception:  # noqa: BLE001 - a point the model cannot reach
+                continue
+            if np.allclose(values, start):
+                start_cost = current
+            if np.isfinite(current) and current < best_cost:
+                best, best_cost = values, current
+    finally:
+        _apply(variables, start if best is None else best)
+    return bool(best is not None and best_cost < start_cost)
 
 
 def _fit_from_best_start(
@@ -546,7 +591,7 @@ class DataParameters:
 
     Attributes
     ----------
-    parameters : list of FittingParameter
+    parameters : list of Parameter
         The constants offered to the fit. They are the *live* objects of the
         constants table, so a fitted value is already in the table when the fit
         returns. Fixed ones are left alone.
@@ -646,42 +691,40 @@ class _DataParameterHost:
 
 
 class CurveFit(_DataParameterHost):
-    """A built ChiSurf ``ParseModel`` fit of an equation to displayed data.
+    """An equation ``y = f(x; p)`` fitted to displayed data by least squares.
 
     Build it with :func:`build_curve_fit` (or one of the ``build_*_fit``
-    helpers), edit the parameters' fix/free/bounds — directly, through the
-    fitting table, or by seeding them from the overlay curve with
-    :meth:`seed_from_group` — then call :meth:`run` as often as you like. The
-    objects returned by :attr:`parameters` are live ``FittingParameter``s,
-    suitable for a ``ParameterGroupTableWidget``.
+    helpers), edit the parameters' fix/free/bounds -- directly, through the
+    parameter table, or by seeding them from the overlay curve with
+    :meth:`seed_from_group` -- then call :meth:`run` as often as you like. The
+    equation is evaluated exactly as the overlay draws it
+    (:class:`~ndxplorer.core.overlay_curves.CurveEvaluator`) and optimised by
+    ``scipy.optimize.least_squares`` within the armed bounds.
     """
 
-    def __init__(self, fit: Any, model: Any, reserved: Sequence[str]) -> None:
-        self._fit = fit
-        self._model = model
-        self._reserved = {str(r) for r in reserved}
+    def __init__(self, equation: str, x: np.ndarray, y: np.ndarray,
+                 ey: Optional[np.ndarray], parameters: Sequence[Any]) -> None:
+        from ..core.overlay_curves import CurveEvaluator
 
-    @property
-    def model(self) -> Any:
-        """The underlying ``ParseModel``."""
-        return self._model
+        self.equation = str(equation)
+        self._x = np.asarray(x, dtype=float)
+        self._y = np.asarray(y, dtype=float)
+        self._ey = None if ey is None else np.asarray(ey, dtype=float)
+        self._parameters = list(parameters)
+        self._evaluator = CurveEvaluator()
 
     @property
     def parameters(self) -> List[Any]:
-        """The free/fixed ``FittingParameter`` objects (excluding ``x``)."""
-        return [
-            p
-            for p in getattr(self._model, "_parameters_equation", [])
-            if getattr(p, "name", None) not in self._reserved
-        ]
+        """The fit's own parameters (``x`` is not one)."""
+        return self._parameters
 
     def values(self) -> Dict[str, float]:
         """Return the current ``{name: value}`` for every parameter."""
-        return {p.name: float(p.value) for p in self.parameters}
+        return {p.name: float(p.value) for p in self._parameters}
 
     def set_fixed(self, name: str, fixed: bool) -> None:
         """Fix or free a parameter by name."""
-        for p in self.parameters:
+        for p in self._parameters:
             if p.name == name:
                 p.fixed = bool(fixed)
 
@@ -690,186 +733,98 @@ class CurveFit(_DataParameterHost):
 
         The overlay's table is then the one place those are set: what is fixed
         there is held here, and the bounds drawn there bound the optimiser. A
-        *linked* parameter is additionally forced fixed — its value is its
+        *linked* parameter is additionally forced fixed -- its value is its
         master's, and moving it would either be discarded or fight the link.
         """
         if group is None:
             return
         source = {p.name: p for p in group.parameters_all}
-        for p in self.parameters:
-            src = source.get(getattr(p, "name", None))
+        for p in self._parameters:
+            src = source.get(p.name)
             if src is None:
                 continue
-            try:
-                p.value = float(src.value)
-                p.lb, p.ub = float(src.lb), float(src.ub)
-                p.bounds_on = bool(getattr(src, "bounds_on", False))
-                p.fixed = bool(getattr(src, "fixed", False)) or bool(
-                    getattr(src, "is_linked", False)
-                )
-            except Exception:
-                continue
+            p.value = float(src.value)
+            p.lb, p.ub = float(src.lb), float(src.ub)
+            p.bounds_on = bool(src.bounds_on)
+            p.fixed = is_held(src)
 
     def write_back(self, group: Any) -> None:
-        """Write the fitted values into the curve's own parameters.
-
-        Linked parameters are skipped: their value is owned by the master they
-        follow, so assigning here would be either discarded or a silent unlink.
-        """
+        """Write the fitted values into the curve's own parameters (not over a link)."""
         if group is None:
             return
         target = {p.name: p for p in group.parameters_all}
         for name, value in self.values().items():
             param = target.get(name)
-            if param is None or getattr(param, "is_linked", False):
-                continue
-            try:
+            if param is not None and not is_held_by_link(param):
                 param.value = float(value)
-            except (TypeError, ValueError):
-                continue
+
+    def evaluate(self) -> np.ndarray:
+        """The equation at the data's x, for the current values."""
+        y = self._evaluator.evaluate(self.equation, self._x, self.values())
+        return np.broadcast_to(np.asarray(y, dtype=float), self._x.shape).astype(float)
+
+    def _set_data(self, y: np.ndarray, ey: np.ndarray) -> None:
+        """Hold the re-derived data (the x grid is fixed for the life of a fit)."""
+        self._y = np.asarray(y, dtype=float)
+        self._ey = None if ey is None else np.asarray(ey, dtype=float)
+
+    def _residuals(self, variables: List[Any], names: Sequence[str]):
+        def residuals(values: np.ndarray) -> np.ndarray:
+            _apply(variables, values)
+            self._note_step()
+            if names:
+                _x, y, ey = self._refresh_data(names)
+                self._set_data(y, ey)
+            return _weighted_residual(self._y, self.evaluate(), self._ey)
+
+        return residuals
 
     def run(self, scan: Optional[bool] = None) -> CurveFitResult:
         """Optimise every free parameter (holding the fixed ones); return the result.
 
         ``scan`` runs a coarse grid over the free parameters first and starts
-        the local fit at its best point (see
-        :mod:`chisurf.core.fitting.grid_scan`). ``None`` scans when a constant
-        is free — the case whose landscape is degenerate enough to strand a
-        local optimiser.
+        the local fit at its best point (:func:`grid_scan`). ``None`` scans when
+        a constant is free -- the case whose landscape is degenerate enough to
+        strand a local optimiser. A freed constant moves the *data*, which is
+        re-derived at every step.
         """
-        free = [p for p in self.parameters if not getattr(p, "fixed", False)]
+        free = [p for p in self._parameters if not getattr(p, "fixed", False)]
         free_data = self.free_data_parameters()
         if not free and not free_data:
             return CurveFitResult(False, message="all parameters are fixed")
         if scan is None:
             scan = bool(free_data)
-        if free_data:
-            # A freed constant moves the *data*, which ChiSurf's optimiser knows
-            # nothing about — equation and constants are optimised together here
-            # instead, re-deriving the data at every step.
-            return self._run_joint(free, free_data, scan=scan)
-        try:
-            if scan and free:
-                self._run_scanned(free)
-            else:
-                self._model.update()
-                self._fit.run()
-        except Exception as exc:
-            return CurveFitResult(False, message=f"fit failed: {exc}")
-        params = self.values()
-        y_fit = (
-            np.asarray(self._model.y, dtype=float)
-            if getattr(self._model, "y", None) is not None
-            else None
-        )
-        try:
-            chi2r = float(self._fit.chi2r)
-        except Exception:
-            chi2r = float("nan")
-        return CurveFitResult(True, params=params, chi2r=chi2r, y_fit=y_fit)
-
-    def _set_data(self, y: np.ndarray, ey: np.ndarray) -> None:
-        """Put the re-derived data on the fit, so it holds what was fitted.
-
-        Only y and its weights are written: the x grid is fixed for the life of
-        a data-parameter fit (same bin edges, same columns), which is what keeps
-        the residual vector's length constant.
-        """
-        try:
-            self._fit.data.y = np.asarray(y, dtype=float)
-            self._fit.data.ey = np.asarray(ey, dtype=float)
-        except Exception:
-            pass
-
-    def _model_cost(self, free: List[Any]) -> Callable[[np.ndarray], float]:
-        """``cost(values)`` for the ParseModel: the weighted sum of squares."""
-        data = getattr(self._fit, "data", None)
-        y = np.asarray(getattr(data, "y", []), dtype=float)
-        ey = getattr(data, "ey", None)
-
-        def cost(values: np.ndarray) -> float:
-            _apply(free, values)
-            self._note_step()
-            self._model.update()
-            model = np.asarray(self._model.y, dtype=float)
-            return float(np.sum(_weighted_residual(y, model, ey) ** 2))
-
-        return cost
-
-    def _run_scanned(self, free: List[Any]) -> None:
-        """Run the ChiSurf optimiser from the scan's best point and from the start.
-
-        Whichever ends lower is kept — a grid point is the deepest *point*, not
-        the deepest basin (see :func:`_fit_from_best_start`).
-        """
-        cost = self._model_cost(free)
-        start = np.array([float(p.value) for p in free], dtype=float)
-        if not _coarse_scan(free, cost):
-            self._model.update()
-            self._fit.run()
-            return
-        self._model.update()
-        self._fit.run()
-        scanned = np.array([float(p.value) for p in free], dtype=float)
-        scanned_cost = cost(scanned)
-
-        _apply(free, start)
-        self._model.update()
-        self._fit.run()
-        if cost(np.array([float(p.value) for p in free], dtype=float)) > scanned_cost:
-            _apply(free, scanned)
-            self._model.update()
-
-    def _run_joint(self, free: List[Any], free_data: List[Any],
-                   scan: bool = True) -> CurveFitResult:
-        """Optimise equation parameters and freed constants in one vector."""
         variables = list(free) + list(free_data)
         names = [p.name for p in free_data]
         start = [float(p.value) for p in variables]
-        self.freeze_weights(getattr(getattr(self._fit, "data", None), "ey", None))
-
-        def residuals(values: np.ndarray) -> np.ndarray:
-            for param, value in zip(variables, values):
-                param.value = float(value)
-            self._note_step()
-            x, y, ey = self._refresh_data(names)
-            self._model.update()
-            return _weighted_residual(y, np.asarray(self._model.y, dtype=float), ey)
-
+        if free_data:
+            self.freeze_weights(self._ey)
         try:
-            # The landscape is rough and often degenerate, so look for the
-            # valley before descending into it.
             solution = _fit_from_best_start(
-                variables, residuals, diff_step=FINITE_DIFFERENCE_STEP, scan=scan
-            )
-        except CurveFitAborted:
-            for param, value in zip(variables, start):
-                param.value = float(value)
-            self._refresh_data(names)
-            return CurveFitResult(False, message="stopped")
+                variables, self._residuals(variables, names),
+                diff_step=FINITE_DIFFERENCE_STEP if free_data else None, scan=scan)
         except Exception as exc:
-            for param, value in zip(variables, start):  # leave the data as it was
-                param.value = float(value)
-            try:
-                self._refresh_data(names)
-            except Exception:
-                pass
-            return CurveFitResult(False, message=f"fit failed: {exc}")
+            _apply(variables, start)  # leave the data as it was
+            if names:
+                try:
+                    self._set_data(*self._refresh_data(names)[1:3])
+                except Exception:  # noqa: BLE001
+                    pass
+            message = "stopped" if isinstance(exc, CurveFitAborted) else f"fit failed: {exc}"
+            return CurveFitResult(False, message=message)
+        _apply(variables, solution.x)
+        if names:
+            self._set_data(*self._refresh_data(names)[1:3])
+        model = self.evaluate()
+        good = int(np.sum(np.isfinite(model) & np.isfinite(self._y)))
+        dof = max(1, good - len(variables))
+        return CurveFitResult(True, params=self.values(), chi2r=float(2.0 * solution.cost / dof),
+                              y_fit=model, data_params=self.fitted_data_values())
 
-        for param, value in zip(variables, solution.x):
-            param.value = float(value)
-        x, y, ey = self._refresh_data(names)
-        self._set_data(y, ey)
-        self._model.update()
-        model = np.asarray(self._model.y, dtype=float)
-        dof = max(1, int(np.isfinite(model).sum()) - len(variables))
-        return CurveFitResult(
-            True,
-            params=self.values(),
-            chi2r=float(2.0 * solution.cost / dof),
-            y_fit=model,
-            data_params=self.fitted_data_values(),
-        )
+
+def is_held_by_link(parameter: Any) -> bool:
+    """Whether *parameter* follows another one (its value is not its own)."""
+    return bool(getattr(parameter, "is_linked", False))
 
 
 #: Parameters that set a curve's *resolution*, not its shape. They come from the
@@ -885,8 +840,8 @@ class ParametricCurveFit(_DataParameterHost):
     """Fit a curve that returns ``(x, y)`` — a FRET line — to displayed data.
 
     The predefined FRET lines are not ``y = f(x)``: they sweep a mean distance
-    and return the pair of arrays they trace out. There is no ``ParseModel`` to
-    build from that, so this class optimises the function directly.
+    and return the pair of arrays they trace out, so this class optimises the
+    function directly against a distance, not a vertical offset.
 
     A point's residual is its **distance to the traced curve**, in units of the
     point's own uncertainties (``ex`` across, ``ey`` up). The obvious
@@ -900,7 +855,7 @@ class ParametricCurveFit(_DataParameterHost):
     perfectly close to it. A distance is defined everywhere and is what "the
     population lies on the line" means.
 
-    The parameters *are* the curve's own :class:`FittingParameter` objects — not
+    The parameters *are* the curve's own :class:`Parameter` objects — not
     copies — so the table the user is looking at is what is optimised, and the
     fitted values are already in it when the fit returns.
     """
@@ -974,7 +929,7 @@ class ParametricCurveFit(_DataParameterHost):
 
     @property
     def parameters(self) -> List[Any]:
-        """The curve's free/fixed ``FittingParameter`` objects."""
+        """The curve's free/fixed parameters."""
         return self._parameters
 
     def values(self) -> Dict[str, float]:
@@ -1181,14 +1136,13 @@ def build_curve_fit(
     constant_names: Sequence[str] = (),
     fixed: Sequence[str] = (),
     reserved: Sequence[str] = ("x",),
-    fit_range: Optional[Tuple[int, int]] = None,
 ) -> CurveFit:
     """Build a :class:`CurveFit` of ``equation`` against ``(x, y[, ey])``.
 
     Parameters
     ----------
     equation
-        A ``ParseModel`` formula in ``x`` and named parameters.
+        ``y = f(x; params)`` as the overlay writes it: ``x`` and named parameters.
     x, y
         The data to fit: for a marginal, bin centres and counts; for the
         displayed 2-D distribution, the column centres and their mean y (see
@@ -1198,70 +1152,45 @@ def build_curve_fit(
     initial
         Starting ``{name: value}`` for the parameters.
     constant_names
-        Parameter names that are nDXplorer constants — **fixed by default**
+        Parameter names that are nDXplorer constants -- **fixed by default**
         (seed their value via ``initial``).
     fixed
         Additional names to hold fixed.
     reserved
         Names that are not parameters (the independent variable ``x``).
-    fit_range
-        ``(start, stop)`` index range to fit; defaults to all of the data.
 
     Raises
     ------
     CurveFitError
-        If ChiSurf is unavailable, there is too little data, the equation does
-        not parse, or it has no free parameters.
+        If there is too little data, the equation does not evaluate, or it has
+        no parameters.
     """
-    try:
-        import chisurf.core.fitting.fit as fit_mod
-        from chisurf.core.data import DataCurve
-        from chisurf.core.models.parse import ParseModel
-    except Exception as exc:  # pragma: no cover - depends on environment
-        raise CurveFitError(f"ChiSurf fitting is not available: {exc}") from exc
+    from ..core.overlay_curves import equation_parameter_names
+    from ..core.parameters import Parameter
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     if x.size < 3 or y.size != x.size:
         raise CurveFitError("need at least 3 matching data points")
-
-    data = DataCurve(x=x.copy(), y=y.copy())
-    if ey is not None:
-        try:
-            data.ey = np.asarray(ey, dtype=float).copy()
-        except Exception:
-            pass
-
-    fit = fit_mod.Fit(model_class=ParseModel, data=data)
-    model = fit.model
-    try:
-        model.func = str(equation)
-    except Exception as exc:
-        raise CurveFitError(f"cannot parse equation: {exc}") from exc
-
     reserved_set = {str(r) for r in reserved}
-    constant_set = {str(c) for c in constant_names}
-    fixed_set = {str(f) for f in fixed}
+    held = {str(c) for c in constant_names} | {str(f) for f in fixed}
     initial = initial or {}
-
-    names = [n for n in getattr(model, "_keys", []) if n not in reserved_set]
+    # In the order the equation names them, as it is read.
+    first: Dict[str, int] = {}
+    for match in re.finditer(r"[A-Za-z_]\w*", str(equation)):
+        first.setdefault(match.group(0), match.start())
+    names = sorted((n for n in equation_parameter_names(str(equation)) if n not in reserved_set),
+                   key=lambda n: first.get(n, 0))
     if not names:
         raise CurveFitError("equation has no free parameters")
-
-    for p in getattr(model, "_parameters_equation", []):
-        name = getattr(p, "name", None)
-        if name is None or name in reserved_set:
-            continue
-        if name in initial:
-            try:
-                p.value = float(initial[name])
-            except (TypeError, ValueError):
-                pass
-        # Constants join the fit fixed-by-default; explicit `fixed` also holds.
-        p.fixed = (name in constant_set) or (name in fixed_set)
-
-    fit.fit_range = fit_range or (0, len(x) - 1)
-    return CurveFit(fit, model, reserved_set)
+    parameters = [Parameter(n, float(initial.get(n, 1.0)), fixed=n in held) for n in names]
+    cf = CurveFit(str(equation), x, y, None if ey is None else np.asarray(ey, dtype=float),
+                  parameters)
+    try:
+        cf.evaluate()
+    except Exception as exc:
+        raise CurveFitError(f"cannot evaluate equation: {exc}") from exc
+    return cf
 
 
 def build_marginal_fit(
@@ -1308,7 +1237,7 @@ def fit_equation_to_marginal(
     """One-shot fit of ``y = f(x; params)`` to a 1-D histogram (never raises).
 
     A thin wrapper over :func:`build_marginal_fit` + :meth:`CurveFit.run` for
-    callers that just want the result (the no-dialog / no-ChiSurf path and tests).
+    callers that just want the result (the no-dialog path and tests).
     """
     try:
         cf = build_marginal_fit(equation, x, counts, initial=initial, **kwargs)

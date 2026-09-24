@@ -15,7 +15,6 @@ from ndxplorer.analysis.curve_fit import (
     ridge_from_histogram,
 )
 
-pytest.importorskip("chisurf.core.models.parse", reason="ChiSurf not importable")
 
 from chisurf.core.fitting.parameter import FittingParameter  # noqa: E402
 

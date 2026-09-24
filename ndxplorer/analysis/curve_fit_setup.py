@@ -21,7 +21,7 @@ A **host** provides:
 ``density(target) -> bool``
     whether that marginal is drawn normalised;
 ``constants`` / ``constants_group`` / ``equations``
-    the live constants, their :class:`FittingParameterGroup` (or ``None``) and
+    the live constants, their :class:`ParameterGroup` and
     the equation list.
 
 Toolkit-free.
@@ -310,7 +310,7 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
     params = None
     if parametric:
         if group is None:
-            raise CurveFitError("fitting a function curve needs the chisurf parameter table")
+            raise CurveFitError("the curve has no parameters to fit")
         params = list(group.parameters_all)
 
     if target == "2d":
@@ -366,7 +366,7 @@ def build_cloud_fit(host, curve, x_edges, y_edges, params=None, counts=None):
     """
     group = getattr(curve, "parameter_group", None)
     if group is None:
-        raise CurveFitError("fitting the cloud needs the chisurf parameter table")
+        raise CurveFitError("the curve has no parameters to fit")
     parameters = list(params) if params is not None else list(group.parameters_all)
     px, py, weights = cloud_for_fit(host, x_edges, y_edges, counts=counts)
     if float(np.count_nonzero(weights)) < 3:

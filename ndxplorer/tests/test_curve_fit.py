@@ -1,10 +1,8 @@
-"""Fitting an overlay equation to displayed data (ChiSurf least-squares)."""
+"""Fitting an overlay equation to displayed data (scipy least squares)."""
 import numpy as np
 import pytest
 
 from ndxplorer.analysis.curve_fit import bin_centers, fit_equation_to_marginal
-
-pytest.importorskip("chisurf.core.models.parse", reason="ChiSurf not importable")
 
 
 def _gauss_hist(a=1000.0, mu=0.6, sig=0.08, seed=0, n=80):
@@ -27,7 +25,8 @@ def test_fit_recovers_gaussian_peak():
     )
     assert res.ok, res.message
     assert res.params["mu"] == pytest.approx(0.6, abs=0.02)
-    assert res.params["sig"] == pytest.approx(0.08, abs=0.02)
+    # The width enters squared: -0.08 draws the same curve as 0.08.
+    assert abs(res.params["sig"]) == pytest.approx(0.08, abs=0.02)
     assert res.y_fit is not None and res.y_fit.shape == x.shape
     assert np.isfinite(res.chi2r)
 
