@@ -254,6 +254,98 @@ def test_separation_is_the_default_and_its_islands_colour_the_map(app):
     assert len(colours) > 10, "two island hues, shaded by density"
 
 
+def _three_islands(seed=4):
+    """E/S bursts in three islands, a thin bridge from the first to the second,
+    far outliers and a few missing values; returns ``(source, truth)`` with
+    truth 0/1/2 for the islands (largest first), 3 the middle of the bridge
+    (6 its ends), 4 outlier, 5 missing, 7 a small clump."""
+    rng = np.random.default_rng(seed)
+    centres = [((0.2, 0.3), 1500), ((0.8, 0.6), 1000), ((0.5, 0.9), 600)]
+    e, s, truth = [], [], []
+    for k, ((ce, cs), n) in enumerate(centres):
+        e.append(rng.normal(ce, 0.04, n))
+        s.append(rng.normal(cs, 0.04, n))
+        truth.append(np.full(n, k))
+    t = rng.uniform(0.0, 1.0, 150)  # a bridge from island 0 to 1
+    e.append(0.2 + 0.6 * t + rng.normal(0, 0.02, t.size))
+    s.append(0.3 + 0.3 * t + rng.normal(0, 0.02, t.size))
+    truth.append(np.where((t > 0.4) & (t < 0.6), 3, 6))  # 3: its middle
+    # a clump off the islands, too small to be one
+    e.append(rng.normal(0.85, 0.02, 40))
+    s.append(rng.normal(0.15, 0.02, 40))
+    truth.append(np.full(40, 7))
+    e.append(rng.uniform(40.0, 60.0, 20))
+    s.append(rng.uniform(-60.0, -40.0, 20))
+    truth.append(np.full(20, 4))
+    e.append(np.full(10, np.nan))
+    s.append(rng.normal(0.5, 0.1, 10))
+    truth.append(np.full(10, 5))
+    e, s, truth = (np.concatenate(a) for a in (e, s, truth))
+    order = rng.permutation(e.size)
+    e, s, truth = e[order], s[order], truth[order]
+    return DataSource.from_columns({"E": e, "S": s,
+                                    "Rate": rng.normal(20.0, 4.0, e.size)}), truth
+
+
+def _ranked(app, source):
+    from ndxplorer.analysis.vizrank import RunState
+
+    _load(app, source)
+    f = feature(app)
+    f.task_mode = "inline"
+    draw(app)
+    assert app.run_action("find_projections")
+    model = f.rankings[True].model
+    for _ in range(200):
+        draw(app)
+        if model.run_state == RunState.Done:
+            break
+    assert model.run_state == RunState.Done
+    return f, model
+
+
+def test_islands_become_the_clusters_of_every_burst(app):
+    """Use islands as clusters: every burst labelled 0..2 by size, bridge and
+    outliers -1, written as Find structure writes them, and the Cluster spin
+    box then shows one island."""
+    source, truth = _three_islands()
+    f, model = _ranked(app, source)
+    assert {app.model.x.name, app.model.y.name} == {"E", "S"}
+    assert model.clusters_available and not model.use_islands_hidden
+    analysis = next(a for a in app.features if a.name == "analysis")
+    model.show_islands = True
+    model.use_islands()
+    labels = np.asarray(app.model.source.column_values("Cluster Label"))
+    assert labels.size == truth.size, "every burst of the table, not the sample"
+    islands = truth <= 2
+    assert np.mean(labels[islands] == truth[islands]) > 0.99
+    assert np.all((labels[islands] == truth[islands]) | (labels[islands] == -1)), \
+        "never the wrong island"
+    assert np.all(labels[(truth == 4) | (truth == 5)] == -1), "outliers, missing values"
+    assert np.mean(labels[truth == 7] == -1) > 0.9, "a clump too small for an island"
+    assert np.mean(labels[truth == 3] == -1) > 0.9, "the bridge is unassigned"
+    x, y = app.model.x.name, app.model.y.name
+    kept = np.asarray(app.model.source.column_values(f"Island Label ({x} vs {y})"))
+    assert np.array_equal(kept, labels)
+    assert np.array_equal(analysis.cluster_labels, labels)
+    assert f"3 islands of {x} vs {y} written as clusters 0\u20132 (unassigned: \u22121)" \
+        in app.status
+    assert analysis.cluster_colours and not model.show_islands
+    draw(app)
+    assert f.map_image(app.model.map_values()) is None
+    assert analysis.map_image(app.model.map_values()) is not None
+    shown_all = int(np.sum(app.model._keep_mask()))
+    for k in range(3):
+        analysis._set_selected_cluster(k)
+        draw(app)
+        keep = np.asarray(app.model._keep_mask())
+        assert int(np.sum(keep)) == int(np.sum(labels == k)), k
+        assert np.mean(truth[keep] == k) > 0.95, "the island, and at most a bridge's end"
+    analysis._set_selected_cluster(-1)
+    draw(app)
+    assert int(np.sum(app.model._keep_mask())) == shown_all
+
+
 def test_the_z_ranking_sets_the_z_parameter(app):
     from ndxplorer.analysis.vizrank import RunState
 

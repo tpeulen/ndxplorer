@@ -266,8 +266,11 @@ class RankingPanel:
                 on_change=self.feature.islands_maybe_changed,
                 runner=frame_runner(self.feature.tasks, self.feature.task_mode),
                 defer=self.feature.defer)
-            # This app paints the islands of the view on the map (map_image).
+            # This app paints the islands of the view on the map (map_image)
+            # and writes them as clusters (use_islands_as_clusters).
             self.model.overlay_available = self.pairs
+            self.model.clusters_available = self.pairs
+            self.model.on_use_islands = self.feature.use_islands_as_clusters
         else:
             model.refresh_context()
         return True
@@ -587,8 +590,7 @@ class PlaybackExportFeature(Feature):
         if key != getattr(self, "_islands_for", None):
             source = app_model.source
             try:
-                self._islands_labels = model.islands(
-                    names, [source.column_values(n) for n in names])
+                self._islands_labels = model.islands(names, source.column_values)
             except Exception:  # noqa: BLE001 - the density map stands in
                 logger.debug("islands overlay failed", exc_info=True)
                 self._islands_labels = None
@@ -608,6 +610,46 @@ class PlaybackExportFeature(Feature):
             return None
         alpha = np.full(rgb.shape[:2] + (1,), 255, dtype=np.uint8)
         return np.concatenate([rgb, alpha], axis=2)
+
+    def use_islands_as_clusters(self) -> None:
+        """*Use islands as clusters*: the islands of the view on the axes become
+        the clusters of every burst in the table.
+
+        Written through the analysis feature exactly as Find structure's
+        labels (``Cluster Label``), plus a column ``Island Label (x vs y)``
+        that keeps them. The map switches from the islands overlay to the
+        cluster colours, which now show the same islands.
+        """
+        panel = self.rankings[True]
+        model = panel.model
+        app_model = self.app.model
+        analysis = next((f for f in self.app.features if hasattr(f, "set_clusters")), None)
+        if model is None or analysis is None or not app_model.has_data:
+            return
+        names = (app_model.x.name, app_model.y.name)
+        source = app_model.source
+        try:
+            found = model.island_clusters(names, source.column_values)
+        except Exception:  # noqa: BLE001 - said in the status line
+            logger.debug("islands as clusters failed", exc_info=True)
+            found = None
+        if found is None:
+            self.app.show_status(f"{names[0]} vs {names[1]} was not ranked by Separation: "
+                                 "show a ranked view first.")
+            return
+        if found.count < 2:
+            self.app.show_status(f"One population in {names[0]} vs {names[1]}: "
+                                 "no islands to use as clusters.")
+            return
+        replaced = analysis.labels is not None
+        source.set_column(found.column, found.labels)
+        run = {"method": "islands", "columns": set(names),
+               "parameters": {"view": list(names), "islands": found.count,
+                              "column": found.column}}
+        analysis.set_clusters(found.labels, found.probabilities, run, found.status(replaced))
+        model.show_islands = False
+        analysis.cluster_colours = True
+        self._islands_key = None
 
     def on_data_changed(self) -> None:
         """Point the playback at the frame index or the macro time, as the Qt window does."""

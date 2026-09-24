@@ -38,6 +38,9 @@ __all__ = [
     "RankingContext",
     "build_context",
     "photon_column",
+    "CLUSTER_COLUMN",
+    "IslandClusters",
+    "island_column",
     "ProjectionRankModel",
 ]
 
@@ -55,6 +58,61 @@ PHOTON_MODES = {
     "weight": "Weight by photons",
     "min": "Only bursts with at least Min photons",
 }
+
+
+#: The label column Find structure (K-means, HDBSCAN) writes and everything
+#: that reads clusters reads: the Cluster spin box, cluster colours, the
+#: Classes ranking, vector parameters' default population axis.
+CLUSTER_COLUMN = "Cluster Label"
+#: ... and its companion, a membership probability per burst.
+CLUSTER_PROBABILITY = "Cluster Probability"
+
+
+def island_column(x: str, y: str) -> str:
+    """The column that keeps a view's islands: ``Island Label (S vs E)``.
+
+    Named like Find structure's ``Cluster Label``, with the view, so the
+    islands of several views can be kept side by side after ``Cluster Label``
+    has been overwritten.
+    """
+    return f"Island Label ({x} vs {y})"
+
+
+@dataclass
+class IslandClusters:
+    """The islands of one view as cluster labels of every burst in the table.
+
+    ``labels`` is ``0 .. count-1`` clearly inside an island, numbered by the
+    bursts each holds (largest first), and ``-1`` for a burst on a bridge, in
+    a tail, an outlier or missing on either axis
+    (:meth:`~ndxplorer.analysis.separation.Populations.label` with ``core``).
+    """
+
+    labels: np.ndarray
+    names: Tuple[str, str]
+
+    @property
+    def count(self) -> int:
+        return int(self.labels.max()) + 1 if self.labels.size and self.labels.max() >= 0 else 0
+
+    @property
+    def column(self) -> str:
+        return island_column(*self.names)
+
+    @property
+    def probabilities(self) -> np.ndarray:
+        """1 in an island's core, 0 unassigned (the ``Cluster Probability`` column)."""
+        return (self.labels >= 0).astype(np.float64)
+
+    def status(self, replaced: bool = False) -> str:
+        """The status line: what was written, and that it replaced the clusters."""
+        x, y = self.names
+        n = self.count
+        text = (f"{n} islands of {x} vs {y} written as clusters 0\u2013{n - 1} "
+                f"(unassigned: \u22121)")
+        if replaced:
+            text += ", replacing the previous clusters"
+        return text
 
 
 def photon_column(names) -> str:
@@ -240,6 +298,10 @@ class ProjectionRankModel(VizRankModel):
         self.overlay_available = False
         #: Paint them (the host reads this).
         self.show_islands = False
+        #: The host can write the islands of the view on its axes as clusters:
+        #: it sets this and :attr:`on_use_islands` (*Use islands as clusters*).
+        self.clusters_available = False
+        self.on_use_islands: Optional[Callable[[], None]] = None
         self._pick_defaults()
 
     # ---- what the spec's choices offer ---------------------------------------------
@@ -273,6 +335,18 @@ class ProjectionRankModel(VizRankModel):
     def islands_toggle_hidden(self) -> bool:
         """The islands toggle needs a host that paints them, and the Separation score."""
         return not (self.overlay_available and self.method == "populations" and self.pairs)
+
+    @property
+    def use_islands_hidden(self) -> bool:
+        """*Use islands as clusters* needs a host that writes them, and Separation."""
+        return not (self.clusters_available and self.on_use_islands is not None
+                    and self.method == "populations" and self.pairs)
+
+    def use_islands(self) -> None:
+        """*Use islands as clusters*: the host labels every burst by the islands
+        of the view on its axes (:meth:`island_clusters`) and stores them."""
+        if self.on_use_islands is not None:
+            self.on_use_islands()
 
     def islands_changed(self, *_value) -> None:
         """*Show islands on the map* was switched: the host repaints."""
@@ -372,8 +446,37 @@ class ProjectionRankModel(VizRankModel):
         """The table/axes/gates key the current ranking was made from, or ``None``."""
         return self._run.settings[4] if self._run is not None else None
 
-    def islands(self, names, values):
-        """The island of every burst in *values* for the view *names*, or ``None``."""
-        if self._run is None or not hasattr(self._run.ranker, "islands"):
+    def islands(self, names, column_values: Callable[[str], np.ndarray], core: bool = False):
+        """The island of every burst of the table in the view *names*, or ``None``.
+
+        *column_values* reads a full column by name. A name that was merged
+        into another column as its alias is looked up through that column.
+        With *core*, bursts on bridges, in tails and outliers are -1.
+        """
+        ranker = None if self._run is None else self._run.ranker
+        if ranker is None or not hasattr(ranker, "ranked_names"):
             return None
-        return self._run.ranker.islands(names, values)
+        ranked = ranker.ranked_names(names)
+        if ranked is None:
+            return None
+        return ranker.islands(ranked, [column_values(n) for n in ranked], core=core)
+
+    def island_clusters(self, names, column_values) -> Optional[IslandClusters]:
+        """The islands of the view *names* (x, y) as cluster labels of every burst.
+
+        ``None`` when the view was not ranked by Separation (or the ranking
+        has not run).
+        """
+        labels = self.islands(names, column_values, core=True)
+        if labels is None:
+            return None
+        labels = np.asarray(labels, dtype=np.int32)
+        # Numbered by the bursts each holds in the table, largest first (ties:
+        # the island that was larger in the ranking's sample), so cluster 0 is
+        # the biggest population the Cluster spin box can show.
+        counts = np.bincount(labels[labels >= 0], minlength=int(labels.max(initial=-1)) + 1)
+        order = sorted((k for k in range(counts.size) if counts[k] > 0),
+                       key=lambda k: (-counts[k], k))
+        renumber = np.full(counts.size + 1, -1, dtype=np.int32)
+        renumber[order] = np.arange(len(order), dtype=np.int32)
+        return IslandClusters(renumber[labels], (str(names[0]), str(names[1])))

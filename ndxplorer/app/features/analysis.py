@@ -1184,14 +1184,31 @@ class AnalysisFeature(Feature):
         if task.succeeded and task.result is not None and task.result[0] is not None \
                 and model.has_data:
             labels, probabilities = task.result
-            structure.store_labels(model.source, labels, probabilities)
-            self.labels, self.probabilities, self.label_run = labels, probabilities, run
-            model.invalidate()
-            self.app.plots.image_revision += 1
-            self.app.show_status(f"Clustering using {run['method'].upper()} completed "
-                                 "successfully.")
+            self.set_clusters(labels, probabilities, run,
+                              f"Clustering using {run['method'].upper()} completed "
+                              "successfully.")
         elif task.state == "failed":
             self.message(f"{structure.METHODS_BY_KEY[run['method']].title} failed", task.error)
+
+    def set_clusters(self, labels, probabilities, run: dict, status: str = "") -> None:
+        """Make *labels* (one per table row, ``-1`` none) the clusters.
+
+        Written as Find structure writes them (``Cluster Label`` and ``Cluster
+        Probability``, :func:`~ndxplorer.analysis.structure.store_labels`), so
+        the Cluster spin box, the colours, the Classes ranking, vector
+        parameters, gates and Save Burst IDs all read them. They replace the
+        previous clusters. *run* is what Save Clustering records (``method``,
+        ``columns``, ``parameters``).
+        """
+        model = self.app.model
+        structure.store_labels(model.source, labels, probabilities)
+        self.labels, self.probabilities, self.label_run = labels, probabilities, run
+        if self.selected_cluster > int(np.max(labels, initial=-1)):
+            self.selected_cluster = -1
+        model.invalidate()
+        self.app.plots.image_revision += 1
+        if status:
+            self.app.show_status(status)
 
     def _pca_done(self, task) -> None:
         model = self.app.model

@@ -266,8 +266,7 @@ MFD = HERE.parents[2] / "test" / "mfd" / "burstwise_All 0.1500#30"
 ALEX = pathlib.Path.home() / "dev/tttr-data/sm/cal1/001_60g_25r_cal1_cy3b_8_18_33bp_atto647n_alex.pto"
 
 
-def real_context(path):
-    from ndxplorer.analysis.projection_rank_model import build_context
+def real_source(path):
     from ndxplorer.cli import _load_settings_and_equations
     from ndxplorer.io import loading
     from ndxplorer.settings import get_settings_path
@@ -276,7 +275,13 @@ def real_context(path):
     constants, equations = _load_settings_and_equations()
     source.compute_columns(constants=constants, equations=equations)
     axes = json.loads((get_settings_path() / "mfd.axis.json").read_text(encoding="utf-8"))
-    return build_context(source, axes)
+    return source, axes
+
+
+def real_context(path):
+    from ndxplorer.analysis.projection_rank_model import build_context
+
+    return build_context(*real_source(path))
 
 
 def top_pairs(path, n):
@@ -311,3 +316,26 @@ def test_alex_top_view_is_e_vs_s():
     assert best == {"Stoichiometry (PIE)", "FRET efficiency(PIE)"}, best
     assert int(rows[0].cells[-1]) >= 3, "donor-only, FRET and acceptor-only"
     assert all("Stoichiometry (PIE)" in {r.payload["x"], r.payload["y"]} for r in rows)
+
+
+@pytest.mark.skipif(not ALEX.is_file(), reason="cal1 ALEX .pto not present")
+def test_alex_s_vs_pr_islands_are_four_clusters():
+    """S vs PR (an alias of E, looked up through it): donor-only, two FRET
+    species and acceptor-only as clusters 0-3 of every burst."""
+    from ndxplorer.analysis.projection_rank_model import ProjectionRankModel, build_context
+
+    source, axes = real_source(ALEX)
+    model = ProjectionRankModel(lambda: build_context(source, axes), True, runner=inline_runner)
+    model.start()
+    assert not model.error and model.rows
+    found = model.island_clusters(("Stoichiometry (PIE)", "Proximity ratio(PIE)"),
+                                  source.column_values)
+    assert found is not None and found.count == 4
+    labels = found.labels
+    assert labels.size == source.size
+    sizes = [int(np.sum(labels == k)) for k in range(4)]
+    assert sizes == sorted(sizes, reverse=True) and min(sizes) > 0
+    # the low-photon smear between the species is bridge and tail: unassigned
+    assert 0.3 * labels.size < np.sum(labels == -1) < 0.75 * labels.size
+    assert found.status().startswith("4 islands of Stoichiometry (PIE) vs Proximity "
+                                     "ratio(PIE) written as clusters 0\u20133 (unassigned: \u22121)")

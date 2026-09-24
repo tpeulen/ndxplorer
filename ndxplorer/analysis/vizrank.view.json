@@ -93,6 +93,20 @@
           "description": "Colour the map by the islands the Separation score found in the selected view (the view must be on the axes)."
         },
         {
+          "type": "button_row",
+          "hidden_when": {
+            "attr": "use_islands_hidden",
+            "equals": true
+          },
+          "buttons": [
+            {
+              "label": "Use islands as clusters",
+              "action": "use_islands",
+              "description": "Label every burst of the table by the island of the view on the axes and write the labels as the clusters (Cluster Label, replacing K-means/HDBSCAN clusters) and as a column 'Island Label (x vs y)'. Islands are numbered by size, largest first; bursts on a bridge, in a tail or outliers are -1. Then the Cluster spin box, colour, gates and Save Burst IDs work on the islands."
+            }
+          ]
+        },
+        {
           "type": "info",
           "source": "status_text"
         },
