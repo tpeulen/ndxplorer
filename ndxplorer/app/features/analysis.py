@@ -659,7 +659,28 @@ class GaussianPanel:
         return self.group.components()
 
     def rows(self) -> List[tuple]:
+        """``(mu, cov, w)`` of what is drawn: per population and component when
+        a Gaussian parameter is population-wise (:meth:`drawn` order)."""
+        from ...analysis import gaussian_populations as gpop
+
+        if gpop.labels_of(self.group):
+            return [(mu, cov, w) for _l, _k, mu, cov, w in gpop.population_rows(self.group)]
         return [(c.mu, c.cov, c.w) for c in self.components()]
+
+    def drawn(self) -> List[tuple]:
+        """``[(component, population or None, GaussianComponent, colour)]`` to draw.
+
+        One ellipse per component, or -- with a population-wise parameter --
+        one per population and component, tinted per population.
+        """
+        from ...analysis import gaussian_populations as gpop
+
+        labels = gpop.labels_of(self.group)
+        if not labels:
+            return [(i, None, c, gm.colour_of(i)) for i, c in enumerate(self.components())]
+        return [(i, label, c, gpop.tinted(gm.colour_of(i), q, len(labels)))
+                for q, label in enumerate(labels)
+                for i, c in enumerate(gpop.components_for(self.group, label))]
 
     def add(self, mu, cov, w: float = 1.0, fixed: Optional[dict] = None) -> int:
         index = self.group.append(mu, cov, w, fixed=fixed or {})
@@ -733,6 +754,12 @@ class GaussianPanel:
         x = model._visible_values(model.index_of(model.x.name))
         y = model._visible_values(model.index_of(model.y.name))
         log_x, log_y = self.log_axes()
+        from ...analysis import gaussian_populations as gpop
+
+        labels = gpop.labels_of(self.group)
+        if labels:
+            self._fit_populations(x, y, hist, log_x, log_y, labels)
+            return
         try:
             fitted = gm.fit_mixture(self.components(), x, y,
                                     (hist.x_edges[0], hist.x_edges[-1]),
@@ -748,6 +775,32 @@ class GaussianPanel:
             self.group.write(index, mu, cov, w)
         self.feature.app.show_status(f"Fitted {len(fitted)} Gaussian"
                                      + ("s" if len(fitted) != 1 else ""))
+
+    def _fit_populations(self, x, y, hist, log_x, log_y, labels) -> None:
+        """Fit the population-wise mixture (:mod:`ndxplorer.analysis.gaussian_populations`)."""
+        from ...analysis import gaussian_populations as gpop
+
+        model = self.model
+
+        def column(name):
+            index = model.index_of(name)
+            return None if index < 0 else model._visible_values(index)
+
+        try:
+            fit = gpop.fit_population_mixture(self.group, x, y, column,
+                                              (hist.x_edges[0], hist.x_edges[-1]),
+                                              (hist.y_edges[0], hist.y_edges[-1]),
+                                              log_x, log_y, self.gmm_settings())
+        except gm.GaussianFitError as exc:
+            self.feature.message(exc.title, exc.text)
+            return
+        except Exception as exc:  # noqa: BLE001 - the EM failed; say so
+            self.feature.message("Fit failed", str(exc))
+            return
+        gpop.write_population_fit(self.group, fit)
+        count = len(self.group)
+        self.feature.app.show_status(f"Fitted {count} Gaussian{'s' if count != 1 else ''} "
+                                     f"per population ({', '.join(labels)})")
 
     def select(self) -> None:
         """The chosen Gaussian (or the only one) as an elliptical gate."""
@@ -809,7 +862,8 @@ class GaussianPanel:
             written = gm.save_gaussians(path, self.group.records(), self.rows(), self.axes_info(),
                                         None if hist is None else hist.H,
                                         None if hist is None else hist.x_edges,
-                                        None if hist is None else hist.y_edges, log_x, log_y)
+                                        None if hist is None else hist.y_edges, log_x, log_y,
+                                        state=self.group.get_state())
         except OSError as exc:
             self.feature.message("Save Error", f"Failed to save:\n{exc}")
             return
@@ -836,6 +890,10 @@ class GaussianPanel:
         self.group.clear()
         for mu, cov, w, fx, fy, fsx, frho, fsy in rows:
             self.add(mu, cov, w, fixed={"x": fx, "y": fy, "sd_x": fsx, "rho": frho, "sd_y": fsy})
+        state = gm.load_gaussian_state(path)
+        if state:
+            # the vectors (population-wise parameters) and every element's state
+            self.group.set_state(state)
         mismatch = gm.axis_mismatch(axes, self.axes_info())
         if mismatch:
             self.feature.message("Axis Mismatch", mismatch)
@@ -857,17 +915,24 @@ class GaussianPanel:
         if not components or self.model.histograms is None:
             return
         log_x, log_y = self.log_axes()
+        drawn = self.drawn()
         if plot == "map":
-            for i, c in enumerate(components):
-                if self.is_gate(i, c):
+            for i, label, c, colour in drawn:
+                if label is None and self.is_gate(i, c):
                     continue
-                colour = gm.colour_of(i)
                 for level, width in zip(gm.SIGMA_LEVELS, ELLIPSE_WIDTHS):
                     xs, ys = gm.ellipse(c.mu, c.cov, level, log_x, log_y, n=160)
                     if i == self.selected and level == 1.0:
                         width = SELECTED_WIDTH
-                    implot.plot_line(f"##gauss{i}.{level}", xs, ys,
+                    implot.plot_line(f"##gauss{i}.{label}.{level}", xs, ys,
                                      spec={"line_color": colour, "line_weight": width})
+                if label is not None:
+                    # the map has no legend: the population at the component's centre
+                    implot.push_style_color(implot.COL_INLAY_TEXT, colour)
+                    try:
+                        implot.plot_text(str(label), float(c.mu[0]), float(c.mu[1]))
+                    finally:
+                        implot.pop_style_color()
             return
         if not self.show_marginals or plot not in ("xmarginal", "ymarginal"):
             return
@@ -878,7 +943,8 @@ class GaussianPanel:
             if curve is None:
                 continue
             xc, gx, yc, gy = curve
-            spec = {"line_color": gm.colour_of(i), "line_weight": 1.5}
+            spec = {"line_color": drawn[i][3] if i < len(drawn) else gm.colour_of(i),
+                    "line_weight": 1.5}
             if plot == "xmarginal":
                 implot.plot_line(f"##gauss-x{i}", xc, gx, spec=spec)
             else:

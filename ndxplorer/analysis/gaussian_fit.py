@@ -482,6 +482,11 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             QtWidgets.QMessageBox.warning(m, "No histogram", "No 2D histogram available. Fit is restricted to visible data; please update histogram first.")
             return
+        from . import gaussian_populations as gpop
+
+        if gpop.labels_of(self.group):
+            self._fit_populations(x_edges, y_edges)
+            return
         try:
             fitted = gm.fit_mixture(
                 rows_full, m.x_values, m.y_values,
@@ -494,6 +499,35 @@ class GaussianFit(QtCore.QObject):
             return
         for i, (mu_v, cov_v, weight) in enumerate(fitted):
             self._update_gaussian_row(i, mu_v, cov_v, weight)
+        self._redraw_gaussian_overlays_from_table()
+
+    def _fit_populations(self, x_edges, y_edges) -> None:
+        """A population-wise parameter: the shared population-conditional EM."""
+        from . import gaussian_populations as gpop
+
+        m = self.main
+        names = list(getattr(m.data_source, "parameter_names", []) or [])
+
+        def column(name):
+            if name not in names:
+                return None
+            return np.asarray(m.data_manager.get_filtered_values()[names.index(name)])
+
+        try:
+            fit = gpop.fit_population_mixture(
+                self.group, m.x_values, m.y_values, column,
+                (float(x_edges[0]), float(x_edges[-1])), (float(y_edges[0]), float(y_edges[-1])),
+                log_x=bool(self.is_log_x), log_y=bool(self.is_log_y),
+                settings=self._get_gmm_settings())
+        except gm.GaussianFitError as exc:
+            QtWidgets.QMessageBox.warning(m, exc.title, exc.text)
+            return
+        gpop.write_population_fit(self.group, fit)
+        if self._table is not None:
+            try:
+                self._table.sync()
+            except Exception:
+                pass
         self._redraw_gaussian_overlays_from_table()
 
     def on_select_point_toggled(self, checked: bool):
@@ -728,7 +762,15 @@ class GaussianFit(QtCore.QObject):
                 pass
 
     def _read_gaussian_table(self) -> List[Tuple[np.ndarray, np.ndarray, float]]:
-        """Return ``(mu, cov, w)`` for every Gaussian, following crosslinks."""
+        """Return ``(mu, cov, w)`` for every Gaussian, following crosslinks.
+
+        With a population-wise parameter, one per population and Gaussian
+        (:func:`~ndxplorer.analysis.gaussian_populations.population_rows`).
+        """
+        from . import gaussian_populations as gpop
+
+        if gpop.labels_of(self.group):
+            return [(mu, cov, w) for _l, _k, mu, cov, w in gpop.population_rows(self.group)]
         return [(c.mu, c.cov, c.w) for c in self.group.components()]
 
     def _redraw_gaussian_overlays_from_table(self):
@@ -894,7 +936,8 @@ class GaussianFit(QtCore.QObject):
         try:
             written = gm.save_gaussians(base_path, rows, self._read_gaussian_table(),
                                         self._current_axes_info(), H, x_edges, y_edges,
-                                        self.is_log_x, self.is_log_y)
+                                        self.is_log_x, self.is_log_y,
+                                        state=self.group.get_state())
         except OSError as e:
             QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save:\n{e}")
             return
@@ -930,6 +973,9 @@ class GaussianFit(QtCore.QObject):
                     float(w),
                     fixed={"x": fx, "y": fy, "sd_x": fcx, "rho": fcy, "sd_y": fcyy},
                 )
+            state = gm.load_gaussian_state(path)
+            if state:
+                self.group.set_state(state)       # vectors and their elements
             self._rebuild_table_rows()
         finally:
             m._updating_gaussian_table = False

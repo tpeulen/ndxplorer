@@ -43,6 +43,7 @@ __all__ = [
     "ellipse",
     "fit_mixture",
     "load_gaussians",
+    "load_gaussian_state",
     "load_gmm_settings",
     "local_moments",
     "marginal_pdf",
@@ -645,7 +646,7 @@ def _grid_rows(writer, xc, yc, grid) -> None:
 
 def save_gaussians(path: str, records: Sequence[dict], rows: Sequence[tuple], axes_info: dict,
                    H=None, x_edges=None, y_edges=None, log_x: bool = False,
-                   log_y: bool = False) -> List[str]:
+                   log_y: bool = False, state: Optional[dict] = None) -> List[str]:
     """Write a mixture: the Gaussians and the histogram and model they explain.
 
     ``<base>.json`` (Gaussians, axes and marginals), ``<base>_gaussians.csv``,
@@ -663,6 +664,11 @@ def save_gaussians(path: str, records: Sequence[dict], rows: Sequence[tuple], ax
         ``{"x": {"index", "name", "scale"}, "y": {...}, "fit_in_log": bool}``.
     H, x_edges, y_edges : array_like, optional
         The map (``(n_y, n_x)``) the model is compared with.
+    state : dict, optional
+        The group's :meth:`~ndxplorer.core.parameters.ParameterGroup.get_state`,
+        saved as ``"parameters"`` in the JSON: it carries what a record cannot
+        -- the vectors (population-wise parameters, their elements and axis),
+        bounds -- and :func:`load_gaussian_state` returns it.
 
     Returns
     -------
@@ -707,6 +713,8 @@ def save_gaussians(path: str, records: Sequence[dict], rows: Sequence[tuple], ax
         "columns": RECORD_COLUMNS, "axes": axes_info, "rows": list(records),
         "marginals": marginals,
     }
+    if state:
+        payload["parameters"] = state
     with open(paths["json"], "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     with open(paths["gaussians"], "w", newline="", encoding="utf-8") as handle:
@@ -806,6 +814,23 @@ def load_gaussians(path: str) -> Tuple[List[tuple], Optional[dict]]:
         if ext == ".json":
             raise
         return _load_csv(path), None
+
+
+def load_gaussian_state(path: str) -> Optional[dict]:
+    """The group state a JSON file saved (``save_gaussians(..., state=)``), or ``None``.
+
+    Apply it with ``group.set_state`` after the components are rebuilt from the
+    rows: it restores the vectors and every element's value, flag and bounds.
+    """
+    if os.path.splitext(path)[1].lower() == ".csv":
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    state = data.get("parameters") if isinstance(data, dict) else None
+    return state if isinstance(state, dict) else None
 
 
 def _load_json(path: str):
