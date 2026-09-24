@@ -9,10 +9,9 @@ from the burst durations.
 * :func:`fitted_background` -- from the measurement's own reference
   populations, when nobody knows the background (most of the time);
 * :func:`measured_background` -- the rates the background step stored in the
-  ``.pto`` container. Reading the container needs ChiSurf's measurement
-  reader; without ChiSurf this route returns nothing and says why.
+  ``.pto`` container, read with tttrlib (:mod:`ndxplorer.io.container`).
 
-Nothing here imports Qt, and ChiSurf only inside :func:`measured_background`.
+Nothing here imports Qt or ChiSurf.
 """
 from __future__ import annotations
 
@@ -22,10 +21,15 @@ from typing import Dict, Mapping, Optional, Tuple
 import numpy as np
 
 __all__ = ["burst_durations_ms", "fitted_background", "measured_background",
-           "BACKGROUND_ROLES", "ROLE_TO_BG"]
+           "stored_rates", "stored_background_constants",
+           "BACKGROUND_CONSTANTS", "BACKGROUND_ROLES", "ROLE_TO_BG"]
 
 #: Detector name in a measurement's background artifact -> the channel role.
 BACKGROUND_ROLES = {"green": "i_dd", "red": "i_da", "yellow": "i_aa"}
+
+#: Detector -> the ndX constant holding its rate. ndX's Bg/Br/By are subtracted
+#: from the kHz stream columns, so a stored rate goes in as it stands.
+BACKGROUND_CONSTANTS = {"green": "Bg", "red": "Br", "yellow": "By"}
 
 #: Channel role -> the calibration's background factor.
 ROLE_TO_BG = {"i_dd": "bg_dd", "i_da": "bg_da", "i_aa": "bg_aa"}
@@ -106,6 +110,53 @@ def fitted_background(i_dd, i_da, i_aa, split, *, durations=None,
     return out
 
 
+def stored_rates(container: str) -> Dict[str, float]:
+    """The newest background the measurement stores: ``{detector: kHz}``.
+
+    Detector names lower-case (``green``, ``red``, ``yellow``); empty when the
+    container holds no ``background`` table. The newest, because re-running
+    the background step adds a table rather than replacing one; and each
+    object is tried on its own, so a JSON blob before it cannot hide it.
+
+    Raises
+    ------
+    OSError
+        When the container cannot be opened.
+    """
+    from ..io.container import open_container, read_store
+
+    with open_container(container) as handle:
+        for obj in reversed(list(handle.objects())):
+            if obj.name != "background":
+                continue
+            store = read_store(handle, obj.uid)
+            if store is None:
+                continue
+            names = [store.column(i).name() for i in range(store.n_columns())]
+            if "Detector" not in names or "Rate" not in names:
+                continue
+            detectors = store.column(names.index("Detector"))
+            values = np.asarray(store.column(names.index("Rate")).numpy(), dtype=float)
+            return {str(detectors.string_at(row)).lower(): float(values[row])
+                    for row in range(store.n_rows())}
+    return {}
+
+
+def stored_background_constants(container: str) -> Dict[str, float]:
+    """The stored rates as ndX constants (``Bg``/``Br``/``By``, kHz); ``{}`` when none.
+
+    A rate that is not finite is left out rather than written as zero: "not
+    measured" and "measured as nothing" are different claims.
+    """
+    try:
+        rates = stored_rates(container)
+    except Exception:  # noqa: BLE001
+        logging.debug("could not read a background from %s", container, exc_info=True)
+        return {}
+    return {BACKGROUND_CONSTANTS[d]: float(v) for d, v in rates.items()
+            if d in BACKGROUND_CONSTANTS and np.isfinite(v)}
+
+
 def measured_background(table: Mapping[str, np.ndarray],
                         container: str) -> Tuple[Dict[str, np.ndarray], Dict[str, float], str]:
     """Per-burst background counts from the rates stored in the measurement.
@@ -120,28 +171,7 @@ def measured_background(table: Mapping[str, np.ndarray],
     if not container:
         return {}, {}, "the bursts carry no container, so no measured background"
     try:
-        from chisurf.core.fio.pto import Measurement
-    except Exception:  # noqa: BLE001 - ChiSurf is optional here
-        return {}, {}, ("the measured background needs ChiSurf's container reader, "
-                        "which is not available; no background was subtracted")
-    rates: Dict[str, float] = {}
-    try:
-        with Measurement.open(container, writable=False) as measurement:
-            for obj in reversed(list(measurement.artifacts())):
-                if getattr(obj, "name", "") != "background":
-                    continue
-                try:
-                    store = measurement.get_store(obj.uid)
-                except Exception:  # noqa: BLE001 - not a dstore artifact
-                    continue
-                names = [store.column(i).name() for i in range(store.n_columns())]
-                if "Detector" not in names or "Rate" not in names:
-                    continue
-                detectors = store.column(names.index("Detector"))
-                values = np.asarray(store.column(names.index("Rate")).numpy(), dtype=float)
-                for row in range(store.n_rows()):
-                    rates[str(detectors.string_at(row)).lower()] = float(values[row])
-                break
+        rates = stored_rates(container)
     except Exception:  # noqa: BLE001
         logging.debug("could not read a background from %s", container, exc_info=True)
         return {}, {}, f"could not read a background from {container}"

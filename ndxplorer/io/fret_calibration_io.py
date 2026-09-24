@@ -24,9 +24,8 @@ question a reader has a year later.
 Both windows use this module: the Qt window through ChiSurf's ndX plugin and
 the emtk app's Accurate FRET feature. A "window" here is anything with a
 ``data_source`` whose ``provenance`` names the container (the `.pto` reader
-sets it). The container route needs ChiSurf's measurement container
-(``chisurf.core.fio.pto``, as the `.pto` reader does); the file route needs
-nothing.
+sets it). The container route is tttrlib's (:mod:`ndxplorer.io.container`,
+as the `.pto` reader is); neither route needs ChiSurf.
 """
 
 from __future__ import annotations
@@ -37,6 +36,10 @@ import logging
 import pathlib
 from typing import Any
 
+import tttrlib
+
+from .container import open_container, software
+
 __all__ = [
     "CALIBRATION_ARTIFACT",
     "FORMAT",
@@ -46,6 +49,8 @@ __all__ = [
     "read_payload",
     "save_calibration",
     "load_calibration",
+    "restorable",
+    "saved_constants",
     "stored_calibrations",
 ]
 
@@ -144,35 +149,29 @@ def payload(constants: dict, *, result: dict | None = None, note: str = "",
 CALIBRATION_HISTORY = 5
 
 
-def _saved_at(measurement, uid) -> str:
+def _saved_at(handle, uid) -> str:
     """The ``saved_utc`` recorded in one calibration, or ``""``.
 
     Sorting on this rather than on the object's position is what makes the
     history reliable once anything has been removed.
     """
     try:
-        blob = measurement.get_blob(uid)
-        if isinstance(blob, (bytes, bytearray)):
-            blob = blob.decode("utf-8")
-        return str(json.loads(blob).get("saved_utc", ""))
+        return str(json.loads(tttrlib.pto_read_blob(handle, uid).decode("utf-8"))
+                   .get("saved_utc", ""))
     except Exception:
         return ""
 
 
-def _prune_calibrations(measurement, keep: int = CALIBRATION_HISTORY) -> int:
+def _prune_calibrations(handle, keep: int = CALIBRATION_HISTORY) -> int:
     """Drop all but the newest *keep* saved calibrations. Returns how many went.
 
     The container appends, so saving is what makes the history grow; pruning
     here means the bound holds however the window is used, rather than depending
     on somebody remembering to tidy up.
     """
-    handle = getattr(measurement, "_f", None)
-    remove = getattr(handle, "remove", None)
-    if handle is None or not callable(remove):
-        return 0
     try:
         entries = [
-            (_saved_at(measurement, obj.uid), index, obj.uid)
+            (_saved_at(handle, obj.uid), index, obj.uid)
             for index, obj in enumerate(handle.objects())
             if getattr(obj, "name", "") == CALIBRATION_ARTIFACT
         ]
@@ -187,11 +186,25 @@ def _prune_calibrations(measurement, keep: int = CALIBRATION_HISTORY) -> int:
     dropped = 0
     for uid in uids[: max(0, len(uids) - int(keep))]:
         try:
-            if remove(uid):
+            if handle.remove(uid):
                 dropped += 1
         except Exception:
             continue
     return dropped
+
+
+def _dictionary() -> dict:
+    """The MMFDB dictionary a write names, when the ``mmfdb`` package is there."""
+    try:
+        from mmfdb.schema.pdbx_metadata import (
+            extension_dictionary_hash,
+            extension_dictionary_version,
+        )
+
+        return {"dictionary_version": extension_dictionary_version(),
+                "dictionary_hash": extension_dictionary_hash()}
+    except Exception:  # noqa: BLE001 - optional: the calibration is written without it
+        return {}
 
 
 def save_calibration(
@@ -236,18 +249,19 @@ def save_calibration(
         container = container_of(ndx)
         if container:
             try:
-                from chisurf.core.fio.pto import Measurement
-
-                with Measurement.open(container, writable=True) as measurement:
-                    measurement.put_blob(
+                with open_container(container, writable=True) as handle:
+                    tttrlib.pto_add_blob(
+                        handle,
+                        "calibration_data",
+                        "json",
                         CALIBRATION_ARTIFACT,
                         data,
-                        artifact_kind="calibration_data",
-                        data_format="json",
                         operation_type="calibration",
                         mime_type="application/json",
+                        software=software(),
+                        **_dictionary(),
                     )
-                    dropped = _prune_calibrations(measurement)
+                    dropped = _prune_calibrations(handle)
                 if dropped:
                     logging.info(
                         "calibration saved; dropped %d older one(s), keeping the last %d",
@@ -301,15 +315,15 @@ def stored_calibrations(ndx=None, container: str | None = None) -> list[dict]:
     if not target:
         return []
     try:
-        from chisurf.core.fio.pto import Measurement
-
         out = []
-        with Measurement.open(target, writable=False) as measurement:
-            for obj in measurement.artifacts(artifact_kind="calibration_data"):
-                if getattr(obj, "name", "") != CALIBRATION_ARTIFACT:
+        with open_container(target) as handle:
+            for obj in handle.objects():
+                # By name, as the pruning is: a container written by an older
+                # ChiSurf filed some as `analysis_result`.
+                if obj.name != CALIBRATION_ARTIFACT:
                     continue
                 try:
-                    doc = json.loads(bytes(measurement.get_blob(obj.uid)).decode("utf-8"))
+                    doc = json.loads(tttrlib.pto_read_blob(handle, obj.uid).decode("utf-8"))
                 except Exception:  # noqa: BLE001
                     continue
                 doc["uid"] = int(obj.uid)
@@ -318,6 +332,58 @@ def stored_calibrations(ndx=None, container: str | None = None) -> list[dict]:
         return out
     except Exception:  # noqa: BLE001
         return []
+
+
+def saved_constants(container: str) -> dict:
+    """The newest stored calibration's constants: the numeric, finite ones.
+
+    ``{}`` when the measurement carries none.
+    """
+    stored = stored_calibrations(container=container)
+    return _numeric(stored[-1].get("constants")) if stored else {}
+
+
+def _numeric(constants) -> dict:
+    import math
+
+    return {str(k): float(v) for k, v in dict(constants or {}).items()
+            if isinstance(v, (int, float)) and math.isfinite(float(v))}
+
+
+def restorable(container: str) -> dict:
+    """What a measurement stores for ndX's constants, to restore when it is opened.
+
+    Returns
+    -------
+    dict
+        ``{"saved": {...}, "background": {...}, "vectors": {...}}``: the newest
+        saved calibration (its constants as :func:`saved_constants` reads
+        them, and its vector constants) and the background step's rates as
+        ``Bg``/``Br``/``By``. Both name Bg/Br/By, so one has to win: the
+        *newer* of the two objects. A background re-measured after the
+        calibration was saved is the ordinary order of work, and then the saved
+        values for those constants are dropped. Applied, ``saved`` goes over
+        ``background``.
+    """
+    from ..analysis.fret_background import stored_background_constants
+
+    stored = stored_calibrations(container=container)
+    saved = _numeric(stored[-1].get("constants")) if stored else {}
+    vectors = dict(stored[-1].get("vectors") or {}) if stored else {}
+    background = stored_background_constants(container)
+    if saved and background:
+        try:
+            with open_container(container) as handle:
+                names = [obj.name for obj in handle.objects()]
+        except Exception:  # noqa: BLE001
+            names = []
+
+        def last(name: str) -> int:
+            return max((i for i, n in enumerate(names) if n == name), default=-1)
+
+        if last("background") > last(CALIBRATION_ARTIFACT) >= 0:
+            saved = {k: v for k, v in saved.items() if k not in background}
+    return {"saved": saved, "background": background, "vectors": vectors}
 
 
 def read_payload(data, *, target: str = "") -> dict:

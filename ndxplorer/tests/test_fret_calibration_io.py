@@ -12,11 +12,13 @@ import pytest
 
 @pytest.fixture()
 def container(tmp_path):
-    """An empty `.pto` measurement."""
-    pto = pytest.importorskip("chisurf.core.fio.pto")
+    """An empty `.pto` measurement (tttrlib alone makes one)."""
+    import tttrlib
+
     path = tmp_path / "measurement.pto"
-    with pto.Measurement.create_empty(path, title="test"):
-        pass
+    handle = tttrlib.PtoFile()
+    assert handle.create(str(path), "test") and handle.commit()
+    handle.close()
     return path
 
 
@@ -151,20 +153,41 @@ def test_history_bound_survives_repeated_pruning(ndx):
     assert [d["note"] for d in stored] == [f"b{i}" for i in range(2, keep + 2)]
 
 
-def test_the_newest_calibration_is_what_the_bridge_restores(ndx, container):
-    """What ndX puts in its parameters after pruning is the newest save.
+def test_the_newest_calibration_is_what_opening_restores(ndx, container):
+    """What ndX restores on open after pruning is the newest save.
 
-    The bridge reads the container by itself rather than through
-    `load_calibration`, so the ordering fix has to hold on that path too -- it
-    is the one the user actually sees when a `.pto` is opened.
+    Restoring on open (the emtk app, and ChiSurf's bridge for the Qt window)
+    reads :func:`restorable` rather than `load_calibration`, so the ordering fix
+    has to hold on that path too -- it is the one the user actually sees when a
+    `.pto` is opened.
     """
     from ndxplorer.io import fret_calibration_io as cio
-
-    bridge = pytest.importorskip("chisurf.plugins.ndxplorer.calibration_bridge")
 
     n = cio.CALIBRATION_HISTORY + 4
     for i in range(n):
         cio.save_calibration({"gG/gR": 0.1 * (i + 1)}, ndx=ndx, note=f"run {i}")
 
-    constants = bridge.saved_constants_from_container(str(container))
+    constants = cio.restorable(str(container))["saved"]
     assert constants["gG/gR"] == pytest.approx(0.1 * n)
+
+
+def test_a_background_measured_after_the_save_wins_bg(ndx, container):
+    """Bg/Br/By come from whichever of the two was stored last."""
+    import numpy as np
+    import tttrlib
+
+    from ndxplorer.io import fret_calibration_io as cio
+
+    cio.save_calibration({"gG/gR": 0.5, "Bg": 9.0}, ndx=ndx)
+    store = tttrlib.DataStore()
+    store.add("Detector", ["green", "red", "yellow"])
+    store.add("Rate", np.array([1.0, 2.0, 3.0]))
+    handle = tttrlib.PtoFile()
+    assert handle.open(str(container), True)
+    tttrlib.pto_add_store(handle, "background_data", "background", store)
+    assert handle.commit()
+    handle.close()
+
+    stored = cio.restorable(str(container))
+    assert stored["background"] == {"Bg": 1.0, "Br": 2.0, "By": 3.0}
+    assert stored["saved"] == {"gG/gR": 0.5}
