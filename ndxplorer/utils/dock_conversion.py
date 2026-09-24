@@ -138,7 +138,12 @@ def convert_docks(window, plot_share: int = 3) -> typing.Optional[QtWidgets.QWid
     # minimum and the ratio is silently lost. The deferred pass lands on real
     # geometry.
     _apply_share(area, plot_share)
-    QtCore.QTimer.singleShot(0, lambda: _apply_share(area, plot_share))
+    # On a timer the area owns: a window deleted before the loop turns takes it
+    # along, instead of the pass running on a deleted area.
+    later = QtCore.QTimer(area)
+    later.setSingleShot(True)
+    later.timeout.connect(lambda: _apply_share(area, plot_share))
+    later.start(0)
     logging.info("Converted %d Qt docks to a ChiSurf dock area", len(panels))
     return area
 

@@ -146,5 +146,39 @@ def test_a_target_with_no_data_disables_the_fit_button(qapp):
     dlg._do_fit()  # must not raise
 
 
+def test_closing_the_dialog_drops_the_fits_mirrors(qapp):
+    """The fit's own parameters are mirrored for the table only while it is open.
+
+    A constant of a published group keeps its mirror: it belongs to the group.
+    """
+    from ndxplorer.core import chisurf_binding
+    from ndxplorer.core.constants_group import build_constants_group
+
+    constants = build_constants_group({"Bg": 5.0})
+    assert chisurf_binding.publish(constants, "test-closing-dialog", "constants")
+    try:
+        cf, dlg = _build(qapp, {"Bg": 5.0})
+        dlg._target_combo.setCurrentIndex(dlg._target_combo.findData("2d"))  # a rebuild
+        first = dlg.current_fit
+        own = list(first.parameters)
+        assert all(chisurf_binding.mirrored(p) is not None for p in own)
+        mirrors = {id(p._mirror) for p in own}
+        # the table's second pass (after a fit) mirrors the same set again
+        dlg._refresh_table()
+        shown = chisurf_binding.mirrored_list([constants.parameters_all[0]] + own)
+        assert shown[0] is chisurf_binding.mirrored(constants.parameters_all[0])
+        assert cf.parameters and cf is not first  # the x-target fit was released already
+        assert all(chisurf_binding.mirrored(p) is None for p in cf.parameters)
+
+        dlg.reject()  # Close, Escape and the window's close button all finish here
+
+        assert all(chisurf_binding.mirrored(p) is None for p in own)
+        assert not mirrors & {id(m) for m in chisurf_binding._MIRRORS.values()}
+        assert not mirrors & chisurf_binding._LOOSE
+        assert chisurf_binding.mirrored(constants.parameters_all[0]) is not None
+    finally:
+        chisurf_binding.withdraw("test-closing-dialog")
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

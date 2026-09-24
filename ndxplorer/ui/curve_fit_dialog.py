@@ -166,6 +166,11 @@ class CurveFitDialog(QtWidgets.QDialog):
 
         self._target_combo.currentIndexChanged.connect(self._target_changed)
         self._reduction_combo.currentIndexChanged.connect(self._target_changed)
+        #: The parameters the tables show through ChiSurf mirrors; the mirrors
+        #: made for them (a fit's own, loose ones) are dropped with the tables.
+        self._mirrored: list = []
+        # Close, Escape and the window's close button all end here.
+        self.finished.connect(self._release_mirrors)
         self._rebuild()
 
     # -- target ------------------------------------------------------------
@@ -231,8 +236,16 @@ class CurveFitDialog(QtWidgets.QDialog):
             return self._build_fit(self.target, self.reduction)
         return self._build_fit(self.target)
 
+    def _release_mirrors(self, *_args) -> None:
+        """Drop the ChiSurf mirrors of the parameters the tables showed."""
+        from ..core.chisurf_binding import release
+
+        release(self._mirrored)
+        self._mirrored = []
+
     def _install_table(self) -> None:
         """Replace the parameter tables — a new target means new parameters."""
+        self._release_mirrors()
         for attr in ("_table", "_data_label", "_data_table"):
             widget = getattr(self, attr, None)
             if widget is not None:
@@ -264,6 +277,8 @@ class CurveFitDialog(QtWidgets.QDialog):
         """Build one capped parameter table over ``params`` (their ChiSurf mirrors)."""
         from ..core.chisurf_binding import mirrored_list
 
+        params = list(params)
+        self._mirrored += params
         table = ParameterGroupTableWidget(
             mirrored_list(params, "ndX curve fit"),
             section=_CompactColumns(),

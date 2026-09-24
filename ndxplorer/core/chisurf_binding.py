@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 __all__ = ["available", "why_unavailable", "publish", "withdraw", "chisurf_group",
-           "foreign_targets", "mirrored", "mirrored_list"]
+           "foreign_targets", "mirrored", "mirrored_list", "release"]
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ _MIRRORS: Dict[int, "_Mirror"] = {}
 _PUBLISHED: Dict[str, "_Mirror"] = {}
 #: id(FittingParameter) -> ndx Parameter, for mapping a ChiSurf link back
 _BACK: Dict[int, Any] = {}
+#: id(_Mirror) of the groups :func:`mirrored_list` made for loose parameters
+_LOOSE: set = set()
 
 
 def available() -> bool:
@@ -256,9 +258,27 @@ def mirrored_list(parameters, name: str = "") -> Optional[List[Any]]:
 
     parameters = list(parameters)
     loose = [p for p in parameters if mirrored(p) is None]
-    if loose and _mirror(ParameterGroup(name, loose)) is None:
-        return None
+    if loose:
+        mirror = _mirror(ParameterGroup(name, loose))
+        if mirror is None:
+            return None
+        _LOOSE.add(id(mirror))
     return [mirrored(p) for p in parameters]
+
+
+def release(parameters) -> None:
+    """Drop the mirrors :func:`mirrored_list` made for loose *parameters*.
+
+    A table that showed a curve fit's own parameters calls this when it goes
+    away; otherwise their ``FittingParameter``\\ s stay in this module for the
+    rest of the process. A parameter of a group's mirror (a published group,
+    the constants) keeps it: that one belongs to the group, not to the table.
+    """
+    for p in parameters:
+        mirror = getattr(p, "_mirror", None)
+        if mirror is not None and id(mirror) in _LOOSE:
+            _LOOSE.discard(id(mirror))
+            mirror.detach()
 
 
 def foreign_targets() -> List[Tuple[str, str, Any]]:
