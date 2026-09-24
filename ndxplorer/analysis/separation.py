@@ -66,12 +66,18 @@ __all__ = [
     "GRID",
     "MIN_POPULATION",
     "Z_MIN",
+    "CORE_Z",
     "SPIKE_SHARE",
     "RobustAxis",
     "Populations",
     "find_populations",
 ]
 
+#: Labelling (:meth:`Populations.label` with ``core``): a burst gets its island
+#: when its cell stands this many standard deviations (the smoothed counts'
+#: shot noise) above the island's highest valley. A flat bridge between two
+#: islands lies at about the valley's level, so it stays unlabelled.
+CORE_Z = 2.0
 #: Raster cells per axis.
 GRID = 64
 #: Smallest share of the sampled bursts the smaller side of a split must hold.
@@ -207,6 +213,9 @@ class Populations:
     separability: Optional[np.ndarray] = None  #: 1 - saddle / lower peak, per island pair
     n_used: int = 0
     cells: Optional[np.ndarray] = None  #: island per raster cell, -1 none
+    #: island per raster cell of its *core* (above its highest valley to any
+    #: other island), -1 elsewhere: bridge, tail, noise
+    core_cells: Optional[np.ndarray] = None
 
     @property
     def count(self) -> int:
@@ -218,16 +227,25 @@ class Populations:
         """Share of the sampled bursts in island cores: not bridge, tail or noise."""
         return float(sum(self.cores)) if len(self.shares) > 1 else 0.0
 
-    def label(self, points) -> np.ndarray:
-        """The population of each row of *points* (``(n, d)`` coordinates), -1 none."""
+    def label(self, points, core: bool = False) -> np.ndarray:
+        """The population of each row of *points* (``(n, d)`` coordinates), -1 none.
+
+        With *core*, only rows clearly inside an island are labelled: at least
+        :data:`CORE_Z` shot-noise sigmas above its highest valley to another
+        island, in a basin attached to it. A burst on a bridge between two
+        islands, in a thin tail or in a clump too small to be an island gets
+        -1, as does a row with a missing coordinate (sentinel, outlier, off
+        the raster). Islands are numbered as :attr:`shares`: largest first.
+        """
         points = np.asarray(points, dtype=np.float64)
         points = points[:, None] if points.ndim == 1 else points
         out = np.full(points.shape[0], -1, dtype=np.int64)
-        if self.cells is None:
+        cells = self.core_cells if core else self.cells
+        if cells is None:
             return out
         ok = np.isfinite(points).all(axis=1)
-        index = _cell_index(points[ok], self.cells.shape[0])
-        out[ok] = self.cells[tuple(index.T)]
+        index = _cell_index(points[ok], cells.shape[0])
+        out[ok] = cells[tuple(index.T)]
         return out
 
 
@@ -363,18 +381,32 @@ def find_populations(points, n_total: Optional[float] = None, weights=None,
         comp_mass[alive[0]] += comp_mass[rb]
 
     kept = []  # the merges that separate two islands, in falling saddle order
+    clumps = set()
     for dying, into, level, smaller in merges:
         top, v = comp_peak[dying], peak_var[dying]
         z = (top - level) / math.sqrt(max(v * (1.0 + level / top), 1e-300)) if top > 0 else 0.0
         if z >= z_min and smaller / n_total >= min_population:
             kept.append((dying, into, level))
+        elif z >= z_min:
+            clumps.add(dying)  # cut off by a real valley, but too few to count
     apart = {m[0] for m in kept}
 
     # Islands: the basins joined by every merge that did not count.
+    # ``joined``: the saddle level at which each basin joins its island's peak
+    # (0 for a clump with empty space all round, merged only for the tally;
+    # -inf for a clump behind a significant valley, too small to be an island).
     root = list(range(k))
-    for dying, into, _level, _smaller in merges:
+    members = {i: [i] for i in range(k)}
+    joined = np.full(k, np.inf)
+    for dying, into, level, _smaller in merges:
         if dying not in apart:
-            root[find(dying)] = find(into)
+            a, b = find(dying), find(into)
+            if a == b:
+                continue
+            gone = members.pop(a)
+            joined[gone] = np.minimum(joined[gone], -np.inf if dying in clumps else level)
+            members[b].extend(gone)
+            root[a] = b
     final = [find(i) for i in range(k)]
     island_roots = sorted(set(final), key=lambda r: -sum(m for f_, m in zip(final, mass) if f_ == r))
     number = {r: i for i, r in enumerate(island_roots)}
@@ -400,6 +432,7 @@ def find_populations(points, n_total: Optional[float] = None, weights=None,
     cells = np.where(basin_of >= 0, island_of_basin[np.maximum(basin_of, 0)], -1).reshape(f.shape)
     separability = np.zeros((n_islands, n_islands))
     core = np.zeros(n_islands)
+    core_cells = cells
     shares = np.bincount(island_of_basin, weights=mass, minlength=n_islands) / n_total
     if n_islands > 1:
         lowest = np.minimum.outer(top, top)
@@ -413,5 +446,17 @@ def find_populations(points, n_total: Optional[float] = None, weights=None,
         above = inside & (f.ravel() > rim[np.maximum(flat_cells, 0)])
         core = np.bincount(flat_cells[above], weights=h.ravel()[above],
                            minlength=n_islands) / n_total
+        # Labelling a burst asks more (the score keeps its cores as they are):
+        # its cell stands CORE_Z shot-noise sigmas above that valley, and its
+        # basin hangs on its island above it -- a clump off in empty space, or
+        # one behind a significant valley but too small to be an island, is -1.
+        level = rim[np.maximum(flat_cells, 0)]
+        attached = joined[np.maximum(basin_of, 0)] > level
+        fc, vc = f.ravel(), var.ravel()
+        with np.errstate(invalid="ignore", divide="ignore"):
+            z_cell = (fc - level) / np.sqrt(np.maximum(vc * (1.0 + level / fc), 1e-300))
+        clear = z_cell >= CORE_Z
+        core_cells = np.where(above & attached & clear, flat_cells, -1).reshape(f.shape)
     score = float(core @ separability @ core)  # = sum over i != j of p_i p_j sep_ij
-    return Populations(score, shares.tolist(), core.tolist(), separability, n, cells)
+    return Populations(score, shares.tolist(), core.tolist(), separability, n, cells,
+                       core_cells)

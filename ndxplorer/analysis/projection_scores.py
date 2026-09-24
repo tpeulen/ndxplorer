@@ -831,11 +831,34 @@ class _ScoredRanker:
             keyed.append((math.inf if score is None else score[0], position, name))
         return [name for _, _, name in sorted(keyed)]
 
-    def islands(self, names: Sequence[str], values: Sequence[np.ndarray]) -> Optional[np.ndarray]:
+    def ranked_names(self, names: Sequence[str]) -> Optional[List[str]]:
+        """The ranked columns that stand for *names*, or ``None``.
+
+        A column merged into another as its alias (``Proximity ratio`` into
+        ``FRET efficiency``) is represented by it: the same bursts in the same
+        order, so the representative's islands label the alias' view too.
+        """
+        if self.method != "populations" or self.columns is None:
+            return None
+        axes, aliases = self.columns.axes, self.columns.aliases
+        out = []
+        for name in names:
+            if name not in axes:
+                name = next((r for r, same in aliases.items() if name in same), None)
+                if name is None or name not in axes:
+                    return None
+            out.append(name)
+        return out
+
+    def islands(self, names: Sequence[str], values: Sequence[np.ndarray],
+                core: bool = False) -> Optional[np.ndarray]:
         """The island of every row of *values* (full columns of *names*), -1 none.
 
         The islands are found again on the ranking's sample, as they were
-        scored, and every burst of *values* is looked up in them.
+        scored, and every burst of *values* is looked up in them through the
+        axes' preparation (scale, sentinels, outlier fence, robust range).
+        With *core* only bursts in an island's core are labelled; bridges,
+        tails and outliers get -1. Islands are numbered largest first.
         """
         from .separation import find_populations
 
@@ -849,7 +872,7 @@ class _ScoredRanker:
             return None
         points = np.column_stack([self.columns.axes[n].transform(v)
                                   for n, v in zip(names, values)])
-        return found.label(points)
+        return found.label(points, core=core)
 
 
 class ProjectionRanker(_ScoredRanker, AttrPairRanker):
