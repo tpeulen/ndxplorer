@@ -21,9 +21,10 @@ What the page carries
   chimol's viewer stay behind (:data:`CHISURF_KEEP`, :data:`MMFDB_KEEP`,
   :data:`CHIMOL_KEEP`);
 * from the Pyodide distribution: numpy, scipy, PyYAML, matplotlib, Pillow,
-  scikit-learn (Find structure's K-means, PCA and HDBSCAN), and ``lzma`` (a
-  stdlib module Pyodide ships apart; ``chisurf.core.fio`` imports it);
-* **tttrlib**'s Pyodide wheel -- every data source is a ``tttrlib.DataStore``;
+  and ``lzma`` (a stdlib module Pyodide ships apart; ``chisurf.core.fio``
+  imports it). No scikit-learn: Find structure's PCA is NumPy;
+* **tttrlib**'s Pyodide wheel -- every data source is a ``tttrlib.DataStore``,
+  and Find structure's HDBSCAN and K-means are its kernels;
 * **IMP.bff**'s Pyodide wheel (the IMP-free core, ``import IMP, IMP.bff``) --
   the port runtime behind chisurf's fitting parameters: the Parameters tab,
   the overlay curves, the curve fit and Gaussian Fit. Without it the page boots
@@ -67,8 +68,7 @@ APP = "ndxplorer.app.frame:make_app"
 DEFAULT_PORT = 8795
 
 #: Loaded from the Pyodide distribution.
-PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma",
-                    "scikit-learn")
+PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma")
 
 #: The parts of the ``chisurf`` package the page ships: what the Qt-free core
 #: imports (``chisurf/__init__`` reaches ``_bundled_packages``, ``core`` and

@@ -52,9 +52,10 @@ def test_the_page_loads_what_the_core_imports_from_pyodide():
 
     wanted = bundle(tttrlib_wheel=False, impbff_wheel=False).pyodide_packages
     # lzma: chisurf.core.fio imports it, and Pyodide ships it apart from the stdlib.
-    # scikit-learn: Find structure's K-means, PCA and HDBSCAN.
-    for name in ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma", "scikit-learn"):
+    for name in ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma"):
         assert name in wanted, name
+    # Find structure runs on tttrlib's kernels (HDBSCAN, K-means) and NumPy (PCA).
+    assert "scikit-learn" not in wanted
 
 
 def test_a_shadowing_directory_is_refused(tmp_path, monkeypatch):
