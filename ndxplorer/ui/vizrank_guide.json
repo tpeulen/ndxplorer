@@ -8,19 +8,27 @@
     },
     {
       "title": "Choose what \"informative\" means",
-      "text": "<b>Class separation</b> needs classes — a gate, clusters or the z parameter — and finds the views where they sit apart. <b>Population structure</b> needs nothing and finds views that split into more than one population. <b>Correlation</b> finds parameters that move together.",
-      "target": {"name": "vizrank_method"}
+      "text": "<b>Separation</b> (default) finds the views where the bursts fall into clearly separated islands: donor-only, acceptor-only and FRET species in E vs S, a dynamic population off the static FRET line. <b>Correlation</b> finds parameters that move together. <b>Classes</b> appears when there are gates or clusters and finds views that keep them apart.",
+      "target": {
+        "name": "vizrank_method"
+      }
     },
     {
       "title": "Run it",
       "text": "The table fills while it computes, best rows at the top. <b>Pause</b> stops it and <b>Start</b> continues; closing the panel pauses too.",
-      "target": {"name": "vizrank_start"},
-      "await": {"hint": "Press <b>Start</b>."}
+      "target": {
+        "name": "vizrank_start"
+      },
+      "await": {
+        "hint": "Press <b>Start</b>."
+      }
     },
     {
       "title": "Click a row to see that plot",
-      "text": "Selecting a row sets the axes of the main plot. The line under the table says what the score means in numbers. Picking axes by hand in the plot selects the matching row here.",
-      "target": {"name": "vizrank_table"}
+      "text": "Selecting a row sets the axes of the main plot. <b>Islands</b> says how many populations the view splits into, and the line under the table what the score means in numbers. Picking axes by hand in the plot selects the matching row here.",
+      "target": {
+        "name": "vizrank_table"
+      }
     }
   ]
 }
