@@ -72,6 +72,9 @@ class CurveFitResult:
     data_params
         Fitted ``{name: value}`` for the *data* parameters (nDXplorer constants)
         that took part — empty when the fit only moved the curve.
+    population_chi2r
+        ``{population: reduced chi-square}`` of a population-wise fit
+        (:mod:`ndxplorer.analysis.curve_fit_populations`); empty otherwise.
     """
 
     ok: bool
@@ -80,6 +83,8 @@ class CurveFitResult:
     y_fit: Optional[np.ndarray] = None
     message: Optional[str] = None
     data_params: Dict[str, float] = field(default_factory=dict)
+    #: A population-wise fit's reduced chi-square per population.
+    population_chi2r: Dict[str, float] = field(default_factory=dict)
 
     def __bool__(self) -> bool:  # noqa: D105
         return self.ok

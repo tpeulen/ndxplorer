@@ -54,7 +54,9 @@ __all__ = [
     "REDUCTIONS",
     "FitHost",
     "read_fit_columns",
+    "FitDataReader",
     "make_fit_data_reader",
+    "curve_tracer",
     "histogram_on_edges",
     "cloud_for_fit",
     "marginal_points",
@@ -135,21 +137,80 @@ def read_fit_columns(source, x_name: str, y_name: str, weight_name: Optional[str
     return d1, d2, weights
 
 
+class FitDataReader:
+    """The plotted values of a frozen set of rows: what a curve fit reads.
+
+    Calling it gives ``(x, y, weights)`` (:func:`read_fit_columns`);
+    :meth:`by_population` splits the same points by a vector's population axis.
+    """
+
+    def __init__(self, source, rows, x_name: str, y_name: str,
+                 weight_name: Optional[str] = None) -> None:
+        self.source = source
+        self.rows = np.asarray(rows)
+        self.x_name, self.y_name, self.weight_name = x_name, y_name, weight_name
+
+    def __call__(self):
+        return read_fit_columns(self.source, self.x_name, self.y_name, self.weight_name,
+                                self.rows)
+
+    def by_population(self, axis, labels: Sequence[str]):
+        """``[(x, y, weights)]``, one per population of *axis* (a ``PopulationAxis``).
+
+        A burst's weight in population *k* is its probability column when the
+        axis names one for every label and the data has them all, else 1 where
+        the label column holds the population's code and 0 elsewhere; the
+        display's weight column multiplies in. Every population gets the same
+        points, so only the weights differ.
+
+        Raises
+        ------
+        CurveFitError
+            The data has no column to tell the populations apart by.
+        """
+        source, rows = self.source, self.rows
+        d1, d2 = source.column_values(self.x_name), source.column_values(self.y_name)
+        if d1 is None or d2 is None:
+            return [(np.empty(0), np.empty(0), np.empty(0)) for _ in labels]
+        d1, d2 = d1[rows], d2[rows]
+        good = np.isfinite(d1) & np.isfinite(d2)
+        base = np.ones(int(good.sum()))
+        if self.weight_name:
+            column = source.column_values(self.weight_name)
+            if column is not None:
+                base = np.asarray(column[rows][good], dtype=float)
+
+        def column_of(name):
+            values = source.column_values(name) if name else None
+            return None if values is None else np.asarray(values[rows][good], dtype=float)
+
+        probs = dict(getattr(axis, "probabilities", {}) or {})
+        members = None
+        if probs and all(label in probs for label in labels):
+            stack = [column_of(probs[label]) for label in labels]
+            if all(p is not None for p in stack):
+                members = [np.nan_to_num(p, nan=0.0) for p in stack]
+        if members is None:
+            codes = column_of(axis.column)
+            if codes is None:
+                raise CurveFitError(f"the data has no population column '{axis.column}' "
+                                    "to fit the populations by")
+            members = [(codes == axis.code_of(label, i)).astype(float)
+                       for i, label in enumerate(labels)]
+        return [(d1[good], d2[good], base * m) for m in members]
+
+
 def make_fit_data_reader(source, rows, x_name: str, y_name: str,
                          weight_name: Optional[str] = None):
     """Freeze how a fit reads the plotted values, and what it recomputes.
 
-    Returns ``(read, targets)``. The gate is **frozen** to *rows* -- re-deriving
-    it per step would cost a full mask and let the fitted population change
-    under the fit -- and only the two plotted columns are read.
+    Returns ``(read, targets)``: *read* a :class:`FitDataReader`. The gate is
+    **frozen** to *rows* -- re-deriving it per step would cost a full mask and
+    let the fitted population change under the fit -- and only the two plotted
+    columns are read.
     """
-    rows = np.asarray(rows)
     targets = [n for n in (x_name, y_name) if n]
-
-    def read():
-        return read_fit_columns(source, x_name, y_name, weight_name, rows)
-
-    return read, targets
+    return FitDataReader(source, rows, x_name, y_name, weight_name), targets
 
 
 def histogram_on_edges(d1, d2, x_edges, y_edges, weights=None) -> np.ndarray:
@@ -294,6 +355,14 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
     parametric = bool(getattr(curve, "is_function", False))
     if not parametric and (not isinstance(equation, str) or not equation.strip()):
         raise CurveFitError("curve has no equation to fit")
+    from ..core.overlay_curves import population_labels
+
+    group = getattr(curve, "parameter_group", None)
+    if group is not None and population_labels(group):
+        # A population-wise parameter: one joint fit over the populations.
+        from .curve_fit_populations import build_population_fit
+
+        return build_population_fit(host, curve, target, reduction, min_counts)
     initial = dict(curve.get_parameters())
     constants = host.constants
     # A live Mapping over the parameter group, not a dict.
@@ -376,25 +445,36 @@ def build_cloud_fit(host, curve, x_edges, y_edges, params=None, counts=None):
     x_bin = float(np.median(np.diff(x_edges)))
     y_bin = float(np.median(np.diff(y_edges)))
 
-    function = curve.function if getattr(curve, "is_function", False) else None
-    if function is None:
-        equation = curve.get_equation()
-        evaluator = curve.curve_evaluator
-        grid = np.linspace(x_edges[0], x_edges[-1], 400)
-
-        def function(**values):
-            with np.errstate(all="ignore"):
-                y = evaluator.evaluate(equation, grid, values)
-            if isinstance(y, tuple):
-                return y
-            y = np.asarray(y, dtype=float)
-            return grid, (np.full(grid.shape, float(y)) if y.ndim == 0 else y)
-
+    function = curve_tracer(curve, x_edges)
     for p in parameters:
         if p.name in RESOLUTION_PARAMETERS:
             p.fixed = True
     return ParametricCurveFit(function, parameters, px, py, ey=np.full(py.shape, y_bin),
                               ex=x_bin, weights=weights)
+
+
+def curve_tracer(curve, x_edges):
+    """``f(**values) -> (x, y)``: the curve as a traced line over the displayed x range.
+
+    A function curve traces itself; an equation is evaluated on a dense grid,
+    so both kinds are compared with a cloud the same way (by distance).
+    """
+    function = curve.function if getattr(curve, "is_function", False) else None
+    if function is not None:
+        return function
+    equation = curve.get_equation()
+    evaluator = curve.curve_evaluator
+    grid = np.linspace(float(x_edges[0]), float(x_edges[-1]), 400)
+
+    def trace(**values):
+        with np.errstate(all="ignore"):
+            y = evaluator.evaluate(equation, grid, values)
+        if isinstance(y, tuple):
+            return y
+        y = np.asarray(y, dtype=float)
+        return grid, (np.full(grid.shape, float(y)) if y.ndim == 0 else y)
+
+    return trace
 
 
 def fitted_constants(group, params: Mapping[str, float]) -> Set[str]:
@@ -419,6 +499,8 @@ def result_text(result) -> Tuple[str, bool]:
     if result.ok:
         fitted = dict(result.params)
         fitted.update(result.data_params)
-        return (f"reduced χ² = {result.chi2r:.4g}   ·   "
+        per = dict(getattr(result, "population_chi2r", None) or {})
+        pops = ("   ·   " + ", ".join(f"χ²ᵣ[{k}]={v:.4g}" for k, v in per.items())) if per else ""
+        return (f"reduced χ² = {result.chi2r:.4g}{pops}   ·   "
                 + ", ".join(f"{k}={v:.4g}" for k, v in fitted.items())), False
     return (result.message or "fit failed"), True
