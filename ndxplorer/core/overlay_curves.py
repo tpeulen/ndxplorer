@@ -342,7 +342,7 @@ def population_colour(colour: str, position: int, count: int) -> str:
     if count <= 1:
         return "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in (r, g, b))
     h, _l, s = colorsys.rgb_to_hls(r, g, b)
-    lightness = 0.28 + 0.47 * float(position) / float(count - 1)
+    lightness = 0.40 + 0.40 * float(position) / float(count - 1)
     rgb = colorsys.hls_to_rgb(h, lightness, max(s, 0.55))
     return "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
 
