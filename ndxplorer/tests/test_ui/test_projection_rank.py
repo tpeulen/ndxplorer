@@ -278,7 +278,7 @@ def test_the_menu_entry_opens_the_panel(window, qapp):
 def test_ranking_finds_the_planted_view_and_clicking_a_row_applies_it(window, qapp):
     controller = window.projection_rank
     model = controller.open(True)
-    assert model.method == "structure", "no gate or clustering yet: nothing to separate"
+    assert model.method == "populations", "Separation is the default"
     wait_done(qapp, model)
     assert {model.rows[0]["name0"], model.rows[0]["name1"]} == {"Tau", "r"}
     control = window.plot_control
@@ -303,7 +303,12 @@ def test_a_gate_becomes_the_class_and_its_parameter_is_left_out(window, qapp):
     control = window.plot_control
     control.addSelection(window.data_source.column_index("Tau"), 0.5, 2.5, False, True, "Tau")
     model = window.projection_rank.open(True)
-    assert model.method == "separation" and model.classes == "Gate: inside vs outside"
+    assert model.method == "populations", "Separation stays the default with a gate"
+    assert "separation" in dict(model.method_options())
+    assert model.classes == "Gate: inside vs outside"
+    model.method = "separation"
+    model.settings_changed()
+    model.start()
     wait_done(qapp, model)
     names = {row[key] for row in model.rows for key in ("name0", "name1")}
     assert "Tau" not in names

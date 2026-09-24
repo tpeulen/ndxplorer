@@ -19,6 +19,7 @@ import numpy as np
 
 from .projection_scores import (
     DEFAULT_MAX_ROWS,
+    METHOD_HELP,
     METHODS,
     ClassLabels,
     ColumnView,
@@ -33,8 +34,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MAX_DISCRETE_VALUES",
     "Z_CLASS_PREFIX",
+    "PHOTON_MODES",
     "RankingContext",
     "build_context",
+    "photon_column",
     "ProjectionRankModel",
 ]
 
@@ -44,6 +47,22 @@ MAX_DISCRETE_VALUES = 10
 
 #: Caption prefix of the class that is the z parameter's value.
 Z_CLASS_PREFIX = "z parameter: "
+
+#: How bursts count in the Separation score: key -> caption. Low-photon bursts
+#: are wide (shot noise) and fill the valleys between populations.
+PHOTON_MODES = {
+    "all": "All bursts, equal weight",
+    "weight": "Weight by photons",
+    "min": "Only bursts with at least Min photons",
+}
+
+
+def photon_column(names) -> str:
+    """The burst's total photon count column, or ``""`` when the table has none."""
+    names = list(names)
+    if "Number of Photons" in names:
+        return "Number of Photons"
+    return next((n for n in names if n.startswith("Number of Photons")), "")
 
 
 @dataclass
@@ -173,9 +192,13 @@ def build_context(source, axis_settings: Optional[Dict[str, dict]] = None,
         classes["Clusters"] = ClassLabels(values, True, "cluster")
         class_keys["Clusters"] = (id(clusters),)
     if z_name in columns:
-        caption = f"{Z_CLASS_PREFIX}{z_name}"
-        classes[caption] = _column_labels(z_name, source.column_values(z_name))
-        class_keys[caption] = (z_name,)
+        # Only a z that holds labels (a population index, cluster ids): a
+        # quantity is not a class to separate.
+        z_labels = _column_labels(z_name, source.column_values(z_name))
+        if z_labels.discrete:
+            caption = f"{Z_CLASS_PREFIX}{z_name}"
+            classes[caption] = z_labels
+            class_keys[caption] = (z_name,)
 
     key = (
         id(source),
@@ -210,8 +233,13 @@ class ProjectionRankModel(VizRankModel):
         self._context: Optional[RankingContext] = context_provider()
         self.sample_rows = DEFAULT_MAX_ROWS
         self.classes = ""
-        self.method = "structure"
-        self.sample_note = ""
+        self.method = "populations"
+        self.photon_mode = "all"
+        self.min_photons = 100
+        #: The host can paint the islands of the selected row on its map.
+        self.overlay_available = False
+        #: Paint them (the host reads this).
+        self.show_islands = False
         self._pick_defaults()
 
     # ---- what the spec's choices offer ---------------------------------------------
@@ -219,8 +247,8 @@ class ProjectionRankModel(VizRankModel):
     def method_options(self) -> list:
         """``(key, label)`` of the scores this panel ranks by.
 
-        Class separation is offered only when there is something to separate,
-        so the choice cannot land on a score that has no classes to read.
+        Classes are offered only when there is something to separate, so the
+        choice cannot land on a score that has no classes to read.
         """
         has_classes = bool(self.class_options())
         options = []
@@ -232,6 +260,24 @@ class ProjectionRankModel(VizRankModel):
             options.append((key, caption))
         return options
 
+    def method_text(self) -> str:
+        """What the chosen score means, in FRET terms (the line under the choice)."""
+        return METHOD_HELP.get(self.method, "")
+
+    @property
+    def min_photons_hidden(self) -> bool:
+        """*Min photons* only matters for Separation with the threshold chosen."""
+        return not (self.method == "populations" and self.photon_mode == "min")
+
+    @property
+    def islands_toggle_hidden(self) -> bool:
+        """The islands toggle needs a host that paints them, and the Separation score."""
+        return not (self.overlay_available and self.method == "populations" and self.pairs)
+
+    def islands_changed(self, *_value) -> None:
+        """*Show islands on the map* was switched: the host repaints."""
+        self._changed()
+
     def class_options(self) -> list:
         """The classes ndX has now, by caption."""
         context = self._context
@@ -240,18 +286,19 @@ class ProjectionRankModel(VizRankModel):
         return [caption for caption in context.classes
                 if self.pairs or not caption.startswith(Z_CLASS_PREFIX)]
 
-    def _pick_defaults(self) -> None:
-        """Separation when the user has made classes, else structure.
+    def photon_options(self) -> list:
+        """``(key, label)`` of how bursts count; weighting needs a photon column."""
+        context = self._context
+        names = context.columns if context is not None else ()
+        keys = ("all", "weight", "min") if photon_column(names) else ("all",)
+        return [(key, PHOTON_MODES[key]) for key in keys]
 
-        The z parameter is always there, so it is always *offered* as a class,
-        but it is not a sign that the user wants views separated by it: only a
-        gate or a clustering is. Without one, the question is whether a view
-        shows populations at all.
-        """
-        made = [c for c in self.class_options() if not c.startswith(Z_CLASS_PREFIX)]
+    def _pick_defaults(self) -> None:
+        """Separation always; the first class ready for when *Classes* is chosen."""
         options = self.class_options()
+        made = [c for c in options if not c.startswith(Z_CLASS_PREFIX)]
         self.classes = made[0] if made else (options[0] if options else "")
-        self.method = "separation" if made else "structure"
+        self.method = "populations"
 
     def refresh_context(self) -> None:
         """Re-read what ndX offers; keep the chosen classes if they still exist."""
@@ -260,18 +307,28 @@ class ProjectionRankModel(VizRankModel):
         if self.classes not in options:
             self.classes = options[0] if options else ""
             if not options and self.method == "separation":
-                self.method = "structure"
+                self.method = "populations"
+        if self.photon_mode not in dict(self.photon_options()):
+            self.photon_mode = "all"
         self._changed()
 
     # ---- the ranking -----------------------------------------------------------------
 
+    def _check_method(self) -> None:
+        """Fall back to Separation when the chosen score is not on offer (any more)."""
+        if self.method not in dict(self.method_options()):
+            self.method = "populations"
+
     def current_settings(self):
-        """Method, classes, sample size -- and the table and gates they read."""
+        """Method, classes, sample, photons -- and the table and gates they read."""
+        self._check_method()
         context = self._context_provider()
         classes = self.classes if METHODS.get(self.method, ("", False))[1] else None
+        photons = (self.photon_mode, int(self.min_photons) if self.photon_mode == "min" else 0) \
+            if self.method == "populations" else None
         if context is None:
-            return (self.method, classes, int(self.sample_rows), None, None)
-        return (self.method, classes, int(self.sample_rows), context.key,
+            return (self.method, classes, int(self.sample_rows), photons, None, None)
+        return (self.method, classes, int(self.sample_rows), photons, context.key,
                 context.class_keys.get(classes))
 
     def make_ranker(self):
@@ -279,25 +336,44 @@ class ProjectionRankModel(VizRankModel):
         self._context = context
         if context is None:
             raise RuntimeError("no table to rank")
+        self._check_method()
         labels = None
         if METHODS[self.method][1]:
             labels = context.classes.get(self.classes)
             if labels is None:
                 raise RuntimeError("the chosen classes are no longer available")
-        table = RankingTable(context.columns, context.views, rows=context.rows, labels=labels,
-                             max_rows=int(self.sample_rows))
-        ranker = (ProjectionRanker if self.pairs else ParameterRanker)(table, self.method)
-        return ranker
-
-    def prepare_run(self) -> None:
-        super().prepare_run()
-        table = self._run.ranker.table
-        dropped = len(table.columns) - len(table.names)
-        left_out = len(table.names) - len(self._run.ranker.attrs) + dropped
-        note = f"{table.n_rows} of {table.n_eligible} bursts sampled"
-        if left_out:
-            note += f" · {left_out} parameters left out"
-        self.sample_note = note
+        rows, weights = context.rows, None
+        photons = photon_column(context.columns)
+        if self.method == "populations" and photons and self.photon_mode != "all":
+            counts = np.asarray(context.columns[photons], dtype=np.float64)
+            if self.photon_mode == "weight":
+                weights = counts
+            else:
+                enough = counts >= float(self.min_photons)
+                rows = enough if rows is None else (np.asarray(rows, dtype=bool) & enough)
+        table = RankingTable(context.columns, context.views, rows=rows, labels=labels,
+                             max_rows=int(self.sample_rows), weights=weights)
+        return (ProjectionRanker if self.pairs else ParameterRanker)(table, self.method)
 
     def note(self) -> str:
-        return self.sample_note if self._run is not None else ""
+        """What was sampled, and how many parameters were set aside (once known)."""
+        if self._run is None:
+            return ""
+        ranker = self._run.ranker
+        table = ranker.table
+        note = f"{table.n_rows} of {table.n_eligible} bursts sampled"
+        if getattr(ranker, "_columns_ready", True):
+            left_out = len(table.columns) - len(ranker.attrs)
+            if left_out:
+                note += f" · {left_out} parameters set aside or ranked as the same view"
+        return note
+
+    def ranked_key(self):
+        """The table/axes/gates key the current ranking was made from, or ``None``."""
+        return self._run.settings[4] if self._run is not None else None
+
+    def islands(self, names, values):
+        """The island of every burst in *values* for the view *names*, or ``None``."""
+        if self._run is None or not hasattr(self._run.ranker, "islands"):
+            return None
+        return self._run.ranker.islands(names, values)

@@ -2,7 +2,8 @@
 
 Orange3's own expectations are ported where Orange has them (correlation on iris
 and on its ``mock_data`` with missing values); the rest are synthetic burst
-tables where the informative view is planted.
+tables where the informative view is planted. The Separation score's own tests
+(and its ranking on the real MFD and ALEX tables) are in ``test_separation.py``.
 """
 
 from __future__ import annotations
@@ -16,19 +17,16 @@ import pytest
 from scipy.stats import pearsonr, spearmanr
 
 from ndxplorer.analysis.projection_scores import (
-    GAUSSIAN_CLUSTER_INDEX,
     ClassLabels,
     ColumnView,
     ParameterRanker,
     ProjectionRanker,
     RankingTable,
     chance_corrected_agreement,
-    cluster_index,
     correlation,
     display_coordinates,
     knn_separation,
     nearest_neighbours,
-    structure_from_index,
 )
 
 IRIS = pathlib.Path(__file__).parent / "fixtures" / "iris.csv"
@@ -213,43 +211,32 @@ def test_gate_columns_are_not_ranked_against_their_own_gate():
     assert ranker.table.n_eligible == len(inside)
 
 
-# ---- population structure -------------------------------------------------------------
+# ---- the three scores rank what they should -----------------------------------------------
 
 
-@pytest.mark.parametrize("dimension", [1, 2])
-def test_a_gaussian_scores_the_reference_index(dimension):
-    rng = np.random.default_rng(7)
-    points = rng.normal(size=(6000, dimension)) @ (np.array([[2.0, 1.5], [0.0, 0.3]])[:dimension, :dimension])
-    assert cluster_index(points) == pytest.approx(GAUSSIAN_CLUSTER_INDEX, abs=0.015)
-
-
-@pytest.mark.parametrize("delta", [4.0, 6.0])
-def test_two_populations_score_the_closed_form_index(delta):
-    """Equal populations delta sigmas apart: CI = 4 / (delta^2 + 4) along the split."""
-    rng = np.random.default_rng(8)
-    half = 3000
-    along = np.r_[rng.normal(-delta / 2, 1, half), rng.normal(delta / 2, 1, half)]
-    across = rng.normal(0, 1, 2 * half)
-    # Correlated and on different units: whitening must see through both.
-    points = np.column_stack([along, across]) @ np.array([[3.0, 0.8], [0.4, 0.05]])
-    assert cluster_index(points) == pytest.approx(4 / (delta ** 2 + 4), abs=0.02)
-    assert structure_from_index(cluster_index(points)) > 0.4
-
-
-def test_duplicated_columns_are_refused_not_scored_as_structure():
-    x = np.random.default_rng(1).normal(size=500)
-    assert cluster_index(np.column_stack([x, 2 * x + 1])) is None
-
-
-def test_the_bimodal_pair_ranks_first_without_classes():
+def test_separation_ranks_the_bimodal_pair_first_without_classes():
     columns, _ = burst_table()
-    rows = rank_all(ProjectionRanker(RankingTable(columns), "structure"))
+    rows = rank_all(ProjectionRanker(RankingTable(columns), "populations"))
     assert {rows[0].payload["x"], rows[0].payload["y"]} == {"Tau (green)", "r Experimental (green)"}
-    assert rows[0].sort_value > 0.3
-    singles = rank_all(ParameterRanker(RankingTable(columns), "structure"))
+    assert rows[0].sort_value > 0.3 and rows[0].cells[-1] == "2"
+    singles = rank_all(ParameterRanker(RankingTable(columns), "populations"))
     assert singles[0].payload["z"] in {"Tau (green)", "r Experimental (green)"}
-    # A uniform ramp and a unimodal normal are not populations.
-    assert singles[-1].payload["z"] in {"Count Rate (KHz)", "Number of Photons", "Duration (ms)"}
+    # A skewed rate and a unimodal normal are one population each.
+    assert singles[-1].sort_value == 0.0
+
+
+def test_correlation_ranks_the_correlated_pair_first():
+    """Correlation mode: two parameters that move together, whatever their populations."""
+    rng = np.random.default_rng(9)
+    n = 3000
+    x = rng.normal(size=n)
+    columns = {"a": x, "b": 0.8 * x + 0.6 * rng.normal(size=n), "c": rng.normal(size=n),
+               "d": rng.lognormal(size=n)}
+    rows = rank_all(ProjectionRanker(RankingTable(columns), "correlation"))
+    assert {rows[0].payload["x"], rows[0].payload["y"]} == {"a", "b"}
+    assert rows[0].value == pytest.approx(0.78, abs=0.03)
+    separation = rank_all(ProjectionRanker(RankingTable(columns), "populations"))
+    assert all(r.sort_value == 0.0 for r in separation), "correlated is not separated"
 
 
 # ---- the table ---------------------------------------------------------------------------
@@ -272,7 +259,7 @@ def test_constant_and_empty_columns_are_dropped_and_the_sample_is_shared():
     table.prepare()
     assert table.names == ["a", "b"]
     assert table.n_rows == 1500 and table.n_eligible == 20000
-    ranker = ProjectionRanker(table, "pearson")
+    ranker = ProjectionRanker(table, "correlation")
     ranker.prepare()
     assert ranker.state_count() == 1
 
@@ -289,15 +276,17 @@ def test_separation_needs_classes():
     with pytest.raises(ValueError):
         ProjectionRanker(RankingTable({"a": np.arange(3.0)}), "separation")
     with pytest.raises(ValueError):
-        ParameterRanker(RankingTable({"a": np.arange(3.0)}), "pearson")
+        ParameterRanker(RankingTable({"a": np.arange(3.0)}), "correlation")
+    with pytest.raises(ValueError):
+        ProjectionRanker(RankingTable({"a": np.arange(3.0)}), "structure")
 
 
 def test_rows_read_like_the_table():
     columns, species = burst_table(n=1500)
     table = RankingTable(columns, views={"Number of Photons": ColumnView("Number of Photons", "log")})
-    ranker = ProjectionRanker(table, "pearson")
+    ranker = ProjectionRanker(table, "correlation")
     rows = rank_all(ranker)
-    assert ranker.header == ("r", "x", "y")
+    assert ranker.header == ("ρ", "x", "y")
     row = next(r for r in rows if "Number of Photons" in (r.payload["x"], r.payload["y"]))
     assert "Number of Photons (log)" in row.cells
     assert row.cells[0].startswith(("+", "-"))
@@ -308,7 +297,7 @@ def test_rows_read_like_the_table():
 # ---- what real burst tables needed ---------------------------------------------------------
 
 
-def test_a_flag_column_is_not_population_structure():
+def test_a_flag_column_is_not_ranked():
     """A 0/1 fit switch splits perfectly and names no population (MFD: 'BIFL scatter?')."""
     rng = np.random.default_rng(5)
     n = 4000
@@ -317,22 +306,11 @@ def test_a_flag_column_is_not_population_structure():
         "Tau": rng.normal(3.5, 0.3, n),
         "r": rng.normal(0.1, 0.03, n),
     }
-    ranker = ProjectionRanker(RankingTable(columns), "structure")
-    ranker.prepare()
-    assert "flag" not in ranker.attrs
-    correlation = ProjectionRanker(RankingTable(columns), "pearson")
-    correlation.prepare()
-    assert "flag" in correlation.attrs, "only structure leaves flags out"
-
-
-def test_a_clump_of_a_few_percent_is_not_a_population():
-    """A fit bound or sentinel (rho = 1e4 in 2.7 % of the MFD bursts) is not a split."""
-    rng = np.random.default_rng(6)
-    values = rng.normal(1.0, 0.3, 5000)
-    values[:130] = 1e4
-    assert cluster_index(values) > 0.3
-    values[:1500] = 1e4  # 30 %: now it is a second population
-    assert cluster_index(values) < 0.05
+    for method in ("populations", "correlation"):
+        ranker = ProjectionRanker(RankingTable(columns), method)
+        ranker.prepare()
+        ranker.state_count()
+        assert "flag" not in ranker.attrs and ranker.left_out()["flag"].startswith("a flag")
 
 
 def test_columns_derived_from_the_gated_parameter_are_left_out_too():
@@ -343,5 +321,6 @@ def test_columns_derived_from_the_gated_parameter_are_left_out_too():
     labels = ClassLabels(inside, True, "gate", exclude=("Tau (green)",), use_all_rows=True)
     ranker = ProjectionRanker(RankingTable(columns, labels=labels), "separation")
     ranker.prepare()
+    ranker.state_count()
     assert "E_tau" not in ranker.attrs and "Tau (green)" not in ranker.attrs
     assert "r Experimental (green)" in ranker.attrs

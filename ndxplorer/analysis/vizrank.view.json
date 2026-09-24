@@ -5,21 +5,101 @@
       "type": "panel",
       "title": "Ranking",
       "sections": [
-        {"type": "choice", "attr": "method", "label": "Score", "options_source": "method_options",
-         "call": "settings_changed",
-         "description": "What makes a view informative. Class separation: bursts of one class sit together (needs classes). Population structure: the cloud splits into more than one population. Correlation: the two parameters co-vary."},
-        {"type": "choice", "attr": "classes", "label": "Classes", "options_source": "class_options",
-         "call": "settings_changed", "hidden_when": {"attr": "method", "not_equals": "separation"},
-         "description": "The classes a view should separate: the gate in the Selection table, each gate as its own population, the clusters, or the z parameter. Parameters a gate is defined on are left out."},
-        {"type": "value", "attr": "sample_rows", "label": "Sample", "kind": "int",
-         "minimum": 200, "maximum": 200000, "call": "settings_changed",
-         "description": "Bursts drawn at random for scoring. The same sample serves every view, so views are compared on identical bursts."},
-        {"type": "button_row", "buttons": [
-          {"label": "Start", "action": "start", "description": "Start the ranking, continue it, or restart it with new settings."},
-          {"label": "Pause", "action": "pause", "description": "Stop scoring; Start continues from here."}
-        ]},
-        {"type": "info", "source": "status_text"},
-        {"type": "info", "source": "sample_text"}
+        {
+          "type": "choice",
+          "attr": "method",
+          "label": "Rank by",
+          "options_source": "method_options",
+          "call": "settings_changed",
+          "description": "What makes a view informative. Separation (default): how many bursts fall into clearly separated islands -- donor-only, acceptor-only and FRET species in E vs S, a dynamic population off the static FRET line; one population scores 0 however correlated. Correlation: parameters that move together (related measurements, not populations). Classes (only with gates or clusters): views that keep the labelled bursts apart.",
+          "style": "radio"
+        },
+        {
+          "type": "info",
+          "source": "method_text"
+        },
+        {
+          "type": "choice",
+          "attr": "classes",
+          "label": "Classes",
+          "options_source": "class_options",
+          "call": "settings_changed",
+          "hidden_when": {
+            "attr": "method",
+            "not_equals": "separation"
+          },
+          "description": "The labels a view should keep apart: the gate in the Selection table, each gate as its own population, the clusters, or a z parameter that holds labels. Parameters a gate is defined on are left out."
+        },
+        {
+          "type": "choice",
+          "attr": "photon_mode",
+          "label": "Bursts",
+          "options_source": "photon_options",
+          "call": "settings_changed",
+          "hidden_when": {
+            "attr": "method",
+            "not_equals": "populations"
+          },
+          "description": "How bursts count in the Separation score. Low-photon bursts are wide (shot noise) and fill the valleys between FRET populations: weight each burst by its photons, or keep only bursts with at least Min photons. Needs a 'Number of Photons' column."
+        },
+        {
+          "type": "value",
+          "attr": "min_photons",
+          "label": "Min photons",
+          "kind": "int",
+          "minimum": 0,
+          "maximum": 100000,
+          "call": "settings_changed",
+          "hidden_when": {
+            "attr": "min_photons_hidden",
+            "equals": true
+          },
+          "description": "Bursts with fewer photons than this are left out of the Separation score."
+        },
+        {
+          "type": "value",
+          "attr": "sample_rows",
+          "label": "Sample",
+          "kind": "int",
+          "minimum": 200,
+          "maximum": 200000,
+          "call": "settings_changed",
+          "description": "Bursts drawn at random for scoring. The same sample serves every view, so views are compared on identical bursts."
+        },
+        {
+          "type": "button_row",
+          "buttons": [
+            {
+              "label": "Start",
+              "action": "start",
+              "description": "Start the ranking, continue it, or restart it with new settings."
+            },
+            {
+              "label": "Pause",
+              "action": "pause",
+              "description": "Stop scoring; Start continues from here."
+            }
+          ]
+        },
+        {
+          "type": "toggle",
+          "attr": "show_islands",
+          "label": "Show islands on the map",
+          "call": "islands_changed",
+          "hidden_when": {
+            "attr": "islands_toggle_hidden",
+            "equals": true
+          },
+          "description": "Colour the map by the islands the Separation score found in the selected view (the view must be on the axes)."
+        },
+        {
+          "type": "info",
+          "source": "status_text"
+        },
+        {
+          "type": "info",
+          "source": "sample_text"
+        }
       ]
     },
     {

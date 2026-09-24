@@ -257,7 +257,7 @@ class RankingPanel:
             self.discard()
             return False
         model = self.model
-        if model is not None and model._run is not None and model._run.settings[3] != context.key:
+        if model is not None and model._run is not None and model.ranked_key() != context.key:
             self.discard()
             model = None
         if model is None:

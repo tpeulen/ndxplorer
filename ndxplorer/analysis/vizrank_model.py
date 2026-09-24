@@ -181,12 +181,12 @@ class VizRankModel:
     def ranked_columns(self) -> list:
         """The ``data_table`` columns: the score (as a bar) and the names."""
         header = ("Score",)
-        correlation = False
+        span = (0.0, 1.0)
         if self._run is not None:
             header = tuple(self._run.ranker.header)
-            correlation = getattr(self._run.ranker, "method", "") in ("pearson", "spearman")
-        span, fmt = ([-1.0, 1.0], "%+.3f") if correlation else ([0.0, 1.0], "%.3f")
-        columns = [{"key": "score", "title": header[0], "display": "bar", "range": span,
+            span = tuple(getattr(self._run.ranker, "score_span", span))
+        fmt = "%+.3f" if span[0] < 0 else "%.3f"
+        columns = [{"key": "score", "title": header[0], "display": "bar", "range": list(span),
                     "format": fmt, "width": 90,
                     "tooltip": "The score; the bar is its share of the range."}]
         for index, title in enumerate(header[1:]):

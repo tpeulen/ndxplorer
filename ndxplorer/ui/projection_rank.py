@@ -102,7 +102,7 @@ class ProjectionRankController:
             return None
         window = self.dialogs.get(pairs)
         model = window.model if window is not None else None
-        if model is not None and model._run is not None and model._run.settings[3] != context.key:
+        if model is not None and model._run is not None and model.ranked_key() != context.key:
             # New data, new panel (Orange does the same): the old rows name a
             # table that no longer exists.
             self._discard(pairs)
