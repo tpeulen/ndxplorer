@@ -65,6 +65,12 @@ SPLIT = 4.0
 #: are kept under.
 XMARGINAL_KEY = "plot.xmarginal_h"
 YMARGINAL_KEY = "plot.ymarginal_w"
+#: The z marginal (Plot controls > z axis): its default height, the least and
+#: most its bottom edge may be dragged to, and the layout value it is kept under.
+ZMARGINAL_H = 100.0
+ZMARGINAL_MIN = 60.0
+ZMARGINAL_MAX = 320.0
+ZMARGINAL_KEY = "plot_controls.zmarginal_h"
 #: Space between a window's frame and its content: the Qt docks' margins.
 PADDING = 2.0
 

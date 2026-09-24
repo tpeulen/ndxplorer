@@ -1,5 +1,5 @@
 {
- "_comment": "Options for the ndX 'FRET calibration' action. The factor toggles are the point: the calibration always runs in full, but only the selected factors are written into the window, so a gamma determined on a reference sample is not replaced by a worse one fitted from this measurement's own populations. The background is a separate choice because it is an input rather than something the calibration determines.",
+ "_comment": "Options for the ndX 'FRET calibration' action. The factor toggles are the point: the calibration always runs in full, but only the selected factors are written into the window, so a gamma determined on a reference sample is not replaced by a worse one fitted from this measurement's own populations. The background is a separate choice because it is an input rather than something the calibration determines. The Populations panel chooses population-wise gamma (tttrlib's species_factors, as off / auto / on) and the gating dimensions; the app disables the dimensions the loaded table has no column for.",
  "sections": [
   {
    "type": "panel",
@@ -65,6 +65,88 @@
      "maximum": 100000,
      "step": 10,
      "description": "Smallest donor-only / acceptor-only population accepted when fitting a background. Below it that channel is left at whatever it had rather than guessed from a handful of bursts."
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Populations",
+   "n_col": 1,
+   "description": "Whether the correction factors may differ between the FRET populations, and what the populations are told apart by. A population-wise \u03b3 is written as a vector constant (\u03b3[FRET 1], \u03b3[FRET 2]\u2026) that the Parameters tab lists as an expandable row; to go back to one value, right-click it there and choose Make scalar.",
+   "sections": [
+    {
+     "type": "choice",
+     "label": "Population-wise factors",
+     "attr": "species_factors",
+     "options": [
+      "off",
+      "auto",
+      "on"
+     ],
+     "description": "One \u03b3 for all FRET populations, or one per population. A local environment can change a dye's quantum yield in one population, and with it that population's \u03b3; \u03b2, \u03b1 and \u03b4 stay shared.\n\n'Off' writes one global factor set, as before \u2014 the per-population model is not tried.\n'Auto' (default) fits both a shared and a per-population \u03b3 and keeps the per-population one only when it lowers the BIC.\n'On' writes the per-population \u03b3 whenever it is identifiable, even when the BIC prefers the shared one.\n\nPer-population \u03b3 is only identifiable with lifetimes: every FRET population needs a donor lifetime (the static FRET line pins its E), and there must be at least two populations. Without a donor lifetime column all three modes give the same scalar result. Written \u03b3 vectors appear in the Parameters tab; right-click > Make scalar removes one again. The test itself is cheap; it is the gating dimensions below that cost time.",
+     "labels": [
+      "Off",
+      "Auto",
+      "On"
+     ]
+    },
+    {
+     "type": "choice",
+     "label": "Population finder",
+     "attr": "population_method",
+     "options": [
+      "gmm",
+      "hdbscan"
+     ],
+     "labels": [
+      "Gaussian mixture",
+      "HDBSCAN"
+     ],
+     "description": "How the donor-only, acceptor-only and FRET populations are found in the gating dimensions. 'Gaussian mixture' (default) fits Gaussian components and picks their number by the BIC; it is what the calibration's numbers were pinned with. 'HDBSCAN' finds dense clusters of any shape and leaves sparse bursts unassigned, so a smeared or non-Gaussian population is not split into several components or merged with a neighbour. Needs a tttrlib whose calibration has the population_method option; otherwise this choice is disabled and the Gaussian mixture is used."
+    },
+    {
+     "type": "panel",
+     "title": "Gating dimensions",
+     "n_col": 3,
+     "description": "What the populations are told apart by. S alone is the stoichiometry gating (fast, the default); any other ticked dimension switches to the multidimensional mixture over all ticked ones, about ten times slower (25 s instead of 2.4 s on cal1). Dimensions this measurement has no column for are disabled; their tooltip says which column is missing.",
+     "sections": [
+      {
+       "type": "toggle",
+       "label": "S stoichiometry",
+       "attr": "gate_S",
+       "description": "Corrected stoichiometry, computed from the counts, so every ALEX/PIE measurement has it. Ticked alone it is the stoichiometry gating the calibration always used (fast)."
+      },
+      {
+       "type": "toggle",
+       "label": "E efficiency",
+       "attr": "gate_E",
+       "description": "Corrected FRET efficiency, computed from the counts. Ticking it switches to the multidimensional mixture over every ticked dimension, which separates FRET populations the stoichiometry alone lumps together. Cost: the multidimensional gating is about ten times slower than the stoichiometry gating (25 s instead of 2.4 s on the cal1 measurement, 44 270 bursts)."
+      },
+      {
+       "type": "toggle",
+       "label": "\u03c4_D donor lifetime",
+       "attr": "gate_tau_d",
+       "description": "Per-burst donor lifetime. Separates species at equal E but different lifetime (dynamics, a changed quantum yield), and it is what makes population-wise \u03b3 identifiable. Cost: the multidimensional gating is about ten times slower than the stoichiometry gating (25 s instead of 2.4 s on the cal1 measurement, 44 270 bursts)."
+      },
+      {
+       "type": "toggle",
+       "label": "\u03c4_A acceptor lifetime",
+       "attr": "gate_tau_a",
+       "description": "Per-burst acceptor lifetime. Tracks the acceptor quantum yield of each population, the usual reason a population has its own \u03b3. Cost: the multidimensional gating is about ten times slower than the stoichiometry gating (25 s instead of 2.4 s on the cal1 measurement, 44 270 bursts)."
+      },
+      {
+       "type": "toggle",
+       "label": "r_D donor anisotropy",
+       "attr": "gate_r_d",
+       "description": "Per-burst donor anisotropy: separates populations whose donor is stuck. Cost: the multidimensional gating is about ten times slower than the stoichiometry gating (25 s instead of 2.4 s on the cal1 measurement, 44 270 bursts)."
+      },
+      {
+       "type": "toggle",
+       "label": "r_A acceptor anisotropy",
+       "attr": "gate_r_a",
+       "description": "Per-burst acceptor anisotropy: separates populations whose acceptor is stuck. Cost: the multidimensional gating is about ten times slower than the stoichiometry gating (25 s instead of 2.4 s on the cal1 measurement, 44 270 bursts)."
+      }
+     ]
     }
    ]
   },

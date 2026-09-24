@@ -137,6 +137,9 @@ class NdxApp:
         self.corner_in_toolbar = False
         #: Marginal sizes while a bar between a marginal and the map is dragged.
         self._marginal_drag: Dict[str, float] = {}
+        #: The z marginal's height while its bottom edge is dragged.
+        self._z_drag: Optional[float] = None
+        self._z_grab: Optional[float] = None
         self._layout_due = False
         from .features import load_features
 
@@ -440,9 +443,54 @@ class NdxApp:
             self._marginal_drag = {}
             self._layout_due = True
 
+    def z_marginal_height(self, section: Optional[dict] = None) -> float:
+        """The z marginal's height: where its bottom edge was dragged to, else the spec's."""
+        from .docks import ZMARGINAL_H, ZMARGINAL_KEY, ZMARGINAL_MAX, ZMARGINAL_MIN
+
+        if self._z_drag is not None:
+            height = self._z_drag
+        else:
+            default = float(((section or {}).get("options") or {}).get("height", ZMARGINAL_H))
+            try:
+                height = float(self.docks.extra(ZMARGINAL_KEY, default))
+            except (TypeError, ValueError):
+                height = default
+        return float(min(ZMARGINAL_MAX, max(ZMARGINAL_MIN, height)))
+
     def _draw_z_plot(self, section, model, state, width: float) -> None:
-        height = float((section.get("options") or {}).get("height", 90))
+        """The z marginal, and under it a grip: drag its bottom edge to resize it.
+
+        The height is kept with the window layout when the grip is let go, as
+        the plot marginals' sizes are.
+        """
+        import emtk
+
+        from .docks import SPLIT, ZMARGINAL_KEY
+
+        height = self.z_marginal_height(section)
+        top = emtk.get_cursor_screen_pos()[1]
         self.plots.draw_z(width, height)
+        x, y = emtk.get_cursor_screen_pos()
+        emtk.invisible_button("##ndx.zsplit", (max(width, 1.0), SPLIT + 2.0))
+        state.rects["zsplit"] = (x, y, max(width, 1.0), SPLIT + 2.0)
+        emtk.set_item_tooltip("Drag to resize the z marginal.")
+        active = emtk.is_item_active()
+        if active:
+            mouse_y = emtk.get_io().mouse_pos[1]
+            if self._z_grab is None:
+                # where on the grip it was taken: the edge does not jump to the pointer
+                self._z_grab = mouse_y - top - height
+            self._z_drag = mouse_y - top - self._z_grab
+        if active or emtk.is_item_hovered():
+            colour = emtk.get_color_u32(emtk.Col.SEPARATOR_ACTIVE if active
+                                        else emtk.Col.SEPARATOR_HOVERED)
+            emtk.get_window_draw_list().add_rect_filled(
+                (x, y + 1.0), (x + width, y + 1.0 + SPLIT), colour)
+        if not active and self._z_drag is not None:
+            # let go: keep the (clamped) height with the layout
+            kept = self.z_marginal_height(section)
+            self._z_drag = self._z_grab = None
+            self.docks.set_extra(ZMARGINAL_KEY, round(kept, 1))
 
     def _draw_message(self, x, y, w, h) -> None:
         """A message box: the title, the text, OK."""

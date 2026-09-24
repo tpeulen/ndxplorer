@@ -60,17 +60,33 @@ def load_spec(name: str) -> dict:
         return json.load(handle)
 
 
-def options_spec() -> dict:
+def _annotate(sections, notes: Dict[str, str]) -> list:
+    """*sections* with ``notes[attr]`` appended to the matching fields' descriptions."""
+    out = []
+    for section in sections:
+        section = dict(section)
+        if section.get("sections"):
+            section["sections"] = _annotate(section["sections"], notes)
+        note = notes.get(str(section.get("attr", "")))
+        if note:
+            section["description"] = (str(section.get("description") or "") + "\n\n" + note).strip()
+        out.append(section)
+    return out
+
+
+def options_spec(notes: Optional[Dict[str, str]] = None) -> dict:
     """The options form with the dialog's own lines under it.
 
     The form is ndX's (shared with the Qt window's AutoForm dialog); what a
     dialog adds -- why it cannot run, and Calibrate / Cancel -- is appended
-    here rather than copied into a second spec.
+    here rather than copied into a second spec. *notes* (``{attr: text}``)
+    are added to those fields' tooltips: which column a gating dimension is
+    read from, or which column it lacks.
     """
     from ...analysis.fret_calibration import CalibrationOptions
 
     spec = CalibrationOptions.spec()
-    sections = list(spec.get("sections") or [])
+    sections = _annotate(list(spec.get("sections") or []), dict(notes or {}))
     sections.append({"type": "info", "source": "unavailable_text",
                      "hidden_when": {"attr": "runnable", "equals": "true"}})
     sections.append({"type": "button_row", "buttons": [
@@ -144,7 +160,44 @@ class OptionsDialog(Dialog):
         constants = dict(feature.app.model.manager.constants or {})
         object.__setattr__(self, "options", CalibrationOptions(
             donor_lifetime=float(constants.get("tauD0", 4.0) or 4.0)))
-        super().__init__(feature, "FRET calibration", options_spec(), "options")
+        #: gating dimension -> why it cannot be ticked here ("" when it can)
+        object.__setattr__(self, "missing", {})
+        object.__setattr__(self, "method_reason", "")
+        object.__setattr__(self, "feature", feature)
+        notes = self._availability()
+        super().__init__(feature, "FRET calibration", options_spec(notes), "options")
+
+    def _availability(self) -> Dict[str, str]:
+        """Which gating dimensions the loaded table has, and the finder's state.
+
+        A dimension without a column is unticked and disabled; the tooltip
+        notes say which column it would need, or which one it is read from.
+        """
+        from ...analysis.fret_calibration import DIMENSION_ATTRS
+
+        notes: Dict[str, str] = {}
+        source = self.feature.app.model.source
+        names = list(getattr(source, "parameter_names", None) or [])
+        try:
+            from ...analysis.fret_backend import (DIMENSION_NEEDS, dimension_columns,
+                                                  population_method_reason)
+        except Exception:  # noqa: BLE001 - no tttrlib calibration: the form says why
+            return notes
+        found = dimension_columns(names)
+        for dim, attr in DIMENSION_ATTRS.items():
+            column = found.get(dim)
+            if column is None:
+                need = DIMENSION_NEEDS.get(dim, "donor-excitation channel counts")
+                self.missing[dim] = f"Unavailable: this measurement has no {need}."
+                setattr(self.options, attr, False)
+                notes[attr] = self.missing[dim]
+            elif column:
+                notes[attr] = f"Read from the column '{column}'."
+        object.__setattr__(self, "method_reason", population_method_reason())
+        if self.method_reason:
+            self.options.population_method = "gmm"
+            notes["population_method"] = f"Unavailable: {self.method_reason}."
+        return notes
 
     # The form's fields are the options' attributes.
     def __getattr__(self, name: str):
@@ -170,8 +223,15 @@ class OptionsDialog(Dialog):
         return unavailable_reason()
 
     def enabled(self, name: str) -> bool:
+        from ...analysis.fret_calibration import DIMENSION_ATTRS
+
         if name == "calibrate":
             return self.runnable
+        if name == "population_method":
+            return not self.method_reason
+        dim = next((d for d, attr in DIMENSION_ATTRS.items() if attr == name), None)
+        if dim is not None:
+            return dim not in self.missing
         return True
 
     def calibrate(self) -> None:
@@ -284,6 +344,9 @@ class ReportWindow(Dialog):
         self._factors = self._factor_rows()
         self._populations = self._population_rows()
         self._constants = self._constant_rows()
+        from ...analysis.fret_calibration import population_summary
+
+        self._population_summary = population_summary(result)
 
     def _factor_rows(self) -> List[dict]:
         from ...analysis.fret_calibration import FACTOR_NAMES
@@ -340,6 +403,13 @@ class ReportWindow(Dialog):
 
     def constant_rows(self) -> List[dict]:
         return self._constants
+
+    @property
+    def has_population_summary(self) -> bool:
+        return bool(self._population_summary)
+
+    def population_text(self) -> str:
+        return "\n".join(self._population_summary)
 
     def notes_text(self) -> str:
         lines = []

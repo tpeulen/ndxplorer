@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Mapping
 import numpy as np
 import tttrlib
 
-__all__ = ["finish", "species_vectors"]
+__all__ = ["finish", "species_vectors", "force_species", "vector_labels"]
 
 
 def species_vectors(species, new_columns: Dict[str, np.ndarray],
@@ -47,8 +47,60 @@ def species_vectors(species, new_columns: Dict[str, np.ndarray],
     return vectors
 
 
+def force_species(species: Mapping[str, Any], counts, factors: Mapping[str, float]) -> dict:
+    """*species* with the per-population gamma adopted although the BIC kept the shared one.
+
+    What "population-wise factors: on" means: whenever the species model was
+    fitted (it is identifiable), its gammas and beta are used. The per-burst
+    ``E``/``S`` are recomputed as tttrlib does for an adopted species model --
+    each FRET burst corrected with its populations' gammas weighted by its
+    assignment probabilities, every other burst with the global factors.
+    A species model that was not fitted (not identifiable) is returned as it is.
+    """
+    ms = dict(species.get("model_selection") or {})
+    gammas = [float(g) for g in ms.get("gamma_species") or []]
+    if not ms.get("identifiable") or not gammas or ms.get("selected") == "species":
+        return dict(species)
+    beta = float(ms.get("beta_species", factors["beta"]))
+    sigmas = [float(v) for v in ms.get("sigma_gamma_species") or [float("nan")] * len(gammas)]
+    f_dd = counts("i_dd") - factors.get("bg_dd", 0.0)
+    f_aa = counts("i_aa") - factors.get("bg_aa", 0.0)
+    f_da = (counts("i_da") - factors.get("bg_da", 0.0)) - factors["alpha"] * f_dd \
+        - factors["delta"] * f_aa
+
+    def e_of(g):
+        den = f_da + g * f_dd
+        return np.where(den > 0, f_da / np.where(den > 0, den, 1.0), 0.0)
+
+    def s_of(g):
+        num = g * f_dd + f_da
+        den = num + f_aa / beta
+        return np.where(den != 0, num / np.where(den != 0, den, 1.0), 0.0)
+
+    p = np.asarray(species["assignment"], dtype=float)
+    rest = np.clip(1.0 - p.sum(axis=1), 0.0, None)
+    g0 = float(factors["gamma"])
+    e = rest * e_of(g0) + sum(p[:, s] * e_of(g) for s, g in enumerate(gammas))
+    s_ = rest * s_of(g0) + sum(p[:, s] * s_of(g) for s, g in enumerate(gammas))
+    out = dict(species)
+    out["factors"] = dict(species["factors"])
+    out["factors"]["gamma"] = dict(species["factors"]["gamma"], values=gammas, sigma=sigmas,
+                                   pooled=False)
+    out["factors"]["beta"] = dict(species["factors"]["beta"], values=[beta] * len(gammas))
+    out["E"], out["S"] = e, s_
+    out["model_selection"] = dict(ms, forced=True)
+    return out
+
+
+def vector_labels(vectors: Mapping[str, Mapping[str, Any]]) -> List[str]:
+    """``gamma[FRET 1]``… -- the vector constants' elements as the Parameters tab lists them."""
+    return [f"{name}[{population}]" for name, vector in dict(vectors or {}).items()
+            for population in vector.get("populations") or []]
+
+
 def finish(result: Mapping[str, Any], *, start, kept, constants, opts, mapping, counts,
-           tau_f, line, rates, per_burst, fitted, notes, background) -> dict:
+           tau_f, line, rates, per_burst, fitted, notes, background,
+           species_mode: str = "auto", dimensions=(), population_method: str = "gmm") -> dict:
     """Assemble the contract's result dict (see ``fret_calibration.calibrate``)."""
     from .fret_backend import FACTOR_NAMES, constants_from_factors
 
@@ -64,7 +116,15 @@ def finish(result: Mapping[str, Any], *, start, kept, constants, opts, mapping, 
     new_columns: Dict[str, np.ndarray] = {}
     injected: List[str] = []
     vectors: Dict[str, dict] = {}
-    species = result.get("species")
+    species = None if species_mode == "off" else result.get("species")
+    if species and species_mode == "on":
+        species = force_species(species, counts, start)
+    if species and "gamma" not in selected:
+        # gamma is held at the window's value: population-wise gammas would
+        # replace it in every FRET burst, so none are written either
+        species = dict(species, model_selection=dict(species.get("model_selection") or {},
+                                                      held=True))
+    write_vectors = bool(species) and "gamma" in selected
     if opts.get("inject_columns", True):
         split = result["split"]
         labels = np.where(split["fret"], split["fret_labels"], -1)
@@ -80,7 +140,7 @@ def finish(result: Mapping[str, Any], *, start, kept, constants, opts, mapping, 
         if accurate["deviation"] is not None:
             new_columns["Off static FRET line"] = np.asarray(accurate["deviation"], dtype=float)
         injected = list(new_columns)
-        vectors = species_vectors(species, new_columns, injected)
+        vectors = species_vectors(species, new_columns, injected) if write_vectors else {}
         if "gamma" in vectors:
             # the species model won: the accurate columns use each burst's gamma
             new_columns["FRET efficiency (accurate)"] = np.asarray(species["E"], dtype=float)
@@ -110,6 +170,11 @@ def finish(result: Mapping[str, Any], *, start, kept, constants, opts, mapping, 
             k: species[k] for k in ("labels", "names", "populations", "factors",
                                     "model_selection")},
         "vectors": vectors,
+        "vector_labels": vector_labels(vectors),
+        "species_mode": species_mode,
+        "dimensions": list(dimensions),
+        "population_method": str(population_method),
+        "model_selection": None if not species else dict(species.get("model_selection") or {}),
         "determined": determined,
         "applied_factors": selected,
         "background": background,

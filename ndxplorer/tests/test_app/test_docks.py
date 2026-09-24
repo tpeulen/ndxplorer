@@ -199,3 +199,32 @@ def test_marginals_too_small_for_the_corner_send_its_controls_to_the_toolbar(hom
     header = app.plot_boxes["header"]
     for name, rect in app.forms["plot_header"].rects.items():
         assert rect[1] + rect[3] <= header[1] + header[3] + 0.5, name
+
+
+def test_the_z_marginal_is_readable_and_its_bottom_edge_resizes_it(home):
+    """Plot controls > z axis: the z marginal starts about 100 px tall (the
+    56 px strip showed two count labels and a flat step plot); dragging the
+    grip under it resizes it, clamped, and the height is kept with the layout."""
+    from ndxplorer.app.docks import (ZMARGINAL_H, ZMARGINAL_KEY, ZMARGINAL_MAX, ZMARGINAL_MIN,
+                                     layout_store)
+
+    app = make(layout_store=layout_store())
+    app.forms["plot_controls"].folds["z axis"] = True
+    draw(app, 3)
+    assert 90.0 <= ZMARGINAL_H <= 110.0 and app.z_marginal_height() == ZMARGINAL_H
+    x, y, w, h = app.forms["plot_controls"].rects["zsplit"]
+    _drag(app, (x + w / 2, y + h / 2), (x + w / 2, y + h / 2 + 50))
+    assert abs(app.z_marginal_height() - (ZMARGINAL_H + 50)) <= 2.0
+    assert app.docks.extra(ZMARGINAL_KEY) == round(app.z_marginal_height(), 1)
+    x, y, w, h = app.forms["plot_controls"].rects["zsplit"]
+    assert abs(y - (app.plots.rects["zmarginal"][1] + app.z_marginal_height())) <= 30.0
+    _drag(app, (x + w / 2, y + h / 2), (x + w / 2, y - 400))
+    assert app.z_marginal_height() == ZMARGINAL_MIN
+    app.docks.set_extra(ZMARGINAL_KEY, 5000.0)
+    assert app.z_marginal_height() == ZMARGINAL_MAX
+    app.docks.set_extra(ZMARGINAL_KEY, 150.0)
+    draw(app)
+    again = make(layout_store=layout_store())
+    assert again.z_marginal_height() == 150.0
+    assert again.run_action("reset_layout")
+    assert again.z_marginal_height() == ZMARGINAL_H

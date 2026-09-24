@@ -124,6 +124,21 @@
    }
   },
   {
+   "type": "panel",
+   "title": "Population-wise factors",
+   "hidden_when": {
+    "attr": "has_population_summary",
+    "equals": "false"
+   },
+   "description": "Whether each FRET population got its own γ: the mode, the model the BIC selected (shared or per population) with both BICs, whether the per-population model was identifiable, and the vector constants written. A written vector is an expandable row of the Parameters tab; right-click > Make scalar turns it back into one value.",
+   "sections": [
+    {
+     "type": "info",
+     "source": "population_text"
+    }
+   ]
+  },
+  {
    "type": "info",
    "source": "notes_text"
   },

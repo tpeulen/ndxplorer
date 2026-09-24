@@ -23,7 +23,8 @@ from .fret_background import (ROLE_TO_BG, burst_durations_ms, fitted_background,
                               measured_background)
 
 __all__ = ["calibrate_columns", "factors_from_constants", "constants_from_factors",
-           "FACTOR_NAMES"]
+           "dimension_columns", "DIMENSION_HINTS", "FACTOR_NAMES",
+           "population_method_reason"]
 
 #: The factors a calibration can write, in the paper's order (``r0`` travels along).
 FACTOR_NAMES = ("alpha", "beta", "gamma", "delta", "r0")
@@ -31,6 +32,76 @@ FACTOR_NAMES = ("alpha", "beta", "gamma", "delta", "r0")
 _BOUNDS = {"gamma": (0.05, 20.0), "alpha": (0.0, 1.0), "beta": (0.01, 100.0),
            "delta": (0.0, 1.0), "bg_dd": (0.0, 1e6), "bg_da": (0.0, 1e6), "bg_aa": (0.0, 1e6),
            "r0": (1.0, 200.0), "phi_a": (0.0, 1.0), "phi_d": (0.0, 1.0)}
+
+
+#: Per-burst column name fragments of the gating dimensions tttrlib's
+#: ``guess_burst_columns`` does not map (``tau_d`` is its ``tau_f`` role), as
+#: Seidel-lab burst tables and ChiSurf's exports name them. Matched in order,
+#: lower case, whole name first.
+DIMENSION_HINTS = {
+    "tau_a": ("tau_a", "tau (yellow)", "tau yellow", "acceptor lifetime", "lifetime yellow",
+              "tau (red)", "tau red", "lifetime red"),
+    "r_d": ("r_d", "r scatter (green)", "r experimental (green)", "r (green)",
+            "anisotropy (green)", "donor anisotropy"),
+    "r_a": ("r_a", "r scatter (yellow)", "r experimental (yellow)", "r (yellow)",
+            "anisotropy (yellow)", "r scatter (red)", "r experimental (red)", "r (red)",
+            "anisotropy (red)", "acceptor anisotropy"),
+}
+
+#: What each dimension needs, for a user who does not have it.
+DIMENSION_NEEDS = {
+    "tau_d": "donor lifetime column (e.g. 'Tau (green)')",
+    "tau_a": "acceptor lifetime column (e.g. 'Tau (yellow)' or 'Tau (red)')",
+    "r_d": "donor anisotropy column (e.g. 'r Scatter (green)')",
+    "r_a": "acceptor anisotropy column (e.g. 'r Scatter (yellow)' or 'r Scatter (red)')",
+}
+
+
+def population_method_reason() -> str:
+    """Why the population finder cannot be chosen here, or ``""`` when it can.
+
+    The choice is tttrlib's ``population_method`` option of
+    ``auto_calibrate``; an older tttrlib has only the Gaussian mixture.
+    """
+    try:
+        known = "population_method" in getattr(tttrlib, "_AFRET_OPTION_KEYS", ()) and hasattr(
+            tttrlib.AutoCalibrateOptions(), "population_method")
+    except Exception:  # noqa: BLE001 - a tttrlib without the calibration
+        known = False
+    return "" if known else ("this tttrlib's calibration has no population_method option "
+                             "(only the Gaussian mixture)")
+
+
+def dimension_columns(names, overrides: Optional[Mapping[str, str]] = None
+                      ) -> Dict[str, Optional[str]]:
+    """Gating dimension -> the burst column that holds it (``None``: not in this table).
+
+    ``S`` and ``E`` are computed from the channel counts and map to ``""``
+    when the donor-excitation channels are there. ``tau_d`` is tttrlib's
+    ``tau_f`` role; the others are matched with :data:`DIMENSION_HINTS`.
+    *overrides* (``{dimension or role: column}``) win.
+    """
+    names = [str(n) for n in names]
+    overrides = {k: v for k, v in dict(overrides or {}).items() if v}
+    roles = {**tttrlib.guess_burst_columns(names), **overrides}
+    counts = roles.get("i_dd") in names and roles.get("i_da") in names
+    out: Dict[str, Optional[str]] = {"S": "" if counts else None, "E": "" if counts else None}
+    out["tau_d"] = overrides.get("tau_d") or roles.get("tau_f")
+    taken = set(v for v in roles.values() if v)
+    lowered = [(n, n.strip().lower()) for n in names]
+    for dim, hints in DIMENSION_HINTS.items():
+        found = overrides.get(dim)
+        for hint in (() if found else hints):
+            found = next((n for n, low in lowered if low == hint), None) or next(
+                (n for n, low in lowered if hint in low and n not in taken), None)
+            if found:
+                break
+        out[dim] = found if found in names else None
+        if found:
+            taken.add(found)
+    if out["tau_d"] not in names:
+        out["tau_d"] = None
+    return out
 
 
 def _clamp(name: str, value: float) -> float:
@@ -115,8 +186,11 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
         ``factors``, ``background`` ("fit", "measurement", "constants",
         "none"), ``min_population``, ``gamma_source``, ``use_priors``,
         ``n_bootstrap``, ``donor_lifetime``, ``linker_sigma``,
-        ``inject_columns``; optionally ``columns`` (``{role: column}``
-        overrides) and ``seed``.
+        ``inject_columns``, ``species_factors`` ("off", "auto", "on":
+        population-wise gamma never, when the BIC prefers it, or whenever it is
+        identifiable), ``dimensions`` (gating dimensions from
+        ``tttrlib.AFRET_DIMENSIONS``; ``[]`` is the stoichiometry gating);
+        optionally ``columns`` (``{role: column}`` overrides) and ``seed``.
     container : str
         The ``.pto`` the bursts came from (``background="measurement"``).
     progress : callable, optional
@@ -153,6 +227,25 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
     if background in ("none", "fit") or per_burst:
         start.update(bg_dd=0.0, bg_da=0.0, bg_aa=0.0)  # subtracted per burst instead
     kept = {n: start[n] for n in FACTOR_NAMES}
+    species_mode = str(opts.get("species_factors", "auto")).lower()
+    available = dimension_columns(list(table), opts.get("columns"))
+    dimensions: List[str] = []
+    for dim in list(opts.get("dimensions") or []):
+        if available.get(dim) is None:
+            notes.append(f"gating dimension {dim} left out: this table has no "
+                         f"{DIMENSION_NEEDS.get(dim, 'column for it')}")
+        elif dim not in dimensions:
+            dimensions.append(dim)
+    if dimensions == ["S"]:
+        dimensions = []
+    extra_columns = {dim: table[available[dim]] for dim in ("tau_a", "r_d", "r_a")
+                     if dim in dimensions}
+    method = str(opts.get("population_method") or "gmm").lower()
+    method_supported = not population_method_reason()
+    if method != "gmm" and not method_supported:
+        notes.append(f"population finder {method!r} not available ({population_method_reason()}); "
+                     f"the Gaussian mixture was used")
+        method = "gmm"
     tau_d0 = opts.get("donor_lifetime")
     if tau_d0 is None:
         tau_d0 = float(constants.get("tauD0", 4.0) or 4.0)
@@ -178,7 +271,12 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
                        "n_bootstrap": int(n_bootstrap), "seed": seed,
                        "use_priors": bool(opts.get("use_priors", True)),
                        "donor_lifetime": float(tau_d0), "line": line,
-                       "bootstrap_indices": lambda size: rng.integers(0, size, size)}
+                       "bootstrap_indices": lambda size: rng.integers(0, size, size),
+                       "species_factors": species_mode != "off"}
+        if dimensions:
+            cal_options["dimensions"] = list(dimensions)
+        if method_supported:
+            cal_options["population_method"] = method
         consts = {k: start[k] for k in ("gamma", "alpha", "beta", "delta", "bg_dd", "bg_da",
                                         "bg_aa", "r0")}
         consts["priors"] = dict(priors or {})
@@ -186,7 +284,7 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
             lambda step, total, message: progress(step, total, prefix + message))
         result = tttrlib.auto_calibrate(
             {"i_dd": counts("i_dd"), "i_da": counts("i_da"), "i_aa": counts("i_aa"),
-             "tau_f": tau_f}, consts, cal_options, wrapped)
+             "tau_f": tau_f, **extra_columns}, consts, cal_options, wrapped)
         for name in ("gamma", "alpha", "beta", "delta"):
             start[name] = float(result["factors"][name])  # the next pass starts here
         return result
@@ -205,4 +303,6 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
     result = run(int(opts.get("n_bootstrap", 50)), "pass 2 of 2: " if background == "fit" else "")
     return finish(result, start=start, kept=kept, constants=constants, opts=opts,
                   mapping=mapping, counts=counts, tau_f=tau_f, line=line, rates=rates,
-                  per_burst=per_burst, fitted=fitted, notes=notes, background=background)
+                  per_burst=per_burst, fitted=fitted, notes=notes, background=background,
+                  species_mode=species_mode, dimensions=dimensions,
+                  population_method=method)
