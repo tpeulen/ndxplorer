@@ -17,7 +17,7 @@ import collections.abc
 from collections import OrderedDict
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
-from .parameters import Parameter, ParameterGroup
+from .parameters import VECTORS_KEY, Parameter, ParameterGroup, json_copy
 
 DEFAULT_GROUP_NAME = "ndX constants"
 
@@ -30,92 +30,100 @@ def build_constants_group(
     """Build a group of ``fixed=True`` parameters from a mapping.
 
     Constants default to ``fixed`` — they are constants until the user
-    deliberately links or unfixes them.
+    deliberately links or unfixes them. Element names (``gamma[HF]``) make
+    their constant a vector.
     """
-    return ParameterGroup(name, [Parameter(str(key), float(value), fixed=True)
-                                 for key, value in values.items()])
+    group = ParameterGroup(name)
+    apply_value_dict(group, values)
+    return group
 
 
 def group_to_value_dict(group: ParameterGroup) -> "OrderedDict[str, float]":
-    """Flat, order-preserving ``{name: value}`` snapshot (the legacy ``.dict``)."""
-    return OrderedDict((p.name, float(p.value)) for p in group.parameters_all)
+    """Flat, order-preserving ``{name: value}`` snapshot (the legacy ``.dict``).
+
+    A vector's elements follow it by name (``gamma``, ``gamma[HF]`` …).
+    """
+    return OrderedDict((p.name, float(p.value)) for p in group.parameters_flat)
 
 
 def apply_value_dict(group, values: Mapping[str, float]) -> None:
-    """Set existing parameters' values; append any names not yet in the group."""
+    """Set existing parameters' values; add any names not yet in the group.
+
+    A new element name (``gamma[HF]``) adds that population to vector
+    ``gamma`` -- made a vector, or added (at its elements' mean) when needed.
+    """
+    from .vector_constants import split_element
+
     existing = group.parameters_all_dict
+    new_elements: "OrderedDict[str, List[Tuple[str, float]]]" = OrderedDict()
     for key, value in values.items():
         key = str(key)
         if key in existing:
             existing[key].value = float(value)
-        else:
-            group.append_parameter(Parameter(key, float(value), fixed=True))
+            continue
+        parts = split_element(key)
+        if parts is not None:
+            new_elements.setdefault(parts[0], []).append((parts[1], float(value)))
+            continue
+        existing[key] = group.append_parameter(Parameter(key, float(value), fixed=True))
+    for base, pairs in new_elements.items():
+        parameter = group.get(base)
+        if parameter is None:
+            mean = sum(v for _l, v in pairs) / len(pairs)
+            parameter = group.append_parameter(Parameter(base, mean, fixed=True))
+        labels = parameter.populations + [l for l, _v in pairs]
+        numbers = [e._value for e in parameter.elements] + [v for _l, v in pairs]
+        parameter.set_vector(numbers, labels)
 
 
 # ------------------------------------------------------------------ vectors
-# A vector constant is a family of parameters ``base[label]`` (one per
-# population) beside the optional global ``base``; see
-# :mod:`ndxplorer.core.vector_constants`. What names cannot say -- the order of
-# the populations, the axis a burst picks its element by, the uncertainties a
-# calibration gave -- is kept on the group as ``_ndx_vectors``.
-VECTORS_KEY = "vectors"
-
-
-def _vector_meta(group) -> Dict[str, dict]:
-    meta = getattr(group, "_ndx_vectors", None)
-    if not isinstance(meta, dict):
-        meta = {}
-        group._ndx_vectors = meta
-    return meta
+# A vector constant is a parameter with one element ``base[label]`` per
+# population (:meth:`ndxplorer.core.parameters.Parameter.set_vector`); these
+# are the constants' spellings of the group's vector API.
 
 
 def vector_names(group) -> List[str]:
-    """The vectors of *group*, in the order their elements appear."""
-    from .vector_constants import vector_bases
-
-    return list(vector_bases(p.name for p in group.parameters_all))
+    """The vectors of *group*, in order."""
+    return group.vector_names()
 
 
 def is_vector(group, name: str) -> bool:
     return str(name) in vector_names(group)
 
 
+def _vector(group, name: str) -> Optional[Parameter]:
+    parameter = group.get(str(name))
+    return parameter if parameter is not None and parameter.is_vector else None
+
+
 def vector_labels(group, name: str) -> List[str]:
     """The populations of vector *name*, in the vector's order."""
-    from .vector_constants import vector_bases
-
-    present = vector_bases(p.name for p in group.parameters_all).get(str(name), [])
-    wanted = [l for l in _vector_meta(group).get(str(name), {}).get("populations", [])
-              if l in present]
-    return wanted + [l for l in present if l not in wanted]
+    parameter = _vector(group, name)
+    return parameter.populations if parameter is not None else []
 
 
 def vector_elements(group, name: str) -> List[Tuple[str, Any]]:
     """``[(label, Parameter), ...]`` of vector *name*."""
-    from .vector_constants import element_name
-
-    params = group.parameters_all_dict
-    return [(l, params[element_name(name, l)]) for l in vector_labels(group, name)]
+    parameter = _vector(group, name)
+    return list(zip(parameter.populations, parameter.elements)) if parameter is not None else []
 
 
 def vector_axis(group, name: str):
     from .vector_constants import PopulationAxis
 
-    return PopulationAxis.from_dict(_vector_meta(group).get(str(name)))
+    parameter = _vector(group, name)
+    return PopulationAxis.from_dict(parameter.vector_state() if parameter is not None else None)
 
 
 def vector_uncertainty(group, name: str, label: str) -> Optional[float]:
-    value = _vector_meta(group).get(str(name), {}).get("uncertainties", {}).get(str(label))
-    return None if value is None else float(value)
-
-
-def _append(group, name: str, value: float, fixed: bool = True):
-    return group.append_parameter(Parameter(str(name), float(value), fixed=bool(fixed)))
+    parameter = _vector(group, name)
+    element = parameter.element(label) if parameter is not None else None
+    return element.uncertainty() if element is not None else None
 
 
 def remove_parameter(group, name: str) -> bool:
-    """Take parameter *name* (a scalar, an element) out of *group*."""
-    parameter = group.parameters_all_dict.get(str(name))
+    """Take parameter *name* (a scalar, a vector, an element) out of *group*."""
+    parameter = group.get(str(name))
     if parameter is None:
         return False
     group.remove_parameter(parameter)
@@ -127,131 +135,117 @@ def set_vector(group, name: str, values: Sequence[float], populations: Sequence[
                default: Optional[float] = None, column: Optional[str] = None,
                probabilities: Optional[Mapping[str, str]] = None,
                codes: Optional[Mapping[str, float]] = None) -> List[Any]:
-    """Make *name* a vector with one element per population (see the module).
+    """Make constant *name* a vector (:meth:`Parameter.set_vector`).
 
-    Existing elements keep their fixed flag, bounds and link, and only their
-    value changes; elements of populations no longer listed are removed. The
-    global ``name`` is kept (or created: *default*, else the old scalar value,
-    else the mean). Returns the element parameters, in order.
+    A constant the group does not hold yet is added, fixed, at *default* or
+    the mean. Returns the element parameters, in order.
     """
-    from .vector_constants import DEFAULT_COLUMN, PopulationAxis, element_name
-
-    name = str(name)
-    labels = [str(l) for l in populations]
-    values = [float(v) for v in values]
-    if len(labels) != len(values) or len(set(labels)) != len(labels) or not labels:
-        raise ValueError("a vector needs one value per distinct population")
-    params = group.parameters_all_dict
-    if default is None and name not in params:
-        default = sum(values) / len(values)
-    if name in params:
-        if default is not None:
-            params[name].value = float(default)
-    else:
-        _append(group, name, float(default))
-    for label in vector_labels(group, name):
-        if label not in labels:
-            remove_parameter(group, element_name(name, label))
-    params = group.parameters_all_dict
-    out = []
-    for label, value in zip(labels, values):
-        parameter = params.get(element_name(name, label))
-        if parameter is None:
-            parameter = _append(group, element_name(name, label), value,
-                                fixed=params[name].fixed)
-        elif not getattr(parameter, "is_linked", False):
-            parameter.value = value
-        out.append(parameter)
-    old = _vector_meta(group).get(name, {})
-    axis = PopulationAxis.from_dict(old)
-    if column is not None:
-        axis.column = str(column) or DEFAULT_COLUMN
-    if probabilities is not None:
-        axis.probabilities = {str(k): str(v) for k, v in probabilities.items()}
-    if codes is not None:
-        axis.codes = {str(k): float(v) for k, v in codes.items()}
-    entry = {"populations": labels, **axis.to_dict()}
-    if uncertainties is not None:
-        entry["uncertainties"] = {l: float(u) for l, u in zip(labels, uncertainties)
-                                  if u is not None}
-        for parameter, u in zip(out, uncertainties):
-            if u is not None:
-                parameter.error_estimate = float(u)
-    _vector_meta(group)[name] = entry
-    return out
+    if group.get(str(name)) is None:
+        numbers = [float(v) for v in values]
+        start = default if default is not None else sum(numbers) / max(len(numbers), 1)
+        group.append_parameter(Parameter(str(name), float(start), fixed=True))
+    return group.set_vector(name, values, populations, uncertainties=uncertainties,
+                            default=default, column=column, probabilities=probabilities,
+                            codes=codes)
 
 
 def to_vector(group, name: str, populations: Sequence[str],
               column: Optional[str] = None) -> List[Any]:
     """A scalar becomes a vector: every element starts at the scalar's value."""
-    parameter = group.parameters_all_dict[str(name)]
-    value = float(parameter.value)
-    return set_vector(group, name, [value] * len(populations), populations,
-                      default=value, column=column)
+    return group.get(str(name)).to_vector(populations, column=column)
 
 
 def to_scalar(group, name: str) -> None:
     """A vector becomes its global value again: the elements are removed."""
-    from .vector_constants import element_name
-
-    for label in vector_labels(group, name):
-        remove_parameter(group, element_name(name, label))
-    _vector_meta(group).pop(str(name), None)
+    parameter = group.get(str(name))
+    if parameter is not None:
+        parameter.to_scalar()
 
 
 def group_vectors(group) -> Dict[str, Any]:
     """``{name: PopulationVector}``: what the equation engine evaluates per burst."""
-    from .vector_constants import vectors_from_values
-
-    names = vector_names(group)
-    if not names:
-        return {}
-    values = {p.name: float(p.value) for p in group.parameters_all}
-    meta = _vector_meta(group)
-    return vectors_from_values(values, axes=meta,
-                               order={n: vector_labels(group, n) for n in names})
+    return group.vectors()
 
 
 def vectors_state(group) -> Dict[str, dict]:
     """The ``"vectors"`` entry of a saved group: order, axis, uncertainties."""
-    meta = _vector_meta(group)
-    out = {}
-    for name in vector_names(group):
-        entry = dict(meta.get(name, {}))
-        entry["populations"] = vector_labels(group, name)
-        entry.setdefault("column", vector_axis(group, name).column)
-        out[name] = entry
-    return out
+    return group.vectors_state()
+
+
+def apply_vector_entries(group, vectors: Mapping[str, Mapping[str, Any]]) -> List[str]:
+    """Apply stored vector constants: ``{name: {"values", "populations", ...}}``.
+
+    The format a calibration stores (and :func:`ndxplorer.io.fret_calibration_io.restorable`
+    returns): per vector its ``values`` and ``populations``, optionally
+    ``uncertainties`` (by population, or by position), ``default``,
+    ``column``, ``probabilities``, ``codes``. Entries without values are
+    skipped. Returns the names applied.
+    """
+    done = []
+    for name, entry in dict(vectors or {}).items():
+        entry = dict(entry or {})
+        values, populations = entry.get("values"), entry.get("populations")
+        if not values or not populations:
+            continue
+        populations = [str(p) for p in populations]
+        uncertainties = entry.get("uncertainties")
+        if isinstance(uncertainties, Mapping):
+            uncertainties = [uncertainties.get(p) for p in populations]
+        set_vector(group, str(name), list(values), populations, uncertainties=uncertainties,
+                   default=entry.get("default"), column=entry.get("column"),
+                   probabilities=entry.get("probabilities"), codes=entry.get("codes"))
+        done.append(str(name))
+    return done
+
+
+#: How a calibration report names a factor.
+_SYMBOLS = {"gamma": "γ", "alpha": "α", "beta": "β", "delta": "δ"}
+
+
+def replace_shared_factors(group, result: Mapping[str, Any]) -> List[str]:
+    """A calibration's shared factor replaces a population-wise one (*Make scalar*).
+
+    A calibration result writes each factor it determined either as one value
+    (``result["factors"]``) or per population (``result["vectors"]``, keyed by
+    the factor's name, as :func:`ndxplorer.analysis.fret_result.species_vectors`
+    writes them). A window may still hold a vector of that factor from before
+    -- restored from the measurement, or an earlier run -- and the equations
+    would go on reading its stale elements. So each factor the result wrote as
+    one value (``applied_factors``) turns such a vector back into a scalar at
+    the new value. The result records what was replaced
+    (``"replaced_vectors"``) and its report says so.
+
+    Returns the names replaced.
+    """
+    vectors = dict(result.get("vectors") or {})
+    factors = dict(result.get("factors") or {})
+    applied = list(result.get("applied_factors") or factors)
+    replaced = []
+    for name in applied:
+        parameter = group.get(str(name))
+        if name in vectors or name not in factors or parameter is None \
+                or not parameter.is_vector:
+            continue
+        parameter.to_scalar()
+        parameter.value = float(factors[name])
+        replaced.append(str(name))
+    if replaced and isinstance(result, dict):
+        result["replaced_vectors"] = replaced
+        lines = [f"  Replaced population-wise {_SYMBOLS.get(n, n)} with shared "
+                 f"{_SYMBOLS.get(n, n)} = {float(factors[n]):.4f}" for n in replaced]
+        result["report"] = "\n".join([str(result.get("report") or "")] + lines)
+    return replaced
 
 
 # ------------------------------------------------------------- serialization
 def group_state(group: ParameterGroup) -> Dict[str, Any]:
-    """Rich per-parameter state (value + bounds + fixed) — see group.get_state().
-
-    A group with vector constants adds ``"vectors"``: per vector its
-    populations in order and its axis (:func:`vectors_state`).
-    """
-    state = group.get_state()
-    vectors = vectors_state(group)
-    if vectors:
-        state[VECTORS_KEY] = vectors
-    return state
+    """Rich per-parameter state (value + bounds + fixed, and the vectors)."""
+    return group.get_state()
 
 
 def apply_group_state(group: ParameterGroup, state: Mapping[str, Any]) -> None:
     """Restore value/bounds/fixed (and the vectors) from a :func:`group_state` payload."""
     group.set_state(dict(state))
-    vectors = dict(state).get(VECTORS_KEY)
-    if isinstance(vectors, Mapping):
-        for name, entry in vectors.items():
-            if isinstance(entry, Mapping):
-                _vector_meta(group)[str(name)] = json_copy(entry)
-
-
-def json_copy(value):
-    import json
-
-    return json.loads(json.dumps(value))
 
 
 def is_state_format(data: Any) -> bool:
@@ -307,13 +301,16 @@ class ConstantsMapping(collections.abc.Mapping):
         return self._group
 
     def __getitem__(self, key: str) -> float:
-        return float(self._group.parameters_all_dict[key].value)
+        parameter = self._group.get(key)
+        if parameter is None:
+            raise KeyError(key)
+        return float(parameter.value)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(p.name for p in self._group.parameters_all)
+        return iter(p.name for p in self._group.parameters_flat)
 
     def __len__(self) -> int:
-        return len(self._group.parameters_all)
+        return len(self._group.parameters_flat)
 
     def update(self, other: Optional[Mapping[str, float]] = None, **kwargs) -> None:
         """Write values back into the group (append unknown names)."""
@@ -343,6 +340,14 @@ class ConstantsMapping(collections.abc.Mapping):
     def to_scalar(self, name: str) -> None:
         to_scalar(self._group, name)
 
+    def apply_vectors(self, vectors: Mapping[str, Mapping[str, Any]]) -> List[str]:
+        """Stored vector constants; see :func:`apply_vector_entries`."""
+        return apply_vector_entries(self._group, vectors)
+
+    def replace_shared_factors(self, result: Mapping[str, Any]) -> List[str]:
+        """See :func:`replace_shared_factors`."""
+        return replace_shared_factors(self._group, result)
+
 
 __all__ = [
     "DEFAULT_GROUP_NAME",
@@ -368,4 +373,6 @@ __all__ = [
     "to_scalar",
     "group_vectors",
     "vectors_state",
+    "apply_vector_entries",
+    "replace_shared_factors",
 ]

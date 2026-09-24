@@ -93,7 +93,9 @@ class _Mirror:
 
         wanted = []
         alive = set()
-        for p in group.parameters_all:
+        # A vector's elements are published as scalars of their own, ``name[pop]``
+        # after ``name``: each keeps its fixed flag, bounds and link in ChiSurf.
+        for p in group.parameters_flat:
             cs = self.pairs.get(id(p))
             if cs is None:
                 value, fixed, lb, ub, bounds_on = p.raw
@@ -115,6 +117,8 @@ class _Mirror:
                 pass
         self.cs_group.name = group.name
         self.cs_group._parameters[:] = [cs for _p, cs in wanted]
+        #: The group's revision this mirror holds (see :func:`chisurf_group`).
+        self.revision = group.revision
         for p, _cs in wanted:
             if p._link is not None:
                 self.push(p, "link")
@@ -122,7 +126,7 @@ class _Mirror:
 
     def detach(self) -> None:
         self.group.unlisten(self.rebuild)
-        for p in self.group.parameters_all:
+        for p in self.group.parameters_flat:
             if p._mirror is self:
                 p._mirror = None
         for cs in self.pairs.values():
@@ -239,7 +243,12 @@ def chisurf_group(group):
     is taken over by the model on its next read.
     """
     mirror = _mirror(group)
-    return mirror.cs_group if mirror is not None else None
+    if mirror is None:
+        return None
+    if getattr(mirror, "revision", None) != group.revision:
+        # Asked from another listener of the group, before this mirror's own.
+        mirror.rebuild(group)
+    return mirror.cs_group
 
 
 def mirrored(parameter) -> Any:
@@ -251,12 +260,13 @@ def mirrored(parameter) -> Any:
 def mirrored_list(parameters, name: str = "") -> Optional[List[Any]]:
     """ChiSurf mirrors of *parameters*, for a ChiSurf table (``None`` without chisurf).
 
+    A vector's elements follow it (``name[pop]``), as its group publishes them.
     Parameters no published group holds (a curve fit's own) are mirrored as a
     group of their own, *name*.
     """
     from .parameters import ParameterGroup
 
-    parameters = list(parameters)
+    parameters = _flat(parameters)
     loose = [p for p in parameters if mirrored(p) is None]
     if loose:
         mirror = _mirror(ParameterGroup(name, loose))
@@ -264,6 +274,17 @@ def mirrored_list(parameters, name: str = "") -> Optional[List[Any]]:
             return None
         _LOOSE.add(id(mirror))
     return [mirrored(p) for p in parameters]
+
+
+def _flat(parameters) -> List[Any]:
+    """*parameters* with each vector's elements after it, each once."""
+    out, seen = [], set()
+    for p in parameters:
+        for q in (p.flat() if hasattr(p, "flat") else [p]):
+            if id(q) not in seen:
+                seen.add(id(q))
+                out.append(q)
+    return out
 
 
 def release(parameters) -> None:
@@ -274,7 +295,7 @@ def release(parameters) -> None:
     rest of the process. A parameter of a group's mirror (a published group,
     the constants) keeps it: that one belongs to the group, not to the table.
     """
-    for p in parameters:
+    for p in _flat(parameters):
         mirror = getattr(p, "_mirror", None)
         if mirror is not None and id(mirror) in _LOOSE:
             _LOOSE.discard(id(mirror))

@@ -18,6 +18,18 @@ optional layer on top, never a requirement.
 nDXplorer, or a ChiSurf fit's parameter. A linked parameter reads its master's
 value; the fits hold it (:func:`is_held`) and never write it back.
 
+**Vectors.** Any parameter can hold **one value per population**
+(:meth:`Parameter.set_vector`): it then has *elements*, each an ordinary
+:class:`Parameter` named ``base[label]`` with its own value, fixed flag,
+bounds and link, while the parameter's own value is the **global / default**
+one -- what a consumer that does not know about populations reads, and what a
+burst in no population gets. The elements belong to their parameter, not to
+the group, so a group's layout (six parameters per Gaussian) never shifts;
+:attr:`ParameterGroup.parameters_flat` lists them in, and names find them
+(``group.get("gamma[HF]")``). How a burst picks its element (the axis) and the
+populations' order travel in the vector's :meth:`Parameter.vector_state`; see
+:mod:`ndxplorer.core.vector_constants` for the per-burst evaluation.
+
 **Registry.** :func:`register_group` names a group as something other
 parameters may link to (``owner_id`` -> ``(label, group)``);
 :func:`link_targets` lists what a parameter can follow, ChiSurf's own groups
@@ -38,6 +50,7 @@ __all__ = [
     "link_targets",
     "break_links",
     "find",
+    "VECTORS_KEY",
 ]
 
 INF = float("inf")
@@ -74,6 +87,15 @@ class Parameter:
         self._link: Any = None
         #: The chisurf mirror (:mod:`ndxplorer.core.chisurf_binding`), when published.
         self._mirror: Any = None
+        #: The group holding this parameter (told when its elements change).
+        self._group: Optional["ParameterGroup"] = None
+        #: A vector's elements, one per population, in order (empty: a scalar).
+        self._elements: List["Parameter"] = []
+        #: A vector's axis and uncertainties (see :meth:`vector_state`).
+        self._vector: Dict[str, Any] = {}
+        #: An element's vector and population label.
+        self._parent: Optional["Parameter"] = None
+        self._label = ""
         if link is not None:
             self.link = link
 
@@ -91,12 +113,19 @@ class Parameter:
     # -- attributes ----------------------------------------------------------
     @property
     def name(self) -> str:
+        """The name; an element's is its vector's with its label, ``gamma[HF]``."""
+        if self._parent is not None:
+            return f"{self._parent.name}[{self._label}]"
         return self._name
 
     @name.setter
     def name(self, value: str) -> None:
+        if self._parent is not None:
+            raise AttributeError(f"{self.name} is named by its vector and population")
         self._name = str(value)
         self._push("name")
+        for element in self._elements:
+            element._push("name")
 
     @property
     def value(self) -> float:
@@ -200,6 +229,146 @@ class Parameter:
     def is_linked(self) -> bool:
         return self.link is not None
 
+    # -- vectors -------------------------------------------------------------
+    @property
+    def is_vector(self) -> bool:
+        """Whether this parameter holds one value per population."""
+        return bool(self._elements)
+
+    @property
+    def elements(self) -> List["Parameter"]:
+        """A vector's elements, in the populations' order (``[]`` for a scalar)."""
+        return list(self._elements)
+
+    @property
+    def populations(self) -> List[str]:
+        return [e._label for e in self._elements]
+
+    @property
+    def parent(self) -> Optional["Parameter"]:
+        """The vector an element belongs to (``None`` for any other parameter)."""
+        return self._parent
+
+    @property
+    def label(self) -> str:
+        """An element's population label (``""`` for any other parameter)."""
+        return self._label
+
+    def element(self, label: str) -> Optional["Parameter"]:
+        return next((e for e in self._elements if e._label == str(label)), None)
+
+    def flat(self) -> List["Parameter"]:
+        """This parameter, then its elements."""
+        return [self] + list(self._elements)
+
+    def set_vector(self, values: Sequence[float], populations: Sequence[str],
+                   uncertainties: Optional[Sequence[Optional[float]]] = None,
+                   default: Optional[float] = None, column: Optional[str] = None,
+                   probabilities: Optional[Dict[str, str]] = None,
+                   codes: Optional[Dict[str, float]] = None) -> List["Parameter"]:
+        """Hold one value per population (see :mod:`ndxplorer.core.vector_constants`).
+
+        An element that exists keeps its fixed flag, bounds and link, and only
+        its value changes (not while linked); a new one starts with this
+        parameter's fixed flag and bounds; the elements of populations no longer
+        listed are removed. *default*, when given, becomes this parameter's own
+        (global) value. *column*, *probabilities* and *codes* set the axis a
+        burst picks its element by; left out, they keep what they were.
+        Returns the elements, in order.
+        """
+        from .vector_constants import PopulationAxis
+
+        if self._parent is not None:
+            raise ValueError(f"{self.name} is an element; it cannot be a vector")
+        labels = [str(l) for l in populations]
+        values = [float(v) for v in values]
+        if len(labels) != len(values) or len(set(labels)) != len(labels) or not labels:
+            raise ValueError("a vector needs one value per distinct population")
+        if any("[" in l or "]" in l for l in labels):
+            raise ValueError("a population label cannot hold [ or ]")
+        if default is not None:
+            self.value = float(default)
+        gone = [e for e in self._elements if e._label not in labels]
+        kept = {e._label: e for e in self._elements if e._label in labels}
+        out = []
+        for label, value in zip(labels, values):
+            element = kept.get(label)
+            if element is None:
+                element = Parameter("", value, fixed=self.fixed, lb=self.lb, ub=self.ub,
+                                    bounds_on=self.bounds_on)
+                element._parent, element._label = self, label
+            elif element._link is None:
+                element.value = value
+            out.append(element)
+        self._elements = out
+        if gone:
+            break_links(gone, also=[self._group] if self._group is not None else ())
+        axis = PopulationAxis.from_dict(self._vector)
+        if column is not None:
+            axis.column = str(column) or axis.column
+        if probabilities is not None:
+            axis.probabilities = {str(k): str(v) for k, v in probabilities.items()}
+        if codes is not None:
+            axis.codes = {str(k): float(v) for k, v in codes.items()}
+        errors = {l: u for l, u in dict(self._vector.get("uncertainties") or {}).items()
+                  if l in labels}
+        if uncertainties is not None:
+            errors = {l: float(u) for l, u in zip(labels, uncertainties) if u is not None}
+            for element, u in zip(out, uncertainties):
+                if u is not None:
+                    element.error_estimate = float(u)
+        self._vector = axis.to_dict()
+        if errors:
+            self._vector["uncertainties"] = errors
+        self._structure_changed()
+        return out
+
+    def to_vector(self, populations: Sequence[str],
+                  column: Optional[str] = None) -> List["Parameter"]:
+        """A scalar becomes a vector: every element starts at its value."""
+        value = float(self.value)
+        return self.set_vector([value] * len(populations), populations, column=column)
+
+    def to_scalar(self) -> None:
+        """A vector becomes its global value again: the elements are removed."""
+        gone, self._elements, self._vector = self._elements, [], {}
+        if gone:
+            break_links(gone, also=[self._group] if self._group is not None else ())
+            self._structure_changed()
+
+    def vector_state(self) -> Dict[str, Any]:
+        """``{"populations", "column", ...}``: what names cannot say about a vector."""
+        if not self._elements:
+            return {}
+        return {"populations": self.populations, **self._vector}
+
+    def set_vector_state(self, state: Dict[str, Any]) -> None:
+        """Take a vector's axis and uncertainties from :meth:`vector_state`'s output."""
+        state = dict(state or {})
+        state.pop("populations", None)
+        self._vector = json_copy(state)
+
+    def uncertainty(self) -> Optional[float]:
+        """An element's uncertainty as its vector stores it (``None``: none)."""
+        if self._parent is None:
+            return None
+        value = dict(self._parent._vector.get("uncertainties") or {}).get(self._label)
+        return None if value is None else float(value)
+
+    def population_vector(self):
+        """This vector as a :class:`~ndxplorer.core.vector_constants.PopulationVector`."""
+        import numpy as np
+
+        from .vector_constants import PopulationAxis, PopulationVector
+
+        return PopulationVector(self.name, self.populations,
+                                np.array([float(e.value) for e in self._elements]),
+                                float(self.value), PopulationAxis.from_dict(self._vector))
+
+    def _structure_changed(self) -> None:
+        if self._group is not None:
+            self._group.changed()
+
     # -- state ---------------------------------------------------------------
     def get_state(self) -> dict:
         """``value``, ``bounds_on``, ``bounds`` and ``fixed`` (chisurf's format)."""
@@ -230,12 +399,17 @@ class ParameterGroup:
 
     ``parameters_all`` is the live list; change it through the methods so the
     group's :attr:`revision` moves and a listener (the chisurf mirror) follows.
+    A vector's elements are not in it -- they belong to their parameter -- but
+    :attr:`parameters_flat` and every lookup by name include them.
     """
 
     def __init__(self, name: str = "", parameters: Sequence[Parameter] = ()) -> None:
         self.name = str(name)
         self._parameters: List[Parameter] = list(parameters)
-        #: Bumped when parameters are added, removed or reordered.
+        for p in self._parameters:
+            if p._group is None:    # a view over another group's parameters keeps theirs
+                p._group = self
+        #: Bumped when parameters (or a vector's elements) are added, removed or reordered.
         self.revision = 0
         self._listeners: List[Callable[["ParameterGroup"], None]] = []
 
@@ -244,8 +418,14 @@ class ParameterGroup:
         return self._parameters
 
     @property
+    def parameters_flat(self) -> List[Parameter]:
+        """Every parameter, each vector followed by its elements."""
+        return [q for p in self._parameters for q in p.flat()]
+
+    @property
     def parameters_all_dict(self) -> Dict[str, Parameter]:
-        return {p.name: p for p in self._parameters}
+        """``{name: parameter}``, the vectors' elements (``gamma[HF]``) included."""
+        return {p.name: p for p in self.parameters_flat}
 
     def __len__(self) -> int:
         return len(self._parameters)
@@ -254,9 +434,12 @@ class ParameterGroup:
         return iter(self._parameters)
 
     def get(self, name: str) -> Optional[Parameter]:
-        return next((p for p in self._parameters if p.name == name), None)
+        """The parameter, or vector element, called *name*."""
+        name = str(name)
+        return next((p for p in self.parameters_flat if p.name == name), None)
 
     def append_parameter(self, parameter: Parameter) -> Parameter:
+        parameter._group = self
         self._parameters.append(parameter)
         self.changed()
         return parameter
@@ -266,18 +449,58 @@ class ParameterGroup:
         return self.append_parameter(Parameter(name, value, **kwargs))
 
     def remove_parameter(self, parameter: Parameter) -> None:
+        """Take out a parameter (with its elements), or one element of a vector."""
+        parent = parameter.parent
+        if parent is not None:
+            labels = [l for l in parent.populations if l != parameter.label]
+            if not labels:
+                parent.to_scalar()
+                return
+            parent.set_vector([parent.element(l)._value for l in labels], labels)
+            return
         self._parameters.remove(parameter)
-        break_links([parameter])
+        break_links(parameter.flat())
         self.changed()
 
     def replace_parameters(self, parameters: Sequence[Parameter]) -> None:
         """Hold exactly *parameters*, in that order; the dropped ones are unlinked."""
         kept = {id(p) for p in parameters}
-        gone = [p for p in self._parameters if id(p) not in kept]
+        gone = [q for p in self._parameters if id(p) not in kept for q in p.flat()]
         self._parameters[:] = list(parameters)
+        for p in self._parameters:
+            p._group = self
         if gone:
             break_links(gone, also=[self])
         self.changed()
+
+    # -- vectors ---------------------------------------------------------------
+    def vector_names(self) -> List[str]:
+        """The names of the parameters holding one value per population."""
+        return [p.name for p in self._parameters if p.is_vector]
+
+    def set_vector(self, name: str, values: Sequence[float], populations: Sequence[str],
+                   uncertainties: Optional[Sequence[Optional[float]]] = None,
+                   default: Optional[float] = None, **axis: Any) -> List[Parameter]:
+        """Make parameter *name* a vector (:meth:`Parameter.set_vector`).
+
+        A name the group does not hold yet is added, its value *default* or the
+        mean of *values*. ``axis`` takes ``column``, ``probabilities``, ``codes``.
+        """
+        parameter = next((p for p in self._parameters if p.name == str(name)), None)
+        if parameter is None:
+            numbers = [float(v) for v in values]
+            start = default if default is not None else sum(numbers) / max(len(numbers), 1)
+            parameter = self.append_parameter(Parameter(str(name), float(start)))
+        return parameter.set_vector(values, populations, uncertainties=uncertainties,
+                                    default=default, **axis)
+
+    def vectors_state(self) -> Dict[str, dict]:
+        """``{name: Parameter.vector_state()}`` of the group's vectors."""
+        return {p.name: p.vector_state() for p in self._parameters if p.is_vector}
+
+    def vectors(self) -> Dict[str, Any]:
+        """``{name: PopulationVector}``: what the equation engine evaluates per burst."""
+        return {p.name: p.population_vector() for p in self._parameters if p.is_vector}
 
     # -- listeners -------------------------------------------------------------
     def changed(self) -> None:
@@ -296,18 +519,63 @@ class ParameterGroup:
 
     # -- state -------------------------------------------------------------------
     def get_state(self) -> dict:
-        """``{"parameters": {name: state}}`` (chisurf's group format)."""
-        return {"parameters": {p.name: p.get_state() for p in self._parameters}}
+        """``{"parameters": {name: state}}`` (chisurf's group format).
+
+        A vector's elements are saved by name (``gamma[HF]``) beside it, and a
+        group with vectors adds ``"vectors"``: per vector its populations in
+        order and its axis (:meth:`Parameter.vector_state`).
+        """
+        state: dict = {"parameters": {p.name: p.get_state() for p in self.parameters_flat}}
+        vectors = self.vectors_state()
+        if vectors:
+            state[VECTORS_KEY] = vectors
+        return state
 
     def set_state(self, state: dict) -> None:
+        """Restore :meth:`get_state`: values, bounds, fixed, and the vectors.
+
+        An element name (``gamma[HF]``) of a parameter the group holds makes
+        that parameter a vector, the populations in the order ``"vectors"``
+        gives, else in the order they come.
+        """
+        from .vector_constants import vector_bases
+
+        pstates = {str(k): v for k, v in dict(state.get("parameters") or {}).items()
+                   if isinstance(v, dict)}
+        vectors = dict(state.get(VECTORS_KEY) or {})
+        top = {p.name: p for p in self._parameters}
+        for base, labels in vector_bases(pstates).items():
+            parameter = top.get(base)
+            if parameter is None:
+                continue
+            order = [str(l) for l in dict(vectors.get(base) or {}).get("populations", ())
+                     if str(l) in labels]
+            order += [l for l in labels if l not in order]
+            known = {l: e._value for l, e in zip(parameter.populations, parameter._elements)}
+            parameter.set_vector([float(pstates[f"{base}[{l}]"].get("value", known.get(l, 0.0)))
+                                  for l in order], order)
+        for name, entry in vectors.items():
+            parameter = top.get(str(name))
+            if parameter is not None and parameter.is_vector and isinstance(entry, dict):
+                parameter.set_vector_state(entry)
         params = self.parameters_all_dict
-        for name, pstate in dict(state.get("parameters") or {}).items():
-            target = params.get(str(name))
-            if target is not None and isinstance(pstate, dict):
+        for name, pstate in pstates.items():
+            target = params.get(name)
+            if target is not None:
                 target.set_state(pstate)
 
     def __repr__(self) -> str:
         return f"ParameterGroup({self.name!r}, {len(self)} parameters)"
+
+
+#: The entry of a saved group that holds its vectors' order and axis.
+VECTORS_KEY = "vectors"
+
+
+def json_copy(value: Any) -> Any:
+    import json
+
+    return json.loads(json.dumps(value))
 
 
 def is_held(parameter: Any) -> bool:
@@ -335,7 +603,7 @@ def register_group(group: ParameterGroup, owner_id: str, label: str) -> None:
 def unregister_group(owner_id: str) -> None:
     entry = _GROUPS.pop(str(owner_id), None)
     if entry is not None:
-        break_links(list(entry[1].parameters_all))
+        break_links(entry[1].parameters_flat)
     from . import chisurf_binding
 
     chisurf_binding.withdraw(str(owner_id))
@@ -353,7 +621,7 @@ def link_targets(exclude: Any = None) -> List[Tuple[str, str, Any]]:
     ChiSurf has registered -- its fits' working models, other plugins.
     """
     out = [(label, p.name, p) for _owner, label, group in registered_groups()
-           for p in group.parameters_all if p is not exclude]
+           for p in group.parameters_flat if p is not exclude]
     from . import chisurf_binding
 
     out += [(label, name, p) for label, name, p in chisurf_binding.foreign_targets()
@@ -375,7 +643,7 @@ def break_links(parameters: Sequence[Any], also: Sequence[ParameterGroup] = ()) 
             p.link = None
     groups = [group for _owner, _label, group in registered_groups()] + list(also)
     for group in groups:
-        for p in group.parameters_all:
+        for p in group.parameters_flat:
             if p._link is not None and id(p._link) in going:
                 p.link = None
 
