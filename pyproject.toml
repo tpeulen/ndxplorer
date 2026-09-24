@@ -41,6 +41,9 @@ dependencies = [
     # a dependency it has anyway. Previously this went through
     # scikit-image/tifffile, neither of which was declared here, so loading a
     # mask raised ImportError on a clean install. The array TIFF API needs 0.27.
+    # Find structure's HDBSCAN and K-means are tttrlib's kernels too
+    # (tttrlib.hdbscan, tttrlib.kmeans), so neither scikit-learn nor hdbscan
+    # is needed; PCA is NumPy.
     "tttrlib>=0.27",
     # ChiSurf. Not an optional integration: region/lasso gates are
     # `chisurf.core.roi` shapes (ndxplorer.core.region_selection), the parameter

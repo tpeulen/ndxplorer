@@ -12,7 +12,6 @@ dependencies:
   - pathlib2
   - typing-extensions
   - scipy
-  - hdbscan
-  - scikit-learn
-  # Mask image I/O: TIFF via tttrlib's bundled libtiff.
+  # Mask image I/O (TIFF via its bundled libtiff) and Find structure's
+  # HDBSCAN and K-means (its clustering kernels; no scikit-learn/hdbscan).
   - tttrlib >=0.27

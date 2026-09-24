@@ -37,7 +37,7 @@ ndXplorer requires the following dependencies:
 * NumPy, scipy (for computation)
 * matplotlib and PyQtGraph (for plotting)
 * UMAP-learn (for dimensionality reduction)
-* HDBSCAN and scikit-learn (for clustering)
+* Clustering needs nothing extra: HDBSCAN and K-means are tttrlib's kernels, PCA is NumPy
 
 ## Installation
 

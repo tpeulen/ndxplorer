@@ -1,7 +1,7 @@
 """
 Self-contained dependency installer utilities for NDXplorer.
 
-Provides helpers to install optional features (napari, umap-learn, hdbscan, ...)
+Provides helpers to install optional features (napari, umap-learn, ...)
 into the current ChiSurf environment without depending on ChiSurf's updater.
 
 Key functionality:

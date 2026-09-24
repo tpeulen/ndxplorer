@@ -269,7 +269,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [x] Buttons: "▶ Run", "■ Cancel" (shown while running, reads "Cancelling…"), "📈 Plot" (UMAP only), "💾 Save" (labelling methods, once labels exist) — emoji dropped from Plot/Save (the emtk font has none)
 - [x] Progress pane: message plus an indeterminate bar ("Running…", "Finished.", "Cancelled or failed.") — view_form `progress` section; the run is an `emtk.tasks` task (thread on desktop, steps in the browser)
 - [x] Asks "Select columns?" when a labelling method is run with no columns chosen (No uses the x/y/z axes)
-- [~] In a browser (Pyodide) K-means/HDBSCAN/PCA fall back to scikit-learn; UMAP says it cannot run there (umap-learn needs numba)
+- [x] K-means/HDBSCAN run on tttrlib's kernels and PCA on NumPy, desktop and browser alike (no scikit-learn); UMAP says it cannot run there (umap-learn needs numba)
 
 
 ## column_selection_dialog — Column selection dialog

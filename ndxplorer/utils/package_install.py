@@ -1,6 +1,6 @@
 """Install a package into the running environment: conda (or mamba), else pip. Qt-free.
 
-Both GUIs offer to install an optional backend (umap-learn, hdbscan, napari)
+Both GUIs offer to install an optional backend (umap-learn, napari)
 when a method needs it; this is the part that does it -- finding the solver,
 running it (elevated on Windows when the environment is not writable), and
 testing the import afterwards. The Qt prompts live in
