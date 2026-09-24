@@ -195,6 +195,8 @@ class GaussianFit(QtCore.QObject):
         from chisurf.gui.autoform.auto_form import AutoForm
 
         self.group.default_component = self._default_component
+        # A parameter made a vector (or scalar again) changes the table's rows.
+        self.group.listen(self._on_group_changed)
         self.view = gp.GaussianMixtureView(self.group, on_changed=self._on_parameters_edited)
         form = AutoForm(self.view, parent=self.main)
         self._table = self._find_table(form)
@@ -230,6 +232,10 @@ class GaussianFit(QtCore.QObject):
             if isinstance(widget, (ParameterGroupTableWidget, PairedParameterTableWidget)):
                 return widget
         return None
+
+    def _on_group_changed(self, _group=None) -> None:
+        if self._table is not None:
+            self._table.set_params(self.view.mirrored.rows())
 
     def _rebuild_table_rows(self) -> None:
         """Show the group's current components (after an add / remove / load).
@@ -347,14 +353,18 @@ class GaussianFit(QtCore.QObject):
         """Indices of the selected Gaussians (empty when nothing is picked).
 
         The table shows one *parameter* per row, so a selected row names the
-        Gaussian it belongs to — six rows at a time.
+        Gaussian it belongs to — six parameters at a time; an open vector's
+        rows belong to its parameter (the table model says where that is).
         """
         if self._table is None:
             return []
         selection = self._table.table_view.selectionModel()
         if selection is None:
             return []
-        return sorted({index.row() // gp.WIDTH for index in selection.selectedIndexes()})
+        model = self._table.table_model
+        where = getattr(model, "top_level_position", lambda row: row)
+        found = {where(index.row()) for index in selection.selectedIndexes()}
+        return sorted({w // gp.WIDTH for w in found if w is not None})
 
     def on_gaussian_table_selection_changed(self, selected=None, deselected=None):
         """Highlight selected Gaussian overlays by increasing line width."""

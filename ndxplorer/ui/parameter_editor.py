@@ -101,15 +101,10 @@ if HAS_CHISURF:
                 # spare height belongs *below* it. Added with no stretch and an
                 # explicit stretch after it, the table starts at the top of the
                 # tab instead of floating in the middle of it.
+                # A vector constant (one value per population) is an
+                # expandable row of ChiSurf's table: its elements are published
+                # as ``name[pop]`` and edited there like any constant.
                 layout.addWidget(self._table, 0, QtCore.Qt.AlignTop)
-                # Vector constants (one value per population) are shown, not
-                # edited, here: the emtk window edits them. Their elements
-                # still reach the equations and the Global View by name.
-                self._vectors = QtWidgets.QLabel()
-                self._vectors.setWordWrap(True)
-                self._vectors.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-                layout.addWidget(self._vectors, 0, QtCore.Qt.AlignTop)
-                self._show_vectors()
                 layout.addStretch(1)
                 # Add-parameter affordance so a new constant can be created
                 # without hand-editing the JSON.
@@ -365,42 +360,64 @@ if HAS_CHISURF:
                 self._refresh_table()
 
         def _table_params(self):
-            """The scalar constants, as the ChiSurf table edits them: their mirrors.
+            """The constants, as the ChiSurf table edits them: their mirrors.
 
-            A vector's elements are summed up below the table. The group is
-            nDXplorer's own; ChiSurf's widget edits its ``FittingParameter``
-            mirror (:mod:`ndxplorer.core.chisurf_binding`), which the group
-            takes over on its next read.
+            A vector's elements follow it (``gamma``, ``gamma[HF]`` …), and the
+            table shows them as one expandable row. The group is nDXplorer's
+            own; ChiSurf's widget edits its ``FittingParameter`` mirror
+            (:mod:`ndxplorer.core.chisurf_binding`), which the group takes over
+            on its next read.
             """
             from ..core.chisurf_binding import chisurf_group, mirrored
-            from ..core.vector_constants import split_element
 
             if chisurf_group(self._group) is None:
                 raise RuntimeError("ChiSurf's parameter table needs chisurf")
-            vectors = set(self._cg.vector_names(self._group))
-            return [mirrored(p) for p in self._group.parameters_all
-                    if p.name not in vectors
-                    and (split_element(p.name) or ("",))[0] not in vectors]
+            return [mirrored(p) for p in self._group.parameters_flat]
 
-        def _show_vectors(self):
-            """One read-only line per vector constant: ``gamma [2]: 0.61, 0.83``."""
-            label = getattr(self, "_vectors", None)
-            if label is None or self._group is None:
-                return
-            from ..core.vector_constants import summary_text
+        def set_vector(self, name, values, populations, uncertainties=None, **axis):
+            """Make constant *name* a per-population vector (the calibration API).
 
-            lines = []
-            for name in self._cg.vector_names(self._group):
-                elements = self._cg.vector_elements(self._group, name)
-                pairs = ", ".join(f"{l} {float(p.value):.4g}" for l, p in elements)
-                glob = self._group.parameters_all_dict.get(name)
-                if glob is not None:
-                    pairs += f"; global {float(glob.value):.4g}"
-                lines.append(f"{name} [{len(elements)}]: "
-                             f"{summary_text([p.value for _l, p in elements])} ({pairs})")
-            label.setText("Per population (edit in the new ndX window):\n" + "\n".join(lines)
-                          if lines else "")
-            label.setVisible(bool(lines))
+            See :func:`ndxplorer.core.constants_group.set_vector`; ``axis`` takes
+            ``default``, ``column``, ``probabilities``, ``codes``.
+            """
+            if self._group is None:
+                return []
+            out = self._cg.set_vector(self._group, name, values, populations,
+                                      uncertainties=uncertainties, **axis)
+            self._refresh_table()
+            return out
+
+        def apply_vectors(self, vectors):
+            """Apply stored vector constants (``{name: {"values", "populations", ...}}``).
+
+            What a saved calibration or a container stores
+            (:func:`ndxplorer.core.constants_group.apply_vector_entries`). Returns
+            the names applied.
+            """
+            if self._group is None or not vectors:
+                return []
+            done = self._cg.apply_vector_entries(self._group, vectors)
+            if done:
+                self._refresh_table()
+            return done
+
+        def replace_shared_factors(self, result):
+            """A calibration's shared factor replaces a stale vector of it.
+
+            See :func:`ndxplorer.core.constants_group.replace_shared_factors`.
+            """
+            if self._group is None:
+                return []
+            done = self._cg.replace_shared_factors(self._group, result)
+            if done:
+                self._refresh_table()
+            return done
+
+        def to_scalar(self, name):
+            """A vector constant becomes its global value again."""
+            if self._group is not None:
+                self._cg.to_scalar(self._group, name)
+                self._refresh_table()
 
         def _refresh_table(self):
             if self._table is not None:
@@ -411,7 +428,6 @@ if HAS_CHISURF:
                     self._table.sync()
                 except Exception:
                     pass
-            self._show_vectors()
 
         @property
         def json_file(self):

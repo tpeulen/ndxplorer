@@ -219,6 +219,8 @@ class CurveWidget(QtWidgets.QGroupBox):
             self._group = cp.build_curve_group(
                 names, values=values, name=str(self.title())
             )
+            # A parameter made a vector (or scalar again) changes the rows.
+            self._group.listen(self._on_group_changed)
             changed = True
         else:
             changed = cp.sync_curve_group(self._group, names, values=values)
@@ -254,6 +256,16 @@ class CurveWidget(QtWidgets.QGroupBox):
         )
         self._param_slot.addWidget(self._table)
         self._table.setVisible(self.isChecked())
+
+    def _on_group_changed(self, _group=None):
+        """A vector's elements came or went: the table shows the mirror's rows again."""
+        if self._table is None:
+            return
+        from ..core.chisurf_binding import chisurf_group
+
+        mirror = chisurf_group(self._group)
+        if mirror is not None:
+            self._table.set_params(list(mirror.parameters_all))
 
     def _register_group(self):
         """Publish the group so other parameter tables can link to these."""
