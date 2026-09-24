@@ -41,6 +41,10 @@ __all__ = [
     "curve_points",
     "write_curves_csv",
     "next_curve_title",
+    "population_colour",
+    "population_sources",
+    "population_labels",
+    "population_parameter_sets",
 ]
 
 #: The first entry of the equation list: a curve the user types.
@@ -322,6 +326,73 @@ def next_curve_title(base: str, titles: Iterable[str]) -> str:
     return f"{base} {existing + 1}"
 
 
+def population_colour(colour: str, position: int, count: int) -> str:
+    """The curve's colour tinted for population *position* of *count*.
+
+    The hue stays the curve's, so the populations of one curve read as one
+    family; the lightness steps from darker to lighter across them.
+    """
+    import colorsys
+
+    text = str(colour).lstrip("#")
+    try:
+        r, g, b = (int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        r, g, b = 1.0, 0.0, 0.0
+    if count <= 1:
+        return "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in (r, g, b))
+    h, _l, s = colorsys.rgb_to_hls(r, g, b)
+    lightness = 0.28 + 0.47 * float(position) / float(count - 1)
+    rgb = colorsys.hls_to_rgb(h, lightness, max(s, 0.55))
+    return "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
+
+
+def population_sources(group) -> "OrderedDict[str, Any]":
+    """``{parameter name: vector}`` for a curve's parameters with one value per population.
+
+    A parameter is population-wise when it is a vector itself, or when it
+    follows (is linked to) a vector -- a constant ``gamma`` with elements
+    ``gamma[...]`` that the curve pins its ``gamma`` to. Every other parameter
+    is shared by all populations.
+    """
+    out: "OrderedDict[str, Any]" = OrderedDict()
+    for p in group.parameters_all:
+        if getattr(p, "is_vector", False):
+            out[p.name] = p
+            continue
+        master = getattr(p, "link", None)
+        if master is not None and getattr(master, "is_vector", False):
+            out[p.name] = master
+    return out
+
+
+def population_labels(group) -> List[str]:
+    """The populations a curve is drawn for: the union over its vectors, in order."""
+    labels: List[str] = []
+    for vector in population_sources(group).values():
+        labels += [l for l in vector.populations if l not in labels]
+    return labels
+
+
+def population_parameter_sets(group) -> List[Tuple[str, "OrderedDict[str, float]"]]:
+    """``[(population, {name: value})]``: each population's parameters.
+
+    A population-wise parameter reads its element for that population (its
+    global value where the vector has no such element); a shared one reads its
+    own value. Empty when no parameter is population-wise.
+    """
+    sources = population_sources(group)
+    base = OrderedDict((p.name, float(p.value)) for p in group.parameters_all)
+    out = []
+    for label in population_labels(group):
+        values = OrderedDict(base)
+        for name, vector in sources.items():
+            element = vector.element(label)
+            values[name] = float(element.value if element is not None else vector.value)
+        out.append((label, values))
+    return out
+
+
 class OverlayCurve:
     """One overlay curve: its text, its parameters, its colour and visibility.
 
@@ -425,6 +496,45 @@ class OverlayCurve:
         self.error = self.evaluator.last_error or ("" if not self.is_function or self.function
                                                    else self.error)
         return x, y
+
+    # -------------------------------------------------------- populations
+    def population_sources(self) -> "OrderedDict[str, Any]":
+        """See :func:`population_sources`."""
+        return population_sources(self.group)
+
+    def populations(self) -> List[str]:
+        """See :func:`population_labels` (``[]``: one global curve)."""
+        return population_labels(self.group)
+
+    def population_parameters(self) -> List[Tuple[str, "OrderedDict[str, float]"]]:
+        """See :func:`population_parameter_sets`."""
+        return population_parameter_sets(self.group)
+
+    def population_points(self, num_points: int, x_edges, y_edges, x_log=False,
+                          y_log=False) -> List[Tuple[str, np.ndarray, np.ndarray]]:
+        """``[(population, x, y)]``: one curve per population (see :meth:`points`)."""
+        out = []
+        for label, values in self.population_parameters():
+            x, y = curve_points(self.evaluator, self.equation, values, num_points, x_edges,
+                                y_edges, x_log, y_log)
+            out.append((label, x, y))
+        self.error = self.evaluator.last_error or ""
+        return out
+
+    def drawn_curves(self, num_points: int, x_edges, y_edges, x_log=False, y_log=False
+                     ) -> List[Tuple[str, str, np.ndarray, np.ndarray]]:
+        """``[(name, colour, x, y)]``: what the map shows for this curve.
+
+        One curve per population, named ``"<title> [<population>]"`` and tinted
+        (:func:`population_colour`), when a parameter is population-wise; the
+        one global curve otherwise.
+        """
+        if not self.populations():
+            x, y = self.points(num_points, x_edges, y_edges, x_log, y_log)
+            return [(self.title, self.color, x, y)]
+        curves = self.population_points(num_points, x_edges, y_edges, x_log, y_log)
+        return [(f"{self.title} [{label}]", population_colour(self.color, i, len(curves)), x, y)
+                for i, (label, x, y) in enumerate(curves)]
 
     # ------------------------------------------------------ crosslinking
     def register(self) -> None:

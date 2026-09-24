@@ -668,8 +668,10 @@ class OverlaysPanel:
         if not visible:
             self.feature.app.message = ("Save Overlays", "No visible curves to save.")
             return
-        data = [(c.title, *c.points(self.num_points, hist.x_edges, hist.y_edges, model.x.log,
-                                     model.y.log)) for c in visible]
+        data = [(name, x, y) for c in visible
+                for name, _colour, x, y in c.drawn_curves(self.num_points, hist.x_edges,
+                                                          hist.y_edges, model.x.log,
+                                                          model.y.log)]
 
         def write(path: str) -> None:
             try:
@@ -1528,12 +1530,22 @@ class OverlaysFeature(Feature):
             curve = panel.curve
             if not curve.visible:
                 continue
-            x, y = curve.points(self.overlays.num_points, hist.x_edges, hist.y_edges,
-                                model.x.log, model.y.log)
-            if x.size < 2:
-                continue
-            implot.plot_line(f"##overlay-curve-{i}", x, y,
-                             spec={"line_color": _rgba(curve.color), "line_weight": 2.0})
+            # One curve per population when a parameter is population-wise.
+            drawn = curve.drawn_curves(self.overlays.num_points, hist.x_edges, hist.y_edges,
+                                       model.x.log, model.y.log)
+            for k, (name, colour, x, y) in enumerate(drawn):
+                if x.size < 2:
+                    continue
+                implot.plot_line(f"##overlay-curve-{i}-{k}", x, y,
+                                 spec={"line_color": _rgba(colour), "line_weight": 2.0})
+                if len(drawn) > 1:
+                    # the map has no legend: the population's name at the curve's end
+                    implot.push_style_color(implot.COL_INLAY_TEXT, _rgba(colour))
+                    try:
+                        implot.plot_text(name[len(curve.title):].strip(), float(x[-1]),
+                                         float(y[-1]), pix_offset=(-24.0, -9.0))
+                    finally:
+                        implot.pop_style_color()
 
     def on_data_changed(self) -> None:
         self.equations.validate()

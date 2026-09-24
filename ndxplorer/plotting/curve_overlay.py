@@ -752,9 +752,25 @@ class CurveOverlayWidget(QtWidgets.QWidget):
     def get_visible_curves(self):
         """
         Return a list of (equation, parameters, color) tuples for visible curves.
+
+        A curve with a population-wise parameter is one tuple per population,
+        its colour tinted (:func:`~ndxplorer.core.overlay_curves.population_parameter_sets`).
         """
-        return [(curve.get_equation(), curve.get_parameters(), curve.get_color()) 
-                for curve in self.curves if curve.is_visible()]
+        from ..core.overlay_curves import population_colour, population_parameter_sets
+
+        out = []
+        for curve in self.curves:
+            if not curve.is_visible():
+                continue
+            group = curve.parameter_group
+            sets = population_parameter_sets(group) if group is not None else []
+            if not sets:
+                out.append((curve.get_equation(), curve.get_parameters(), curve.get_color()))
+                continue
+            out += [(curve.get_equation(), dict(values),
+                     population_colour(str(curve.get_color()), i, len(sets)))
+                    for i, (_label, values) in enumerate(sets)]
+        return out
 
     def get_num_points(self):
         """
