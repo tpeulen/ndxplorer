@@ -38,16 +38,18 @@ def _clamp(name: str, value: float) -> float:
     return float(min(hi, max(lo, float(value))))
 
 
-def factors_from_constants(constants: Mapping[str, Any]) -> Dict[str, float]:
+def factors_from_constants(constants: Mapping[str, Any],
+                           start: Optional[Mapping[str, float]] = None) -> Dict[str, float]:
     """ndX constants -> Hellenkamp factors.
 
     ndX's ``beta`` is the direct excitation (Hellenkamp ``delta``), its ``r`` is
-    ``1/beta``, and its effective ``gamma = (PhiA/PhiD) / (gG/gR)``. Missing
-    constants keep the uncorrected defaults; values are clamped to the factor
-    bounds.
+    ``1/beta``, and its effective ``gamma = (PhiA/PhiD) / (gG/gR)``. A constant
+    that is missing keeps its value in *start* (the uncorrected defaults when
+    omitted); values are clamped to the factor bounds.
     """
     f = {"gamma": 1.0, "alpha": 0.0, "beta": 1.0, "delta": 0.0, "bg_dd": 0.0, "bg_da": 0.0,
          "bg_aa": 0.0, "r0": 52.0, "phi_a": 1.0, "phi_d": 1.0}
+    f.update({k: float(v) for k, v in dict(start or {}).items() if k in f})
 
     def get(key):
         value = constants.get(key)
