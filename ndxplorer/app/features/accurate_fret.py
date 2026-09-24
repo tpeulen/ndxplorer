@@ -499,20 +499,14 @@ class AccurateFretFeature(Feature):
         ``default`` (the global value), ``column`` (per-burst population label),
         ``codes`` (``{population: value in that column}``) and
         ``probabilities`` (``{population: probability column}``).
+
+        The stored-vector path (:func:`~ndxplorer.core.constants_group.apply_vector_entries`,
+        through the constants' ``apply_vectors``) does the work, so uncertainties
+        keyed by population are handled in one place.
         """
-        constants = self.app.model.manager.constants
-        set_vector = getattr(constants, "set_vector", None)
-        if not callable(set_vector):
-            return
-        populations = [str(p) for p in vector["populations"]]
-        uncertainties = vector.get("uncertainties")
-        if isinstance(uncertainties, dict):
-            # as :meth:`vectors` saves them: by population, not by position
-            uncertainties = [uncertainties.get(p) for p in populations]
-        set_vector(name, list(vector["values"]), populations,
-                   uncertainties=uncertainties, default=vector.get("default"),
-                   column=vector.get("column"), probabilities=vector.get("probabilities"),
-                   codes=vector.get("codes"))
+        apply_vectors = getattr(self.app.model.manager.constants, "apply_vectors", None)
+        if callable(apply_vectors):
+            apply_vectors({str(name): dict(vector)})
 
     def vectors(self) -> dict:
         """The window's vector constants as saved (order, axis, uncertainties)."""
