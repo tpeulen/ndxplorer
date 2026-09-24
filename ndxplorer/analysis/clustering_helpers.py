@@ -11,7 +11,7 @@ from ..logging_config import logging
 from ..ui.clustering_dialog import ClusteringDialog
 from ..ui.column_selection_dialog import ColumnSelectionDialog
 from ..analysis.clustering import ClusteringManager, ClusteringWorker
-from ..utils.lazy_imports import get_hdbscan, get_kmeans
+from .structure import METHODS_BY_KEY
 
 if False:  # pragma: no cover
     from ..core.plot_main import NDXplorer
@@ -103,51 +103,17 @@ def start_clustering_from_dialog(
 
 
 def _ensure_algorithm_available(ndxplorer: "NDXplorer", method: str) -> bool:
-    """Check/import clustering dependency, optionally prompting install."""
-    if method == "hdbscan":
-        if get_hdbscan() is not None:
-            return True
-        try:
-            from ..deps_installer import ensure_package_gui
+    """Whether *method* can run; says why not in a message box when it cannot.
 
-            desc = (
-                "HDBSCAN is a density-based clustering algorithm useful "
-                "for finding clusters of varying densities and shapes."
-            )
-            installed = ensure_package_gui(
-                parent=ndxplorer,
-                package="hdbscan",
-                import_name="hdbscan",
-                description=desc,
-                allow_pip=True,
-                channels=["conda-forge", "defaults"],
-            )
-        except Exception as exc:  # pragma: no cover - UI flow
-            logging.warning("Could not run installer for hdbscan: %s", exc)
-            installed = False
-        if not installed:
-            return False
-        if get_hdbscan() is None:
-            QtWidgets.QMessageBox.information(
-                ndxplorer,
-                "HDBSCAN Installed",
-                "HDBSCAN was installed but could not be imported immediately.\n"
-                "Please restart ChiSurf and try again.",
-            )
-            return False
+    HDBSCAN and K-means are tttrlib's kernels, a dependency that ships with the
+    application, so there is nothing to offer to install: a failure here means a
+    broken or too-old installation.
+    """
+    entry = METHODS_BY_KEY.get(method)
+    if entry is None or entry.available():
         return True
-
-    if method == "kmeans":
-        if get_kmeans() is not None:
-            return True
-        QtWidgets.QMessageBox.warning(
-            ndxplorer,
-            "scikit-learn Not Available",
-            "scikit-learn is not installed. Please install it using pip or conda.",
-        )
-        return False
-
-    return True
+    QtWidgets.QMessageBox.warning(ndxplorer, f"{entry.title} Not Available", entry.unavailable())
+    return False
 
 
 def apply_clustering(ndxplorer: "NDXplorer") -> None:

@@ -17,10 +17,14 @@ yield ``(fraction, message)`` checkpoints (:func:`label_points`,
 has no threads, steps them between frames (:mod:`emtk.tasks`) -- and writing
 the result back (:func:`store_labels`, :func:`store_projection`).
 
-Backends come from :mod:`ndxplorer.utils.lazy_imports`: ChiSurf's in-tree
-estimators where ChiSurf is installed, scikit-learn otherwise (the browser's
-path). UMAP needs ``umap-learn``, which needs numba and so cannot run in a
-browser at all; :meth:`Method.unavailable` says so in words.
+Backends: HDBSCAN and K-means are tttrlib's compiled kernels
+(``tttrlib.hdbscan``, ``tttrlib.kmeans``) -- tttrlib is a dependency anyway,
+every data source is a ``tttrlib.DataStore``, and its Pyodide wheel carries
+them, so the desktop and the browser run the same code and neither needs
+scikit-learn. PCA is a singular value decomposition in NumPy
+(:mod:`ndxplorer.analysis.pca_helpers`). UMAP needs ``umap-learn``, which
+needs numba and so cannot run in a browser at all; :meth:`Method.unavailable`
+says so in words.
 """
 
 from __future__ import annotations
@@ -33,7 +37,28 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from ..logging_config import logging
-from ..utils.lazy_imports import get_hdbscan, get_kmeans, get_pca, get_umap
+from ..utils.lazy_imports import get_umap
+
+#: The seed of K-means' k-means++ stream: a run is reproducible, and matches
+#: the labels ChiSurf's ``KMeans(random_state=42)`` gave before.
+KMEANS_SEED = 42
+#: K-means restarts; the lowest-inertia one wins.
+KMEANS_N_INIT = 10
+
+
+def get_tttrlib():
+    """tttrlib, when it has the clustering kernels; ``None`` otherwise."""
+    try:
+        import tttrlib
+    except Exception:  # pragma: no cover - tttrlib is a hard dependency
+        return None
+    if not (hasattr(tttrlib, "hdbscan") and hasattr(tttrlib, "kmeans")):
+        return None
+    return tttrlib
+
+
+def _numpy():
+    return np
 
 __all__ = [
     "LABELS",
@@ -45,6 +70,7 @@ __all__ = [
     "UMAP_METRICS",
     "column_matrix",
     "embed_umap",
+    "get_tttrlib",
     "in_browser",
     "label_points",
     "pca_report",
@@ -123,9 +149,9 @@ METHODS: Tuple[Method, ...] = (
         key="pca",
         title="PCA",
         family=PROJECTION,
-        probe=get_pca,
-        package="scikit-learn",
-        import_name="sklearn",
+        probe=_numpy,
+        package="numpy",
+        import_name="numpy",
         blurb="Linear decomposition. Reports which parameters carry the variance.",
         min_columns=2,
         installable=False,
@@ -145,18 +171,19 @@ METHODS: Tuple[Method, ...] = (
         key="hdbscan",
         title="HDBSCAN",
         family=LABELS,
-        probe=get_hdbscan,
-        package="hdbscan",
-        import_name="hdbscan",
+        probe=get_tttrlib,
+        package="tttrlib",
+        import_name="tttrlib",
         blurb="Density-based. Finds clusters of varying shape and leaves noise unlabelled.",
+        installable=False,
     ),
     Method(
         key="kmeans",
         title="K-means",
         family=LABELS,
-        probe=get_kmeans,
-        package="scikit-learn",
-        import_name="sklearn",
+        probe=get_tttrlib,
+        package="tttrlib",
+        import_name="tttrlib",
         blurb="Partitions every point into exactly k groups of similar spread.",
         installable=False,
     ),
@@ -250,33 +277,37 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
         if len(clean) < min_cluster_size:
             raise RuntimeError(f"Not enough data points for HDBSCAN: need at least "
                                f"{min_cluster_size}.")
-        backend = get_hdbscan()
+        if len(clean) < min_samples:
+            raise RuntimeError(f"Not enough data points for HDBSCAN: need at least "
+                               f"{min_samples} (min. samples).")
+        backend = get_tttrlib()
         if backend is None:
             raise RuntimeError(METHODS_BY_KEY["hdbscan"].unavailable())
         yield 0.4, "Running HDBSCAN"
-        clusterer = backend.HDBSCAN(min_samples=min_samples, min_cluster_size=min_cluster_size)
-        clusterer.fit(clean)
+        result = backend.hdbscan(clean, min_cluster_size=min_cluster_size,
+                                 min_samples=min_samples)
         yield 0.8, "HDBSCAN finished"
         if stop():
             return None, None
-        full_labels[mask] = np.asarray(clusterer.labels_, dtype=np.int32)
-        full_probabilities[mask] = np.asarray(clusterer.probabilities_, dtype=np.float64)
+        full_labels[mask] = np.asarray(result.labels, dtype=np.int32)
+        full_probabilities[mask] = np.asarray(result.probabilities, dtype=np.float64)
     elif method == "kmeans":
         n_clusters = int(params.get("n_clusters", 2))
         if len(clean) < n_clusters:
             raise RuntimeError(f"Not enough data points for K-means: need at least "
                                f"{n_clusters} (one per cluster).")
-        backend = get_kmeans()
+        backend = get_tttrlib()
         if backend is None:
             raise RuntimeError(METHODS_BY_KEY["kmeans"].unavailable())
         yield 0.4, "Running K-means"
-        clusterer = backend(n_clusters=n_clusters, random_state=42)
-        clusterer.fit(clean)
+        uniforms = backend.kmeans_uniforms(n_clusters, KMEANS_N_INIT, seed=KMEANS_SEED)
+        centres, labels, _stats = backend.kmeans(
+            np.ascontiguousarray(clean), n_clusters, uniforms, KMEANS_N_INIT, 300, 1e-4)
         yield 0.7, "K-means finished"
         if stop():
             return None, None
-        labels = np.asarray(clusterer.labels_, dtype=np.int32)
-        centres = np.asarray(clusterer.cluster_centers_, dtype=np.float64)
+        labels = np.asarray(labels, dtype=np.int32)
+        centres = np.asarray(centres, dtype=np.float64)
         distances = np.zeros(len(clean))
         batch = 100_000
         for start in range(0, len(clean), batch):

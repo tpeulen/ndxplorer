@@ -135,7 +135,6 @@ def test_a_missing_backend_declines_instead_of_crashing(explorer, dialog, monkey
     """
     from ndxplorer.analysis import clustering_helpers
 
-    monkeypatch.setattr(clustering_helpers, "get_hdbscan", lambda: None)
     monkeypatch.setattr(
         clustering_helpers, "_ensure_algorithm_available", lambda *a, **k: False
     )
@@ -200,10 +199,6 @@ def test_pca_recovers_the_planted_separation(explorer, qt_app):
 def test_hdbscan_finds_the_two_populations(explorer, dialog, qt_app):
     """End-to-end through the worker, on data with a known answer."""
     from qtpy import QtCore
-    from ndxplorer.utils.lazy_imports import get_hdbscan
-
-    if get_hdbscan() is None:
-        pytest.skip("hdbscan backend not available")
 
     dialog.on_clustering_method_changed("hdbscan")
     dialog._cluster_columns = {"Tau (green)", "Proximity ratio"}

@@ -1,12 +1,13 @@
 """Clustering and PCA: does any of it actually work?
 
 The clustering machinery has been here for a while with no test of any kind, and
-the first thing this suite found is that it was **switched off**: ``get_hdbscan``
+the first thing this suite found is that it was **switched off**: its getter
 only tried an optional third-party package, so on the environments that did not
 happen to carry it — most of them — HDBSCAN reported itself missing and the
-whole path silently did nothing. The implementation is ChiSurf's own now, so
-there is nothing left to be missing, but the reachability tests stay: a lazy
-getter that returns ``None`` is exactly the failure that hides.
+whole path silently did nothing. HDBSCAN and K-means are tttrlib's kernels now
+and PCA is NumPy, so there is nothing optional left to be missing, but the
+reachability tests stay: a probe that returns ``None`` is exactly the failure
+that hides.
 
 Three levels, deliberately:
 
@@ -25,7 +26,7 @@ import pytest
 from ndxplorer.analysis.clustering import ClusteringManager
 from ndxplorer.analysis.pca_helpers import add_pca_columns, compute_pca, pca_available
 from ndxplorer.core.data_source import DataSource
-from ndxplorer.utils.lazy_imports import get_hdbscan, get_kmeans, get_pca
+from ndxplorer.analysis import structure
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -71,47 +72,45 @@ def purity(labels, truth):
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Are the backends reachable?
 # ──────────────────────────────────────────────────────────────────────────────
-def test_hdbscan_is_reachable():
-    """HDBSCAN must be reachable from a plain ChiSurf install.
+def test_every_labelling_and_pca_is_reachable():
+    """HDBSCAN and K-means come from tttrlib, PCA from NumPy: all installed.
 
     This is the regression that motivated the suite: the getter used to try only
     ``import hdbscan``, an optional package, so the clustering path was dead on
-    environments that had everything it needed. The implementation is now
-    ChiSurf's own and there is nothing optional left to miss.
+    environments that had everything it needed.
     """
-    backend = get_hdbscan()
-    assert backend is not None, "HDBSCAN unreachable although ChiSurf is installed"
-    assert hasattr(backend, "HDBSCAN")
+    for key in ("hdbscan", "kmeans", "pca"):
+        method = structure.METHODS_BY_KEY[key]
+        assert method.available(), method.unavailable()
+        assert not method.installable, f"{key} ships with the app; nothing to install"
+    assert pca_available()
 
 
-def test_hdbscan_accepts_the_call_the_code_makes():
-    """The call site passes ``prediction_data``, a keyword of the old package.
-
-    ChiSurf's implementation accepts and ignores it, so the call sites did not
-    have to change when the dependency went away.
-    """
-    backend = get_hdbscan()
-    clusterer = backend.HDBSCAN(min_samples=5, min_cluster_size=5, prediction_data=True)
-    data, _ = three_blobs(n=40)
-    clusterer.fit(data)
-    assert hasattr(clusterer, "labels_")
-    assert hasattr(clusterer, "probabilities_"), "the write-back path reads probabilities_"
+def _labels(method, data, params):
+    work = structure.label_points(None, data, method, params)
+    try:
+        while True:
+            next(work)
+    except StopIteration as done:
+        return done.value
 
 
 def test_hdbscan_recovers_planted_blobs():
     """The backend must find the structure, not merely return arrays."""
-    backend = get_hdbscan()
-    clusterer = backend.HDBSCAN(min_samples=5, min_cluster_size=20, prediction_data=True)
     data, truth = three_blobs()
-    clusterer.fit(data)
-    assert hasattr(clusterer, "probabilities_")
-    assert purity(clusterer.labels_, truth) > 0.95
+    labels, probabilities = _labels("hdbscan", data, {"min_samples": 5, "min_cluster_size": 20})
+    assert purity(labels, truth) > 0.95
+    assert probabilities.shape == labels.shape
+    assert np.all((probabilities >= 0) & (probabilities <= 1))
 
 
-def test_kmeans_and_pca_are_reachable():
-    """The other two backends this module depends on."""
-    assert get_kmeans() is not None
-    assert get_pca() is not None and pca_available()
+def test_kmeans_is_reproducible():
+    """K-means draws its k-means++ stream from a fixed seed: same data, same labels."""
+    data, truth = three_blobs()
+    first, _ = _labels("kmeans", data, {"n_clusters": 3})
+    second, _ = _labels("kmeans", data, {"n_clusters": 3})
+    assert np.array_equal(first, second)
+    assert purity(first, truth) == 1.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────

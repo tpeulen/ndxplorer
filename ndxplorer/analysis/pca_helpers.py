@@ -23,6 +23,12 @@ scale and their relative magnitudes are the signal.
 **Missing values.** Rows with a NaN or Inf in any selected column cannot be
 projected. They are dropped for the fit and written back as NaN, so the added
 columns stay aligned with the table row for row.
+
+The decomposition is NumPy's: the singular values and right singular vectors of
+the centred table, taken from its ``R`` factor (``numpy.linalg.qr(mode="r")``)
+so a burst table of millions of rows never needs an ``(n_rows, n_columns)``
+``U``. No estimator library is involved, which is what lets the browser page
+run PCA without scikit-learn.
 """
 
 from __future__ import annotations
@@ -33,7 +39,6 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from ..logging_config import logging
-from ..utils.lazy_imports import get_pca
 
 if False:  # pragma: no cover
     from ..core.plot_main import NDXplorer
@@ -45,13 +50,9 @@ __all__ = [
     "pca_available",
 ]
 
-#: Above this many rows the batched estimator is used instead of the exact one.
-INCREMENTAL_THRESHOLD = 1_000_000
-
-
 def pca_available() -> bool:
-    """Whether scikit-learn's PCA can be imported."""
-    return get_pca() is not None
+    """Whether PCA can run: always, it is NumPy."""
+    return True
 
 
 @dataclass
@@ -86,7 +87,6 @@ class PcaResult:
     n_samples: int = 0
     n_dropped: int = 0
     standardized: bool = True
-    incremental: bool = False
 
     @property
     def n_components(self) -> int:
@@ -142,7 +142,6 @@ class PcaResult:
             "n_samples": int(self.n_samples),
             "n_dropped": int(self.n_dropped),
             "standardized": bool(self.standardized),
-            "incremental": bool(self.incremental),
         }
 
 
@@ -151,7 +150,6 @@ def compute_pca(
     columns: Sequence[str],
     n_components: int = 2,
     standardize: bool = True,
-    batch_size: int = 10_000,
 ) -> Optional[PcaResult]:
     """Fit a principal component analysis to *data*.
 
@@ -169,21 +167,12 @@ def compute_pca(
         columns genuinely share a scale: PCA maximises variance, so without it a
         column measured in thousands dominates one measured in units regardless
         of what either says.
-    batch_size : int
-        Batch size for the incremental estimator, used above
-        :data:`INCREMENTAL_THRESHOLD` rows.
 
     Returns
     -------
     PcaResult or None
-        ``None`` when scikit-learn is unavailable, or no row survives.
+        ``None`` when fewer than two rows survive.
     """
-    backend = get_pca()
-    if backend is None:
-        logging.error("scikit-learn is not available; cannot compute PCA.")
-        return None
-    pca_cls, incremental_cls = backend
-
     data = np.asarray(data, dtype=float)
     if data.ndim != 2 or data.shape[1] == 0:
         logging.error("PCA needs a 2-D array with at least one column.")
@@ -207,27 +196,43 @@ def compute_pca(
         prepared = clean - clean.mean(axis=0)
 
     n_components = max(1, min(int(n_components), prepared.shape[1], prepared.shape[0]))
-    use_incremental = prepared.shape[0] > INCREMENTAL_THRESHOLD
-    if use_incremental:
-        model = incremental_cls(n_components=n_components,
-                                batch_size=max(int(batch_size), n_components))
-    else:
-        model = pca_cls(n_components=n_components, svd_solver="auto", random_state=0)
-
-    scores = model.fit_transform(prepared)
+    loadings, ratio = _principal_axes(prepared, n_components)
+    scores = prepared @ loadings.T
 
     projections = np.full((data.shape[0], n_components), np.nan)
     projections[finite] = scores
     return PcaResult(
         projections=projections,
-        explained_variance_ratio=np.asarray(model.explained_variance_ratio_, dtype=float),
-        loadings=np.asarray(model.components_, dtype=float),
+        explained_variance_ratio=ratio,
+        loadings=loadings,
         columns=list(columns),
         n_samples=int(clean.shape[0]),
         n_dropped=n_dropped,
         standardized=bool(standardize),
-        incremental=bool(use_incremental),
     )
+
+
+def _principal_axes(centred: np.ndarray, n_components: int):
+    """``(loadings, explained_variance_ratio)`` of a centred table.
+
+    The right singular vectors of *centred* are the principal axes and its
+    squared singular values the variances along them. They are read off the
+    ``(n_columns, n_columns)`` ``R`` of a QR factorisation, which has the same
+    singular values and right vectors as the table itself. Each axis is signed
+    so its largest-magnitude loading is positive -- a component's sign is
+    arbitrary, and a fixed rule keeps two runs (and the report) agreeing.
+    """
+    r = np.linalg.qr(centred, mode="r")
+    _, singular, vt = np.linalg.svd(r, full_matrices=False)
+    variance = singular ** 2
+    total = float(variance.sum())
+    ratio = variance[:n_components] / (total if total > 0 else 1.0)
+    loadings = vt[:n_components].copy()
+    peak = np.argmax(np.abs(loadings), axis=1)
+    signs = np.sign(loadings[np.arange(n_components), peak])
+    signs[signs == 0] = 1.0
+    loadings *= signs[:, None]
+    return loadings, np.asarray(ratio, dtype=float)
 
 
 def add_pca_columns(

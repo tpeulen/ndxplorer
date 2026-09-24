@@ -7,8 +7,8 @@ that runs the fit, and a completion handler that puts the labels somewhere the
 plot can find them. An analysis can be perfectly correct and still never arrive.
 
 These tests drive that path with a real ``NDXplorer`` window under the offscreen
-Qt platform — including HDBSCAN, which was unreachable until ``get_hdbscan``
-learned to fall back to scikit-learn.
+Qt platform — including HDBSCAN, which was once unreachable because its getter
+tried only an optional package; it is tttrlib's kernel now.
 """
 
 from __future__ import annotations

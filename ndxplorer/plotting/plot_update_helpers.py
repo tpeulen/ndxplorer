@@ -8,7 +8,7 @@ from ..logging_config import logging
 
 from ..utils.histogram_helpers import z_axis_available
 
-from ..utils.lazy_imports import get_hdbscan
+from ..analysis.structure import get_tttrlib
 from ..utils.performance import compute_percentile_range_optimized
 
 def _as_edges_counts(hist):
@@ -347,10 +347,9 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
 
     logging.debug("update_plots: Checking clustering: _use_clustering=%s, skip_clustering=%s", ndxplorer._use_clustering, skip_clustering)
     if ndxplorer._use_clustering and ndxplorer._cluster_labels is None and not skip_clustering:
-        # The clusterer is loaded through the shared getter, which caches and
-        # logs; a second private import here is how the two paths drifted into
-        # disagreeing about whether clustering was available at all.
-        if get_hdbscan() is not None:
+        # The same probe the dialogs use, so the two paths cannot disagree
+        # about whether clustering is available at all.
+        if get_tttrlib() is not None:
             ndxplorer.on_apply_clustering()
             return
 

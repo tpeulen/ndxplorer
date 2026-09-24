@@ -13,8 +13,6 @@ import importlib.util
 import numpy as np
 
 # Delay imports of heavy libraries
-hdbscan = None  # For clustering
-KMeans = None   # For clustering
 GaussianMixture = None  # For Gaussian Mixture Modeling
 umap = None     # For dimensionality reduction
 napari = None   # For image visualization in external viewer
