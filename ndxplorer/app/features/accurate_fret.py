@@ -717,6 +717,10 @@ class AccurateFretFeature(Feature):
             self.message("Accurate FRET", str(result.get("error") or "calibration failed"))
             return
         model = self.app.model
+        # A factor this run wrote as one value replaces a stale vector of it.
+        replace = getattr(model.manager.constants, "replace_shared_factors", None)
+        if callable(replace):
+            replace(result)
         apply_result(result, write_constants=self.write_constants, data_source=model.source,
                      write_vector=self.write_vector)
         model.invalidate()
