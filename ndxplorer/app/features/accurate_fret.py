@@ -400,6 +400,8 @@ class AccurateFretFeature(Feature):
         self._file_answers: List[str] = []
         self._answered: List[Question] = []
         self._front: Optional[Question] = None
+        #: container -> the stored constants last restored from it.
+        self._restored: Dict[str, dict] = {}
 
     # -------------------------------------------------------- the window
     @property
@@ -414,17 +416,10 @@ class AccurateFretFeature(Feature):
                 if _float(v) is not None}
 
     def container(self) -> str:
-        """The `.pto` the bursts came from, when the container can be written here."""
+        """The `.pto` the bursts came from (tttrlib reads and writes it), or ``""``."""
         from ...io.fret_calibration_io import container_of
 
-        path = container_of(self)
-        if not path:
-            return ""
-        try:
-            import chisurf.core.fio.pto  # noqa: F401 - the container route needs it
-        except Exception:  # noqa: BLE001 - no container route, the file route stays
-            return ""
-        return path
+        return container_of(self)
 
     def write_vector(self, name: str, vector: dict) -> None:
         """Make constant *name* a per-population vector (species-specific factor).
@@ -439,8 +434,13 @@ class AccurateFretFeature(Feature):
         set_vector = getattr(constants, "set_vector", None)
         if not callable(set_vector):
             return
-        set_vector(name, list(vector["values"]), [str(p) for p in vector["populations"]],
-                   uncertainties=vector.get("uncertainties"), default=vector.get("default"),
+        populations = [str(p) for p in vector["populations"]]
+        uncertainties = vector.get("uncertainties")
+        if isinstance(uncertainties, dict):
+            # as :meth:`vectors` saves them: by population, not by position
+            uncertainties = [uncertainties.get(p) for p in populations]
+        set_vector(name, list(vector["values"]), populations,
+                   uncertainties=uncertainties, default=vector.get("default"),
                    column=vector.get("column"), probabilities=vector.get("probabilities"),
                    codes=vector.get("codes"))
 
@@ -484,7 +484,43 @@ class AccurateFretFeature(Feature):
                 logger.warning("Recompute after the calibration failed: %s", exc)
         model.invalidate()
 
+    def restore_stored(self) -> dict:
+        """Apply the constants the opened measurement stores (as the Qt window does).
+
+        The newest saved calibration (constants and vector constants, as Load
+        applies them) and the background step's rates
+        (:func:`~ndxplorer.io.fret_calibration_io.restorable`), so the window
+        holds the constants determined on the data now loaded. Once per
+        *value*: a container whose stored constants have not moved since they
+        were last restored leaves the window as it is, so anything tuned since
+        stays; a newly stored background or calibration is followed.
+        """
+        from ...io.fret_calibration_io import container_of, restorable
+
+        container = container_of(self)
+        if not container:
+            return {}
+        try:
+            stored = restorable(container)
+        except Exception:  # noqa: BLE001 - a window that cannot restore keeps its constants
+            logger.debug("could not read the stored constants of %s", container, exc_info=True)
+            return {}
+        values = {**stored["background"], **stored["saved"]}
+        if not values or self._restored.get(container) == values:
+            return {}
+        self._restored[container] = values
+        self.write_constants(values)
+        for name, vector in stored["vectors"].items():
+            if vector.get("values") and vector.get("populations"):
+                self.write_vector(name, vector)
+        self.app.show_status(f"Restored {len(values)} constants stored in "
+                             f"{pathlib.Path(container).name}")
+        return values
+
     # --------------------------------------------------------------- hooks
+    def on_data_changed(self) -> None:
+        self.restore_stored()
+
     def actions(self) -> Dict[str, Callable[[], Any]]:
         return {"fret_calibration": self.fret_calibration,
                 "save_fret_calibration": self.save_calibration,

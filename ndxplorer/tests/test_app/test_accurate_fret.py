@@ -211,10 +211,12 @@ def test_save_and_load_round_trip_through_a_file(app, backend, home):
 
 def test_save_and_load_round_trip_through_the_container(app, backend, tmp_path):
     """With a `.pto` behind the bursts, Yes stores into it and Load offers it back."""
-    pto = pytest.importorskip("chisurf.core.fio.pto")
+    import tttrlib
+
     container = tmp_path / "measurement.pto"
-    with pto.Measurement.create_empty(container, title="test"):
-        pass
+    handle = tttrlib.PtoFile()
+    assert handle.create(str(container), "test") and handle.commit()
+    handle.close()
     app.model.source.provenance = {"container_path": str(container)}
     f = feature(app)
     f.write_constants({"alpha": 0.321})
@@ -277,3 +279,34 @@ def test_nothing_here_imports_qt():
             "print([m for m in sys.modules if m.startswith(('PyQt', 'qtpy', 'PySide'))])")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+def test_opening_a_measurement_restores_its_stored_constants(app, tmp_path):
+    """Its newest saved calibration and background are applied, once per value."""
+    import tttrlib
+
+    from ndxplorer.io.fret_calibration_io import save_calibration
+
+    container = tmp_path / "measurement.pto"
+    handle = tttrlib.PtoFile()
+    assert handle.create(str(container), "test") and handle.commit()
+    handle.close()
+    # the vector as `vectors()` saves it: uncertainties by population
+    vector = {"populations": ["FRET 1", "FRET 2"], "values": [0.45, 0.81],
+              "uncertainties": {"FRET 1": 0.02, "FRET 2": 0.12}, "column": "Population"}
+    save_calibration({"alpha": 0.234, "gG/gR": 0.77}, path=None, embed=True,
+                     vectors={"gamma": vector},
+                     ndx=type("W", (), {"data_source": type("S", (), {
+                         "provenance": {"container_path": str(container)}})()})())
+    f = feature(app)
+    app.model.source.provenance = {"container_path": str(container)}
+    app.data_changed()
+    assert f.constants["alpha"] == pytest.approx(0.234)
+    assert f.constants["gG/gR"] == pytest.approx(0.77)
+    assert f.vectors()["gamma"]["values"] == pytest.approx([0.45, 0.81])
+    assert f.vectors()["gamma"]["uncertainties"] == pytest.approx({"FRET 1": 0.02,
+                                                                   "FRET 2": 0.12})
+
+    f.write_constants({"alpha": 0.5})            # tuned by hand afterwards
+    app.data_changed()
+    assert f.constants["alpha"] == pytest.approx(0.5), "an unchanged store was re-applied"
