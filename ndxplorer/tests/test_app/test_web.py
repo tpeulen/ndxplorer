@@ -72,20 +72,17 @@ def test_a_shadowing_directory_is_refused(tmp_path, monkeypatch):
         web._package_dir("shadowpkg")
 
 
-def test_without_the_parameter_runtime_the_gaussian_group_says_so(monkeypatch):
-    """A page without an IMP wheel imports chisurf's parameter classes but cannot
-    make a parameter. The Gaussian group must fail when it is built -- where the
-    panel catches it and shows why -- not on the first "add", inside a frame."""
-    try:
-        import chisurf.core.parameter as parameter
-    except Exception as exc:  # noqa: BLE001 - no chisurf, or an IMP build mid-rebuild
-        pytest.skip(f"chisurf.core.parameter does not import here: {exc}")
+def test_without_the_parameter_runtime_the_gaussians_still_work(monkeypatch):
+    """A page without an IMP wheel still fits Gaussians: they are nDXplorer's own
+    parameters, and only the optional ChiSurf mirror needs the runtime."""
+    from ndxplorer.core import chisurf_binding
     from ndxplorer.core import gaussian_parameters as gp
 
-    monkeypatch.setattr(parameter, "_bff", None)
-    monkeypatch.setattr(parameter, "_bff_import_error", "No module named 'IMP'", raising=False)
-    with pytest.raises(ImportError, match="IMP"):
-        gp.build_gaussian_group()
+    monkeypatch.setattr(chisurf_binding, "_STATE", {"ok": False, "why": "No module named 'IMP'"})
+    group = gp.build_gaussian_group()
+    group.append((1.0, 2.0), [[0.04, 0.0], [0.0, 0.09]])
+    assert len(group) == 1 and group.components()[0].mu.tolist() == [1.0, 2.0]
+    assert chisurf_binding.chisurf_group(group) is None
 
 
 def test_the_wheels_are_found_by_variable_and_an_optional_one_may_be_missing(
