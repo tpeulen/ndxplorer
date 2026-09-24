@@ -118,6 +118,9 @@ if HAS_CHISURF:
                 layout.addLayout(add_bar)
                 self._register_group()
                 self._subscribe_external()
+                # A vector made or dropped from the table's own menu (Make
+                # vector… / Make scalar) changes the rows.
+                self._group.listen(self._on_group_changed)
             except Exception as exc:
                 # Degrade gracefully to the legacy dict editor.
                 logging.warning(
@@ -174,9 +177,14 @@ if HAS_CHISURF:
             unregister_group(_NDX_OWNER_ID)
             self._registered = False
 
+        def _on_group_changed(self, _group=None):
+            self._refresh_table()
+
         def closeEvent(self, event):  # noqa: N802 (Qt override)
             self._unsubscribe_external()
             self._unregister_group()
+            if self._group is not None:
+                self._group.unlisten(self._on_group_changed)
             super().closeEvent(event)
 
         # -- live mapping (Phase 2) ---------------------------------------

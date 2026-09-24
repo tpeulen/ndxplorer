@@ -103,6 +103,9 @@ class _Mirror:
                                       bounds_on=bounds_on)
                 self.pairs[id(p)] = cs
                 _BACK[id(cs)] = p
+                # ChiSurf's Qt table offers Make vector… / Populations… /
+                # Make scalar on a parameter that carries this.
+                cs.population_vector = PopulationVectorActions(p)
                 p._mirror = self
                 self.seen[id(p)] = self._read(cs)
             alive.add(id(p))
@@ -190,6 +193,72 @@ class _Mirror:
         if mirror is not None:
             return mirror.pairs.get(id(link))
         return link if hasattr(link, "_port") else None
+
+
+class PopulationVectorActions:
+    """What ChiSurf's parameter table needs to make an nDXplorer parameter a vector.
+
+    Attached to each mirror as ``population_vector`` -- the protocol ChiSurf's
+    ``ParameterGroupTableWidget`` looks for (``chisurf/gui/autoform/sections/parameter_table.py``):
+    ``is_vector``, ``can_be_vector``, ``name``, ``populations``, ``column``,
+    ``column_options()``, ``set_populations(text, column) -> error or None`` and
+    ``to_scalar()``. An element's actions are its vector's. The model calls
+    are the ones the emtk table's menu makes
+    (:meth:`~ndxplorer.core.parameters.Parameter.set_populations`,
+    :meth:`~ndxplorer.core.parameters.Parameter.to_scalar`).
+    """
+
+    def __init__(self, parameter) -> None:
+        self._parameter = parameter
+
+    @property
+    def target(self):
+        """The vector (or scalar) the actions act on: an element's parent."""
+        p = self._parameter
+        return p.parent if p.parent is not None else p
+
+    @property
+    def name(self) -> str:
+        return self.target.name
+
+    @property
+    def is_vector(self) -> bool:
+        return self.target.is_vector
+
+    @property
+    def can_be_vector(self) -> bool:
+        return hasattr(self.target, "set_populations")
+
+    @property
+    def populations(self) -> List[str]:
+        return self.target.populations
+
+    @property
+    def column(self) -> str:
+        from .vector_constants import DEFAULT_COLUMN
+
+        return str(self.target.vector_state().get("column") or DEFAULT_COLUMN)
+
+    def column_options(self) -> List[str]:
+        from .vector_constants import DEFAULT_COLUMN
+
+        return list(dict.fromkeys([self.column, DEFAULT_COLUMN]))
+
+    def set_populations(self, text: str, column: Optional[str] = None) -> Optional[str]:
+        """Parse *text* (``"3"`` or ``"HF, LF"``) and make the vector; an error, or ``None``."""
+        from .vector_constants import parse_populations
+
+        labels = parse_populations(text)
+        if not labels:
+            return "Give how many populations, or their names (HF, LF)."
+        try:
+            self.target.set_populations(labels, column=column or None)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def to_scalar(self) -> None:
+        self.target.to_scalar()
 
 
 def _mirror(group) -> Optional[_Mirror]:

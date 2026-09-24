@@ -47,6 +47,7 @@ __all__ = [
     "vector_bases",
     "vectors_from_values",
     "summary_text",
+    "parse_populations",
 ]
 
 #: The label column a new vector selects by: what K-means / Find structure write.
@@ -173,6 +174,23 @@ class PopulationVector:
 
     def summary(self) -> str:
         return summary_text(self.values)
+
+
+def parse_populations(text) -> List[str]:
+    """``"3"`` -> ``["0", "1", "2"]``; ``"HF, LF"`` -> ``["HF", "LF"]``.
+
+    A count names the populations by their code in a label column (K-means
+    writes 0, 1, 2 …); names are kept in their order, duplicates dropped.
+    """
+    text = str(text or "").strip()
+    if text.isdigit():
+        return [str(i) for i in range(int(text))]
+    out: List[str] = []
+    for part in text.replace(";", ",").split(","):
+        part = part.strip()
+        if part and part not in out and "[" not in part and "]" not in part:
+            out.append(part)
+    return out
 
 
 def summary_text(values: Sequence[float], limit: int = 6) -> str:

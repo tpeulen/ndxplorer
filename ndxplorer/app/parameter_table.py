@@ -56,6 +56,8 @@ __all__ = [
     "vector_records",
 ]
 
+from ..core.vector_constants import parse_populations  # noqa: E402,F401 - re-exported
+
 #: What an unbounded side shows.
 LOW, HIGH = "−∞", "∞"
 
@@ -172,23 +174,6 @@ def parameter_record(parameter: Any, key: Optional[str] = None, name: Optional[s
 def parent_key(name: str) -> str:
     """The row key of vector *name*'s parent row (never a parameter's name)."""
     return f"{name}[]"
-
-
-def parse_populations(text) -> List[str]:
-    """``"3"`` -> ``["0", "1", "2"]``; ``"HF, LF"`` -> ``["HF", "LF"]``.
-
-    A count names the populations by their code in a label column (K-means
-    writes 0, 1, 2 …); names are kept in their order, duplicates dropped.
-    """
-    text = str(text or "").strip()
-    if text.isdigit():
-        return [str(i) for i in range(int(text))]
-    out: List[str] = []
-    for part in text.replace(";", ",").split(","):
-        part = part.strip()
-        if part and part not in out and "[" not in part and "]" not in part:
-            out.append(part)
-    return out
 
 
 def vector_records(parameter: Any, name: str) -> List[dict]:
@@ -452,10 +437,7 @@ class ParameterTable:
         A population it already has keeps its element; a new one starts at the
         global value.
         """
-        default = float(parameter.value)
-        values = [float(parameter.element(l).value) if parameter.element(l) is not None
-                  else default for l in populations]
-        parameter.set_vector(values, list(populations), column=column)
+        parameter.set_populations(populations, column=column)
         self.expanded.add(parent_key(parameter.name))
         self.changed()
 

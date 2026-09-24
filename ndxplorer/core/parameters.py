@@ -323,6 +323,20 @@ class Parameter:
         self._structure_changed()
         return out
 
+    def set_populations(self, populations: Sequence[str],
+                        column: Optional[str] = None) -> List["Parameter"]:
+        """*Make vector…* / *Populations…*: hold one value for each of *populations*.
+
+        A population the vector already has keeps its element; a new one starts
+        at the global value. What every table's vector menu calls (the emtk
+        :class:`~ndxplorer.app.parameter_table.ParameterTable`, ChiSurf's Qt
+        table through :mod:`ndxplorer.core.chisurf_binding`).
+        """
+        default = float(self.value)
+        values = [float(self.element(l).value) if self.element(l) is not None else default
+                  for l in populations]
+        return self.set_vector(values, list(populations), column=column)
+
     def to_vector(self, populations: Sequence[str],
                   column: Optional[str] = None) -> List["Parameter"]:
         """A scalar becomes a vector: every element starts at its value."""
