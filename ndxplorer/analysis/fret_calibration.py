@@ -134,7 +134,7 @@ class CalibrationOptions:
         self.species_factors: str = "auto"
         #: How the populations are found: "gmm" (Gaussian mixture) or "hdbscan"
         #: (tttrlib's ``population_method``, when the installed tttrlib has it).
-        self.population_method: str = "gmm"
+        self.population_method: str = "hdbscan"
         #: The gating dimensions. S alone is the stoichiometry gating the
         #: calibration always had; any other one switches to the
         #: multidimensional mixture over all ticked ones (about ten times slower).
@@ -187,7 +187,7 @@ class CalibrationOptions:
             "inject_columns": bool(self.inject_columns),
             "species_factors": mode if mode in SPECIES_MODES else "auto",
             "dimensions": self.dimensions(),
-            "population_method": str(self.population_method or "gmm").lower(),
+            "population_method": str(self.population_method or "hdbscan").lower(),
         }
 
     def save_requested(self) -> bool:

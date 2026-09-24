@@ -240,7 +240,7 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
         dimensions = []
     extra_columns = {dim: table[available[dim]] for dim in ("tau_a", "r_d", "r_a")
                      if dim in dimensions}
-    method = str(opts.get("population_method") or "gmm").lower()
+    method = str(opts.get("population_method") or "hdbscan").lower()
     method_supported = not population_method_reason()
     if method != "gmm" and not method_supported:
         notes.append(f"population finder {method!r} not available ({population_method_reason()}); "

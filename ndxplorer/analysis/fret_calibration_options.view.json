@@ -102,7 +102,7 @@
       "Gaussian mixture",
       "HDBSCAN"
      ],
-     "description": "How the donor-only, acceptor-only and FRET populations are found in the gating dimensions. 'Gaussian mixture' (default) fits Gaussian components and picks their number by the BIC; it is what the calibration's numbers were pinned with. 'HDBSCAN' finds dense clusters of any shape and leaves sparse bursts unassigned, so a smeared or non-Gaussian population is not split into several components or merged with a neighbour. Needs a tttrlib whose calibration has the population_method option; otherwise this choice is disabled and the Gaussian mixture is used."
+     "description": "How the donor-only, acceptor-only and FRET populations are found in the gating dimensions. 'HDBSCAN' (default) finds dense clusters of any shape and leaves sparse bursts unassigned, so a smeared or non-Gaussian population is not split into several components or merged with a neighbour; outliers are removed per dimension before the dimensions are scaled. 'Gaussian mixture' fits Gaussian components and picks their number by the BIC. On cal1 with S+E the mixture took 45 s and lost the donor-only class; HDBSCAN took 3 s. Only used when gating dimensions beyond S are chosen. Needs a tttrlib whose calibration has the population_method option; otherwise this choice is disabled and the Gaussian mixture is used."
     },
     {
      "type": "panel",

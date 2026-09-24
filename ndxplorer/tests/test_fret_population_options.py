@@ -88,7 +88,7 @@ def test_the_options_round_trip_through_the_form_and_the_run():
     kwargs = opts.as_kwargs()
     # the defaults are what the calibration always did
     assert kwargs["species_factors"] == "auto" and kwargs["dimensions"] == []
-    assert kwargs["population_method"] == "gmm"
+    assert kwargs["population_method"] == "hdbscan"
     opts.species_factors, opts.gate_E, opts.gate_tau_d = "On", True, True
     opts.population_method = "hdbscan"
     kwargs = opts.as_kwargs()
