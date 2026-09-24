@@ -321,3 +321,27 @@ def test_the_z_ranking_sets_and_enables_z(window, qapp):
     assert model.rows[0]["name0"] in {"Tau", "r"}
     assert window.plot_control.p3[1] == model.rows[0]["name0"]
     assert window.checkBoxEnableZ.isChecked()
+
+
+def test_the_islands_of_the_view_become_the_window_clusters(window, qapp):
+    """*Use islands as clusters* in the Qt window: Cluster Label, the spin box
+    range and an Island Label column, as a Find structure run leaves them."""
+    model = window.projection_rank.open(True)
+    wait_done(qapp, model)
+    control = window.plot_control
+    names = (control.p1[1], control.p2[1])
+    assert set(names) == {"Tau", "r"}
+    assert not model.use_islands_hidden
+    model.use_islands()
+    qapp.processEvents()
+    source = window.data_source
+    labels = np.asarray(source.column_values("Cluster Label"))
+    assert np.array_equal(labels, window._cluster_labels)
+    assert set(np.unique(labels)) <= {-1, 0, 1} and {0, 1} <= set(np.unique(labels))
+    assert np.sum(labels == 0) > np.sum(labels == 1), "numbered by size"
+    island = np.asarray(source.column_values(f"Island Label ({names[0]} vs {names[1]})"))
+    assert np.array_equal(island, labels)
+    assert control.spinBoxCluster.maximum() == 1
+    assert control.checkBoxColorClusters.isChecked()
+    assert window.statusBar().currentMessage().startswith(
+        f"2 islands of {names[0]} vs {names[1]} written as clusters 0\u20131")

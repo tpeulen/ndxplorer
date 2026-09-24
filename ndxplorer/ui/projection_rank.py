@@ -110,6 +110,9 @@ class ProjectionRankController:
         if model is None:
             model = ProjectionRankModel(lambda: collect_context(self.window), pairs,
                                         on_apply=self.apply, defer=_qt_defer)
+            if pairs:
+                model.clusters_available = True
+                model.on_use_islands = self.use_islands_as_clusters
             self.dialogs[pairs] = VizRankWindow(model, self.window)
         else:
             model.refresh_context()
@@ -157,6 +160,45 @@ class ProjectionRankController:
                 self._set_axis(control, "y", payload["y"], payload.get("scale_y", "lin"))
         finally:
             self._applying = False
+
+    def use_islands_as_clusters(self) -> None:
+        """*Use islands as clusters*: the islands of the x/y view become the
+        window's clusters, as a finished Find structure run would make them
+        (``on_clustering_done``: the columns, the spin box range), plus a
+        column ``Island Label (x vs y)``; the map is coloured by cluster."""
+        window = self.window
+        dialog = self.dialogs.get(True)
+        source = getattr(window, "data_source", None)
+        if dialog is None or source is None or source.empty:
+            return
+        control = window.plot_control
+        names = (control.p1[1], control.p2[1])
+        try:
+            found = dialog.model.island_clusters(names, source.column_values)
+        except Exception:  # noqa: BLE001 - said in the status bar
+            logger.debug("islands as clusters failed", exc_info=True)
+            found = None
+        if found is None:
+            message = (f"{names[0]} vs {names[1]} was not ranked by Separation: "
+                       "show a ranked view first.")
+        elif found.count < 2:
+            message = f"One population in {names[0]} vs {names[1]}: no islands to use as clusters."
+        else:
+            replaced = getattr(window, "_cluster_labels", None) is not None
+            source.set_column(found.column, found.labels)
+            window._use_clustering = True
+            window.on_clustering_done((found.labels, found.probabilities))
+            box = getattr(control, "checkBoxColorClusters", None)
+            if box is not None:
+                box.setChecked(True)
+            request = getattr(window, "request_plot_update", None)
+            if callable(request):
+                request()
+            message = found.status(replaced)
+        try:
+            window.statusBar().showMessage(message, 10000)
+        except Exception:  # pragma: no cover - no status bar in some hosts
+            logger.info(message)
 
     @staticmethod
     def _set_axis(control, axis: str, name: str, scale: str) -> None:
