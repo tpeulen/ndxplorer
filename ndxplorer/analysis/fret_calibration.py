@@ -14,10 +14,10 @@ windows need and neither should hold twice:
   algorithm;
 * :func:`report_text`, the report a finished calibration is read in.
 
-The algorithm itself is not here. It lives in a compiled library shared with
-ChiSurf; until that library is wired in, :func:`backend` returns ``None`` and
-the windows say why the calibration cannot run. :func:`set_backend` installs
-one (a test's, or the library's).
+The algorithm itself is not here: it is tttrlib's (``tttrlib.auto_calibrate``),
+shared with ChiSurf, and :mod:`ndxplorer.analysis.fret_backend` is ndX's side
+of it -- the default :func:`backend`. ChiSurf is optional throughout.
+:func:`set_backend` installs another one (a test's).
 
 Nothing here imports Qt or chisurf.
 """
@@ -152,8 +152,8 @@ Backend = Callable[..., dict]
 _BACKEND: Dict[str, Any] = {"fn": None}
 
 #: Why no calibration can run, when no backend is installed.
-NO_BACKEND = ("Accurate FRET needs ChiSurf's FRET calibration, which could not be "
-              "imported here.")
+NO_BACKEND = ("Accurate FRET needs tttrlib's FRET calibration (tttrlib.auto_calibrate), "
+              "which this tttrlib does not have.")
 
 
 def set_backend(fn: Optional[Backend]) -> None:
@@ -162,13 +162,14 @@ def set_backend(fn: Optional[Backend]) -> None:
 
 
 def backend() -> Optional[Backend]:
-    """The installed backend: the one :func:`set_backend` put in, else ChiSurf's
-    calibration when ChiSurf is importable, else ``None``."""
+    """The installed backend: the one :func:`set_backend` put in, else ndX's own
+    (:func:`ndxplorer.analysis.fret_backend.calibrate_columns`, computed by
+    tttrlib), else ``None`` when tttrlib lacks the calibration."""
     if _BACKEND["fn"] is None:
         try:
-            from chisurf.plugins.ndxplorer.calibration_bridge import calibrate_columns
-        except Exception:  # noqa: BLE001 - no ChiSurf: the windows say why
-            logger.warning("no FRET calibration backend: ChiSurf's calibration "
+            from .fret_backend import calibrate_columns
+        except Exception:  # noqa: BLE001 - a tttrlib without auto_calibrate
+            logger.warning("no FRET calibration backend: tttrlib's calibration "
                            "could not be imported", exc_info=True)
             return None
         _BACKEND["fn"] = calibrate_columns

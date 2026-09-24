@@ -1,8 +1,8 @@
 """Accurate FRET in the emtk app: the FRET menu, the host interface, save and load.
 
 The calibration algorithm is a backend behind
-:func:`ndxplorer.analysis.fret_calibration.calibrate` (it is moving into a
-compiled library). These tests install a small deterministic backend, so what
+:func:`ndxplorer.analysis.fret_calibration.calibrate` (by default ndX's own,
+computed by tttrlib). These tests install a small deterministic backend, so what
 is checked is the window's side of the contract: what it hands over, how it
 applies the result, the report, and keeping the calibration.
 """
@@ -112,11 +112,10 @@ def test_burst_columns_and_apply_result_write_into_a_data_source():
     assert np.allclose(source.column_values("E acc"), 1.0)
 
 
-def test_with_chisurf_the_calibration_runs_on_chisurfs_code(app):
-    """No backend installed: ChiSurf's calibration is the one used, and Calibrate is on."""
-    pytest.importorskip("chisurf.plugins.ndxplorer.calibration_bridge")
-    from chisurf.plugins.ndxplorer.calibration_bridge import calibrate_columns
+def test_the_default_backend_is_ndxs_own_on_tttrlib(app):
+    """No backend installed: ndX's own calibration (tttrlib) is used, and Calibrate is on."""
     from ndxplorer.analysis import fret_calibration as fc
+    from ndxplorer.analysis.fret_backend import calibrate_columns
 
     fc.set_backend(None)
     assert fc.backend() is calibrate_columns
@@ -129,14 +128,15 @@ def test_without_a_backend_the_options_say_why_and_calibrate_is_off(app, monkeyp
     from ndxplorer.analysis import fret_calibration as fc
 
     fc.set_backend(None)
-    # no ChiSurf: its calibration cannot be imported
-    monkeypatch.setitem(sys.modules, "chisurf.plugins.ndxplorer.calibration_bridge", None)
+    # a tttrlib without the calibration: the backend cannot be imported
+    monkeypatch.setitem(sys.modules, "ndxplorer.analysis.fret_backend", None)
     assert app.run_action("fret_calibration")
     draw(app)
     dialog = feature(app).window
     assert dialog.unavailable_text() == fc.NO_BACKEND
     assert not dialog.enabled("calibrate")
     assert fc.calibrate({}, {}, fc.CalibrationOptions())["ok"] is False
+    fc.set_backend(None)
 
 
 def test_a_calibration_run_applies_constants_and_columns_and_reports(app, backend):
