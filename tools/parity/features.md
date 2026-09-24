@@ -508,14 +508,14 @@ from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
 - `rpc_bridge.make_ndxplorer`: an in-process ChiSurf RPC client (`chisurf_rpc`), which gives the **ChiSurf Phasor** toolbar and panel and the "Send selection to" targets (PDA, burst FCS, burst MLE); and **the calibration stored in an opened `.pto` is restored** into the constants (factor table, background artifact, saved `fret_calibration`).
 - the **Accurate FRET** toolbar: FRET calibration, Save calibration, Load calibration, Sync constants;
 - the **MMFDB** toolbar (Open from MMFDB), only when `mmfdb.status` answers;
-- the constants published as fitting parameters in the **Global View** (`parameters.bind_ndx_parameters`).
+- the constants published as fitting parameters in the **Global View** (`window._bind_global_view`: since 2026-09-24 the window's own constants group through `core/chisurf_binding`'s one mirror; the "⟲ Sync constants" action went with the copy it synchronised).
 - Not GUI: `cli.py` (`chisurf ndxplorer filter|image`, MMFDB-backed headless runs) and `mmfdb_launcher.open_burst_selection_from_mmfdb` / `send_path_to_ndxplorer` (other plugins open ndX with a path).
 - Trap: ChiSurf's *menu* route (`run_plugin_from_dir`) opens the manifest's `entrypoints.gui` (`make_ndxplorer`) and never runs `__init__.py`, so a window opened from the menu has the Phasor toolbar and the restore, but **no Accurate FRET or MMFDB toolbar and no Global View parameters**; only the ribbon route runs the decoration.
 
 ## chisurf_toolbars — ChiSurf-hosted window: the toolbars and constants ChiSurf adds
 
 - [~] Toolbar "Accurate FRET" (🎯 FRET calibration, 💾 Save calibration, 📂 Load calibration, ⟲ Sync constants) — the **FRET** menu (before Help): FRET calibration…, Save calibration…, Load calibration…, in the app whether or not ChiSurf hosts it; no toolbar button (the toolbar's space was just given to the map)
-- [-] "⟲ Sync constants" (Global View -> window, then back) — not needed: the emtk constants *are* the registered parameter group (`overlays.ConstantsPanel` registers it as owner `ndxplorer`, the slot `bind_ndx_parameters` uses), so a Global View edit is the window's value; there is no copy to sync
+- [-] "⟲ Sync constants" (Global View -> window, then back) — not needed: the emtk constants *are* the registered parameter group (`overlays.ConstantsPanel` registers it as owner `ndxplorer`, the slot the Qt window publishes in too), so a Global View edit is the window's value; there is no copy to sync
 - [ ] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — not ported (see chisurf_phasor)
 - [ ] Opening a `.pto` restores its stored calibration (Qt shot `parameters_restored`: gG/gR 1.333, PhiA = PhiD = 1, alpha 0.157, beta 0.0674, r 0.9435, Bg/Br/By 4.24/0.538/2.02) — not yet: the restore is `calibration_bridge.restore_calibration_from_container`, held for the accurate-FRET library move. The emtk app opens with the settings' constants, and a calibration started there starts from them (see accurate_fret_run)
 - [-] Global View publishing — the emtk constants group is registered in ChiSurf's parameter-group registry already; it reaches the Global View once the emtk app runs inside ChiSurf's process, which no ChiSurf plugin does yet
