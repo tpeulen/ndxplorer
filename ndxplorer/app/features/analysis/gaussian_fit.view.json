@@ -19,19 +19,7 @@
     {"label": "add", "action": "add_component", "description": "Add a Gaussian in the middle of the map."},
     {"label": "del", "action": "remove_component", "description": "Remove the selected Gaussian (or the last)."}
    ]},
-   {"type": "custom", "key": "data_table", "options": {
-    "source": "parameter_rows", "row_key": "key", "height": 300,
-    "selected_call": "select_parameter", "edited_call": "edit_parameter", "delete_call": "delete_parameter",
-    "columns": [
-     {"key": "name", "title": "Name", "tooltip": "Component parameter: centre x, y, widths σx, σy, correlation ρ and weight w."},
-     {"key": "value", "title": "Value", "editable": true, "format": "%.6g"},
-     {"key": "fixed", "title": "Fixed", "width": 54, "editable": true, "tooltip": "Hold this parameter in the fit."},
-     {"key": "lo", "title": "Lo", "width": 52, "editable": true},
-     {"key": "hi", "title": "Hi", "width": 52, "editable": true},
-     {"key": "bounds", "title": "Bounds", "width": 54, "editable": true, "tooltip": "Keep the value within Lo..Hi."},
-     {"key": "link", "title": "Link", "width": 70, "editable": true,
-      "tooltip": "Follow another parameter: type its name (x_2, sd_x_1, or 'Group: name' of another table); clear to unlink."}
-    ]}}
+   {"type": "parameter_table", "table": "table", "height": 300}
   ]},
   {"type": "row", "n_col": 4, "sections": [
    {"type": "toggle", "attr": "select_point", "label": "Select point",

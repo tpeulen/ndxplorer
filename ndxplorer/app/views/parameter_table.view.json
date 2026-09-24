@@ -1,0 +1,36 @@
+{
+ "_comment": "Every parameter table of the app (Parameters, Gaussian Fit, the curves in Overlays, the curve fit): one data_table over a ParameterTable (ndxplorer/app/parameter_table.py). A feature spec writes {\"type\": \"parameter_table\", \"table\": \"<attribute>\", ...}; its model names are prefixed with that attribute and its other keys (height, expand, reserve, hidden_when) override these. Lo/Hi show a bound or −∞/∞; a bound exists where it is finite. Link shows only while some parameter is linked.",
+ "section": {
+  "type": "custom",
+  "key": "data_table",
+  "options": {
+   "source": "rows",
+   "columns_source": "columns",
+   "editable": true,
+   "edited_call": "edit",
+   "editable_call": "cell_editable",
+   "context_call": "menu",
+   "selected_call": "select",
+   "delete_call": "delete",
+   "row_key": "key",
+   "tree_key": "parent",
+   "expanded_attr": "expanded",
+   "tooltip_key": "note",
+   "fit_columns": true,
+   "min_column_width": 34,
+   "height": 200,
+   "columns": [
+    {"key": "name", "title": "Name", "editable": false},
+    {"key": "value", "title": "Value", "align": "right",
+     "tooltip": "The value. Double-click to type one; a linked parameter shows its master's."},
+    {"key": "fixed", "title": "Fixed", "tooltip": "Fixed: a fit leaves it where it is."},
+    {"key": "lo", "title": "Lo", "align": "right",
+     "tooltip": "Lower bound. −∞: none. Type a number to set it, ∞ (or inf) to remove it."},
+    {"key": "hi", "title": "Hi", "align": "right",
+     "tooltip": "Upper bound. ∞: none. Type a number to set it, ∞ (or inf) to remove it."},
+    {"key": "link", "title": "Link", "editable": false,
+     "tooltip": "The parameter this one follows (right-click to link or unlink). Shown while one is linked."}
+   ]
+  }
+ }
+}

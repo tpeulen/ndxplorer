@@ -10,22 +10,11 @@
     "description": "Evaluate a coarse grid over the free parameters before the fit and start it at the best point. A least-squares run only goes downhill from where it starts, so a degenerate pair -- a constant that scales the data against a parameter that scales the curve -- otherwise strands it in the first dip. Costs a fixed number of steps."}
   ]},
   {"type": "info", "text": "Free parameters are optimised, fixed ones held. Constants and crosslinked parameters start fixed -- free them to fit them."},
-  {"type": "custom", "key": "data_table",
-   "options": {"source": "curve_rows", "editable": true, "edited_call": "edit_curve_parameter",
-    "row_key": "name", "height": 130,
-    "columns": [
-     {"key": "name", "title": "Name", "editable": false}, {"key": "value", "title": "Value"},
-     {"key": "fixed", "title": "Fixed", "width": 52}, {"key": "lo", "title": "Lo", "width": 60},
-     {"key": "hi", "title": "Hi", "width": 60}, {"key": "bounds", "title": "Bounds", "width": 62}]}},
+  {"type": "parameter_table", "table": "curve_table", "height": 130},
   {"type": "info", "text": "nDXplorer parameters -- a freed one moves the data, which is re-derived from the equations at every step.",
    "hidden_when": {"attr": "has_data_parameters", "equals": false}},
-  {"type": "custom", "key": "data_table", "hidden_when": {"attr": "has_data_parameters", "equals": false},
-   "options": {"source": "data_rows", "editable": true, "edited_call": "edit_data_parameter",
-    "row_key": "name", "height": 200,
-    "columns": [
-     {"key": "name", "title": "Name", "editable": false}, {"key": "value", "title": "Value"},
-     {"key": "fixed", "title": "Fixed", "width": 52}, {"key": "lo", "title": "Lo", "width": 60},
-     {"key": "hi", "title": "Hi", "width": 60}, {"key": "bounds", "title": "Bounds", "width": 62}]}},
+  {"type": "parameter_table", "table": "data_table", "height": 200,
+   "hidden_when": {"attr": "has_data_parameters", "equals": false}},
   {"type": "info", "source": "status_text"},
   {"type": "row", "n_col": 2, "hidden_when": {"attr": "running", "equals": false}, "sections": [
    {"type": "info", "source": "progress_text"},

@@ -19,16 +19,7 @@
     {"label": "Delete", "action": "delete", "description": "Remove the curve."}]}
   ]},
   {"type": "info", "source": "error_text", "hidden_when": {"attr": "has_error", "equals": false}},
-  {"type": "custom", "key": "data_table", "hidden_when": {"attr": "visible", "equals": false},
-   "options": {"source": "parameter_rows", "editable": true, "edited_call": "edit_parameter",
-    "context_call": "parameter_menu", "row_key": "name", "height": 132,
-    "columns": [
-     {"key": "name", "title": "Name", "editable": false},
-     {"key": "value", "title": "Value"},
-     {"key": "fixed", "title": "Fixed", "width": 52},
-     {"key": "lo", "title": "Lo", "width": 60},
-     {"key": "hi", "title": "Hi", "width": 60},
-     {"key": "bounds", "title": "Bounds", "width": 62},
-     {"key": "link", "title": "Link", "width": 70, "editable": false, "tooltip": "The parameter this one follows (right-click to link or unlink)."}]}}
+  {"type": "parameter_table", "table": "table", "height": 132,
+   "hidden_when": {"attr": "visible", "equals": false}}
  ]
 }

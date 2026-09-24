@@ -21,9 +21,10 @@ cannot run at all (numba), and the dialog says that in words.
 runs the held-parameter EM of :mod:`ndxplorer.analysis.gaussian_mixture` on
 the gated points, the Gaussians are drawn as 1/2/3σ ellipses on the map and as
 curves on the marginals, *Select* turns one into an elliptical gate in the
-gate list (``model.gates.add_gaussian``), and the parameter table
-(Name/Value/Fixed/Lo/Hi/Bounds/Link) edits the chisurf parameter group of
-:mod:`ndxplorer.core.gaussian_parameters`. *Settings* opens the GMM settings
+gate list (``model.gates.add_gaussian``), and the app's shared parameter table
+(:mod:`ndxplorer.app.parameter_table`) edits the parameter group of
+:mod:`ndxplorer.core.gaussian_parameters`. No chisurf needed; with it the
+Gaussians are also published to ChiSurf (Global View, links). *Settings* opens the GMM settings
 (``analysis/gmm_settings.view.json``).
 
 Nothing here imports Qt.
@@ -571,15 +572,6 @@ class StructureDialog(SpecWindow):
 # --------------------------------------------------------------------------- #
 # The Gaussian Fit panel
 # --------------------------------------------------------------------------- #
-_SUBSCRIPT = str.maketrans("0123456789,", "₀₁₂₃₄₅₆₇₈₉,")
-
-
-def _plain_label(label_html: str) -> str:
-    """``&sigma;<sub>x,1</sub>`` as ``σx,1`` -- the table cell has no rich text."""
-    text = str(label_html).replace("&sigma;", "σ").replace("&rho;", "ρ")
-    return re.sub(r"<sub>(.*?)</sub>", lambda m: m.group(1), text)
-
-
 class GaussianPanel:
     """The *Gaussian Fit* tab's model: the Gaussians and what the panel does.
 
@@ -591,8 +583,11 @@ class GaussianPanel:
     def __init__(self, feature: "AnalysisFeature") -> None:
         from emtk.view_form import FormState
 
+        from ...core import gaussian_parameters as gp
+        from ..parameter_table import ParameterTable, expand
+
         self.feature = feature
-        self.spec = load_spec("gaussian_fit")
+        self.spec = expand(load_spec("gaussian_fit"))
         self.form = FormState()
         feature.app.forms["analysis.gaussian_fit"] = self.form
         self.sigma = 1.0
@@ -600,10 +595,6 @@ class GaussianPanel:
         self.show_marginals = True
         self.log_gauss = False
         self.selected: Optional[int] = None
-        self.error = ""
-        self.group = None
-        self._rows: list = []
-        self._token = None
         self._settings: Optional[dict] = None
         #: Components turned into gates: index -> (gate row, mu, cov). The gate
         #: list outlines an enabled Gaussian gate itself, so the component is
@@ -612,16 +603,15 @@ class GaussianPanel:
         #: Components the table's Delete asked to remove (applied next frame,
         #: once, however many of their rows were selected).
         self._pending_delete: set = set()
-        try:
-            from ...core import gaussian_parameters as gp
-
-            self.group = gp.build_gaussian_group()
-            self.group.default_component = self._default_component
-            self._register()
-        except Exception as exc:  # noqa: BLE001 - said on the panel instead
-            self.error = ("Gaussian fitting needs ChiSurf's fitting parameters and mixture "
-                          f"model, which could not be loaded here: {exc}")
-            logger.warning("Gaussian Fit unavailable: %s", exc)
+        self.group = gp.build_gaussian_group()
+        self.group.default_component = self._default_component
+        #: The parameter table (``views/parameter_table.view.json``).
+        self.table = ParameterTable(
+            feature.app, self.group.rows,
+            name_tooltip="Component parameter: centre x, y, widths σx, σy, correlation ρ "
+                         "and weight w.",
+            on_select=self._select_parameter, on_delete=self._delete_parameter)
+        self._register()
 
     # ------------------------------------------------------------ settings
     def gmm_settings(self) -> dict:
@@ -660,16 +650,13 @@ class GaussianPanel:
             np.diag([((x1 - x0) / 10.0) ** 2, ((y1 - y0) / 10.0) ** 2])
 
     def _register(self) -> None:
-        try:
-            from chisurf.core.parameter_group_registry import register_parameter_group
+        from ...core.parameters import register_group
 
-            register_parameter_group(self.group, owner_id=GAUSSIAN_OWNER_ID, label="ndX Gaussians")
-        except Exception as exc:  # noqa: BLE001 - linking into it is optional
-            logger.debug("could not register the Gaussians: %s", exc)
+        register_group(self.group, GAUSSIAN_OWNER_ID, "ndX Gaussians")
 
     # --------------------------------------------------------- the Gaussians
     def components(self) -> list:
-        return self.group.components() if self.group is not None else []
+        return self.group.components()
 
     def rows(self) -> List[tuple]:
         return [(c.mu, c.cov, c.w) for c in self.components()]
@@ -679,91 +666,20 @@ class GaussianPanel:
         self._register()
         return index
 
-    def parameter_rows(self) -> list:
-        """The table's rows: one per parameter, six per Gaussian."""
-        if self.group is None:
-            return []
+    def _component_of(self, parameter) -> Optional[int]:
         from ...core import gaussian_parameters as gp
 
-        rows = []
-        for index, param in enumerate(self.group.rows()):
-            link = getattr(param, "link", None)
-            rows.append({
-                "key": f"{index // gp.WIDTH}.{gp.SLOTS[index % gp.WIDTH]}",
-                "component": index // gp.WIDTH, "slot": gp.SLOTS[index % gp.WIDTH],
-                "name": _plain_label(getattr(param, "label_text", "") or param.name),
-                "value": float(param.value), "fixed": bool(param.fixed),
-                "lo": float(param.lb) if param.lb is not None else float("-inf"),
-                "hi": float(param.ub) if param.ub is not None else float("inf"),
-                "bounds": bool(param.bounds_on),
-                "link": getattr(link, "name", "") if link is not None else "",
-            })
-        token = tuple(tuple(sorted(r.items())) for r in rows)
-        if token != self._token:
-            self._token = token
-            self._rows = rows
-        return self._rows
+        rows = self.group.rows()
+        index = next((i for i, p in enumerate(rows) if p is parameter), None)
+        return None if index is None else index // gp.WIDTH
 
-    def _param(self, record):
-        from ...core import gaussian_parameters as gp
+    def _select_parameter(self, parameter) -> None:
+        self.selected = None if parameter is None else self._component_of(parameter)
 
-        return self.group.parameters_of(int(record["component"]))[record["slot"]] \
-            if record["slot"] in gp.SLOTS else None
-
-    def select_parameter(self, record) -> None:
-        self.selected = None if not record else int(record["component"])
-
-    def edit_parameter(self, record, key: str, value) -> None:
-        param = self._param(record)
-        if param is None:
-            return
-        try:
-            if key == "value":
-                param.value = float(value)
-            elif key == "fixed":
-                param.fixed = bool(value)
-            elif key == "lo":
-                param.lb = float(value)
-            elif key == "hi":
-                param.ub = float(value)
-            elif key == "bounds":
-                param.bounds_on = bool(value)
-            elif key == "link":
-                self._link(param, str(value or "").strip())
-        except (TypeError, ValueError) as exc:
-            self.feature.message("Gaussian parameter", str(exc))
-
-    def _link(self, param, target: str) -> None:
-        """Follow the parameter called *target*, or unlink on an empty name.
-
-        A bare name is looked up among the Gaussians; ``"Group: name"`` in any
-        other registered parameter table.
-        """
-        if not target:
-            param.link = None
-            return
-        groups = [("", self.group)]
-        try:
-            from chisurf.core.parameter_group_registry import iter_registered_parameter_groups
-
-            groups += [(label, group) for _owner, label, group
-                       in iter_registered_parameter_groups() if group is not self.group]
-        except Exception:  # noqa: BLE001
-            pass
-        label, _, name = target.rpartition(":")
-        label, name = label.strip(), name.strip()
-        for group_label, group in groups:
-            if label and label != group_label:
-                continue
-            for other in getattr(group, "parameters_all", ()):
-                if other is not param and getattr(other, "name", None) == name:
-                    param.link = other
-                    return
-        raise ValueError(f"No parameter called {target!r} to link to.")
-
-    def delete_parameter(self, record) -> None:
-        if record:
-            self._pending_delete.add(int(record["component"]))
+    def _delete_parameter(self, parameter) -> None:
+        index = self._component_of(parameter)
+        if index is not None:
+            self._pending_delete.add(index)
 
     def remove_components(self, indices) -> None:
         for index in sorted(set(indices), reverse=True):
@@ -774,8 +690,6 @@ class GaussianPanel:
 
     # ---------------------------------------------------------------- actions
     def enabled(self, name: str) -> bool:
-        if self.group is None:
-            return False
         if name in ("fit", "select", "add_component"):
             return self.model.histograms is not None
         return True
@@ -931,9 +845,6 @@ class GaussianPanel:
         import emtk
         from emtk.view_form import draw_form
 
-        if self.group is None:
-            emtk.text_wrapped(self.error)
-            return
         if self._pending_delete:
             pending, self._pending_delete = self._pending_delete, set()
             self.remove_components(pending)
@@ -1327,8 +1238,7 @@ class AnalysisFeature(Feature):
         return bool(self.modal)
 
     def draw_plot(self, plot: str) -> None:
-        if self.gaussians.group is not None:
-            self.gaussians.draw_plot(plot)
+        self.gaussians.draw_plot(plot)
 
     def plot_input(self, plot: str) -> bool:
         """A click on the map while the Gaussian Fit tab is up seeds a Gaussian."""
@@ -1346,8 +1256,7 @@ class AnalysisFeature(Feature):
 
     def _point_mode(self) -> bool:
         return (self.app.docks.is_shown(GAUSSIAN_TAB)
-                and self.gaussians.select_point and self.gaussians.group is not None
-                and not self.modal)
+                and self.gaussians.select_point and not self.modal)
 
     # ------------------------------------------------------------ capture
     def capture_ops(self) -> Dict[str, Callable]:

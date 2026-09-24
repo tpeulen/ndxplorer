@@ -3,9 +3,10 @@
 What this feature adds to the window:
 
 * the **Parameters** tab -- nDXplorer's constants (``gG/gR``, ``Bg``, ``PhiA``…)
-  as a chisurf :class:`FittingParameterGroup`: value, fixed, bounds, a link to
-  another parameter (a fit's, a curve's). An edit re-derives only the columns
-  that read the constant, once per frame however many edits arrived;
+  as a :class:`~ndxplorer.core.parameters.ParameterGroup`: value, fixed,
+  bounds, a link to another parameter (a curve's, a Gaussian's, a fit's). An
+  edit re-derives only the columns that read the constant, once per frame
+  however many edits arrived;
 * the **Overlays** tab -- curves drawn over the 2-D map
   (:mod:`ndxplorer.core.overlay_curves`), each with its parameter table, a
   colour, *Fit* and *Delete*; *Save CSV* writes the visible ones;
@@ -19,11 +20,13 @@ What this feature adds to the window:
   edited on a copy and written back on Apply (:mod:`ndxplorer.core.store_edits`).
 
 Every panel and dialog is a ``view.json`` in ``features/overlays/`` drawn by
-:mod:`emtk.view_form`; tables are its ``data_table`` sections. The drawing
-done by hand is the curves on the map.
+:mod:`emtk.view_form`; tables are its ``data_table`` sections, and every
+parameter table is the app's shared one (:mod:`ndxplorer.app.parameter_table`).
+The drawing done by hand is the curves on the map.
 
-chisurf (its Qt-free ``chisurf.core``) is what holds the parameters. Without it
-the constants stay plain numbers and the curve tools say they cannot run.
+The parameters are nDXplorer's own (:mod:`ndxplorer.core.parameters`), so all
+of this works without chisurf; with it they are also ChiSurf fitting
+parameters (Global View, links to a fit).
 """
 
 from __future__ import annotations
@@ -40,9 +43,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..parameter_table import ParameterTable, clipboard_text, copy_text
 from . import Feature
 
-__all__ = ["OverlaysFeature", "create", "parameter_records", "edit_parameter"]
+__all__ = ["OverlaysFeature", "create"]
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +67,10 @@ QT_WIDGETS = {
 def load_spec(name: str) -> dict:
     """A spec of this feature, parsed once."""
     if name not in _SPECS:
+        from ..parameter_table import expand
+
         with open(VIEWS / f"{name}.view.json", encoding="utf-8") as handle:
-            _SPECS[name] = json.load(handle)
+            _SPECS[name] = expand(json.load(handle))
     return _SPECS[name]
 
 
@@ -83,183 +89,89 @@ def _fill(spec: dict, **words: str) -> dict:
     return spec
 
 
-#: Whether chisurf's parameters can be built here, and why not.
-_CHISURF: Dict[str, Any] = {}
-
-
-def _has_chisurf() -> bool:
-    """Whether a chisurf :class:`FittingParameter` can be made (checked once).
-
-    Importing is not enough: a parameter needs chisurf's compiled port runtime,
-    which a browser does not have and a half-rebuilt desktop may not load.
-    """
-    if "ok" not in _CHISURF:
-        try:
-            from chisurf.core.fitting.parameter import FittingParameter
-
-            FittingParameter(name="probe", value=1.0)
-            _CHISURF.update(ok=True, why="")
-        except Exception as exc:  # noqa: BLE001 - any failure: no parameter groups
-            _CHISURF.update(ok=False, why=str(exc).splitlines()[0][:300])
-            logger.warning("chisurf parameters are not available: %s", _CHISURF["why"])
-    return bool(_CHISURF["ok"])
-
-
-def _no_chisurf_text() -> str:
-    return ("chisurf's parameters are not available here, so the constants are plain "
-            "numbers (no bounds, no links) and curves cannot be added"
-            + (f": {_CHISURF.get('why')}" if _CHISURF.get("why") else "."))
-
-
 def _in_browser() -> bool:
     return sys.platform == "emscripten"
 
 
-# ------------------------------------------------------------ parameter rows
-def parameter_records(parameters) -> List[dict]:
-    """The rows of a parameter table: name, value, fixed, bounds and link.
-
-    ``lo``/``hi`` are empty while the bounds are off, as the Qt table shows
-    them; typing one switches them on.
-    """
-    rows = []
-    for p in parameters:
-        bounds = bool(getattr(p, "bounds_on", False))
-        link = getattr(p, "link", None) if getattr(p, "is_linked", False) else None
-        rows.append({
-            "name": str(p.name),
-            "value": float(p.value),
-            "fixed": bool(p.fixed),
-            "lo": float(p.lb) if bounds and p.lb is not None else None,
-            "hi": float(p.ub) if bounds and p.ub is not None else None,
-            "bounds": bounds,
-            "link": str(getattr(link, "name", "")) if link is not None else "",
-        })
-    return rows
-
-
 def _number(value) -> Optional[float]:
-    try:
-        number = float(str(value).strip())
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+    """A finite number typed or pasted, or ``None``."""
+    from ..parameter_table import parse_number
 
-
-def edit_parameter(parameter, key: str, value) -> bool:
-    """Write one cell of a parameter table into *parameter*; ``False`` if refused."""
-    if key == "value":
-        number = _number(value)
-        if number is None or getattr(parameter, "is_linked", False):
-            return False
-        parameter.value = number
-    elif key == "fixed":
-        parameter.fixed = bool(value)
-    elif key == "bounds":
-        parameter.bounds_on = bool(value)
-    elif key in ("lo", "hi"):
-        from .constant_rows import is_unbounded_text
-
-        if is_unbounded_text(value):
-            # No bound on this side; the other side's decides enforcement.
-            if not bool(getattr(parameter, "bounds_on", False)):
-                return True
-            other = parameter.ub if key == "lo" else parameter.lb
-            if key == "lo":
-                parameter.lb = float("-inf")
-            else:
-                parameter.ub = float("inf")
-            parameter.bounds_on = math.isfinite(float(other))
-            return True
-        number = _number(value)
-        if number is None:
-            return False
-        if key == "lo":
-            if not bool(getattr(parameter, "bounds_on", False)):
-                parameter.ub = float("inf")
-            parameter.lb = number
-        else:
-            if not bool(getattr(parameter, "bounds_on", False)):
-                parameter.lb = float("-inf")
-            parameter.ub = number
-        parameter.bounds_on = True
-    else:
-        return False
-    return True
-
-
-class _RowCache:
-    """Hands a table the same list while its content is the same.
-
-    A data table re-reads its source every frame and rebinds on a new list;
-    building the rows afresh each frame would reset its order every frame.
-    """
-
-    def __init__(self) -> None:
-        self._rows: List[dict] = []
-        self._token: Any = None
-
-    def get(self, rows: List[dict]) -> List[dict]:
-        token = tuple(tuple(sorted(r.items(), key=lambda kv: kv[0])) for r in rows)
-        if token != self._token:
-            self._token = token
-            self._rows = rows
-        return self._rows
-
-
-class _ParameterPanel:
-    """The shared part of a panel with a parameter table: edit, copy, paste, link."""
-
-    def __init__(self, feature: "OverlaysFeature") -> None:
-        self.feature = feature
-        self._cache = _RowCache()
-
-    def parameters(self) -> list:
-        raise NotImplementedError
-
-    def changed(self) -> None:
-        """A parameter changed (a subclass redraws or recomputes)."""
-
-    def enabled(self, _name: str) -> bool:
-        return True
-
-    def parameter_rows(self) -> List[dict]:
-        return self._cache.get(parameter_records(self.parameters()))
-
-    def _parameter(self, record):
-        name = record.get("name") if isinstance(record, dict) else None
-        return next((p for p in self.parameters() if p.name == name), None)
-
-    def edit_parameter(self, record, key, value) -> None:
-        parameter = self._parameter(record)
-        if parameter is not None and edit_parameter(parameter, key, value):
-            self.changed()
-
-    def parameter_menu(self, record, _key, where) -> None:
-        parameter = self._parameter(record)
-        if parameter is None:
-            return
-        entries = [("Copy", lambda: self.feature.copy_text(repr(float(parameter.value)))),
-                   ("Paste", lambda: self._paste(parameter))]
-        if _has_chisurf():
-            entries.append(("Link…", lambda: self.feature.open_link(parameter, self)))
-            if getattr(parameter, "is_linked", False):
-                entries.append(("Unlink", lambda: self._unlink(parameter)))
-        self.feature.open_menu(entries, where)
-
-    def _paste(self, parameter) -> None:
-        number = _number(self.feature.clipboard)
-        if number is not None and not getattr(parameter, "is_linked", False):
-            parameter.value = number
-            self.changed()
-
-    def _unlink(self, parameter) -> None:
-        parameter.link = None
-        self.changed()
+    number = parse_number(value)
+    return number if number is not None and math.isfinite(number) else None
 
 
 # ---------------------------------------------------------------- constants
-class ConstantsPanel(_ParameterPanel):
+class ConstantsTable(ParameterTable):
+    """The Parameters tab's table: the shared one, with vectors as expandable rows."""
+
+    def __init__(self, panel: "ConstantsPanel") -> None:
+        super().__init__(
+            panel.feature.app, lambda: panel.group.parameters_all, changed=panel.changed,
+            label=lambda p: p.name,
+            name_tooltip="A vector (▸ gamma [2]) holds one value per population; "
+                         "open it for the elements.")
+        self.panel = panel
+
+    def records(self) -> List[dict]:
+        from ...core import constants_group as cg
+        from .constant_rows import constant_rows
+
+        group = self.panel.group
+        return constant_rows(group.parameters_all, cg.vectors_state(group))
+
+    def vector_of(self, record) -> str:
+        """The vector a parent row stands for (``""`` for any other row)."""
+        from .constant_rows import parent_key
+
+        if not isinstance(record, dict) or record.get("param"):
+            return ""
+        key = str(record.get("key", ""))
+        return key[:-2] if key.endswith("[]") and key == parent_key(key[:-2]) else ""
+
+    def cell_editable(self, record, key) -> bool:
+        """A vector's parent row takes only *Fixed* (for all its elements)."""
+        if self.vector_of(record):
+            return key == "fixed"
+        return super().cell_editable(record, key)
+
+    def edit(self, record, key, value) -> None:
+        vector = self.vector_of(record)
+        if not vector:
+            super().edit(record, key, value)
+            return
+        if key == "fixed":
+            from ...core import constants_group as cg
+
+            for _label, parameter in cg.vector_elements(self.panel.group, vector):
+                parameter.fixed = bool(value)
+            self.changed()
+
+    def menu_entries(self, record, key) -> List[Tuple[str, Callable[[], Any]]]:
+        """A vector's own menu on its parent row; *Make vector…* on a scalar."""
+        from ...core.vector_constants import split_element
+
+        panel, feature = self.panel, self.panel.feature
+        vector = self.vector_of(record)
+        if vector:
+            values = [r["value"] for r in self.rows()
+                      if r.get("parent") == record.get("key") and r.get("name") != "(global)"]
+            return [
+                ("Copy values", lambda: copy_text("\t".join(repr(float(v)) for v in values))),
+                ("Paste values", lambda: panel.paste_vector(vector)),
+                ("Populations…", lambda: feature.open_window(VectorDialog(feature, panel, vector))),
+                ("Make scalar", lambda: panel.make_scalar(vector)),
+            ]
+        entries = super().menu_entries(record, key)
+        parameter = self.parameter(record)
+        if parameter is not None and not record.get("parent") \
+                and split_element(parameter.name) is None:
+            entries.append(("Make vector…", lambda: feature.open_window(
+                VectorDialog(feature, panel, parameter.name))))
+        return entries
+
+
+class ConstantsPanel:
     """The Parameters tab: the constants, their group, saving them, adding one.
 
     The group is installed as the data manager's ``constants`` (a live mapping
@@ -271,28 +183,25 @@ class ConstantsPanel(_ParameterPanel):
     def __init__(self, feature: "OverlaysFeature") -> None:
         from emtk.view_form import FormState
 
-        super().__init__(feature)
+        self.feature = feature
         self.form = FormState()
         self.group = None
         self.mapping: Any = None
         self._snapshot: Dict[str, float] = {}
-        self._pending: set = set()
-        #: Keys of the vector rows the table shows open (the table shares it).
-        self.expanded: set = set()
         self._axis_token: Any = None
         self._axis_checked = 0.0
         self.build()
+        #: The table (``views/parameter_table.view.json``).
+        self.table = ConstantsTable(self)
 
     # -- the group ----------------------------------------------------------
     def build(self) -> None:
         """The group from the settings' constants file (values, bounds, fixed)."""
+        from ...core import constants_group as cg
+        from ...core.parameters import register_group
+
         model = self.feature.app.model
         values = OrderedDict(model.bundle.constants)
-        if not _has_chisurf():
-            self.group, self.mapping = None, dict(values)
-            return
-        from ...core import constants_group as cg
-
         data = self._constants_file_data()
         self.group = cg.build_group_from_data(data if data else values)
         # Constants the settings name but the file lacks (a newer bundle).
@@ -300,12 +209,7 @@ class ConstantsPanel(_ParameterPanel):
                                          if k not in self.group.parameters_all_dict})
         self.mapping = cg.ConstantsMapping(self.group)
         self._snapshot = dict(self.values())
-        try:
-            from chisurf.core.parameter_group_registry import register_parameter_group
-
-            register_parameter_group(self.group, owner_id=self.OWNER_ID, label="ndX")
-        except Exception as exc:  # noqa: BLE001 - linking is optional
-            logger.debug("Could not register the constants: %s", exc)
+        register_group(self.group, self.OWNER_ID, "ndX")
 
     def _constants_file_data(self) -> Optional[dict]:
         from ...settings.bundle import _named
@@ -324,118 +228,10 @@ class ConstantsPanel(_ParameterPanel):
     def values(self) -> Dict[str, float]:
         return {str(k): float(v) for k, v in dict(self.mapping).items()}
 
-    @property
-    def degraded(self) -> bool:
-        return self.group is None
-
-    def degraded_text(self) -> str:
-        return _no_chisurf_text()
-
     def parameters(self) -> list:
-        return list(self.group.parameters_all) if self.group is not None else []
-
-    def parameter_rows(self) -> List[dict]:
-        """Scalars one row each; a vector as a parent row over its populations."""
-        from .constant_rows import constant_rows
-
-        if self.group is None:
-            return self._cache.get(constant_rows(self.values()))
-        from ...core import constants_group as cg
-
-        params = self.group.parameters_all_dict
-        return self._cache.get(constant_rows(self.values(), params,
-                                             cg.vectors_state(self.group)))
-
-    def parameter_columns(self) -> List[dict]:
-        """The spec's columns; *Link* only while some constant is linked (it is sparse)."""
-        section = next(s for s in load_spec("parameters")["sections"]
-                       if s.get("key") == "data_table")
-        columns = section["options"]["columns"]
-        if any(r.get("link") for r in self.parameter_rows()):
-            return columns
-        return [c for c in columns if c["key"] != "link"]
-
-    def _parameter(self, record):
-        if not isinstance(record, dict):
-            return None
-        name = record.get("param", record.get("name"))
-        return self.group.parameters_all_dict.get(name) if self.group is not None and name \
-            else None
-
-    def _vector_of(self, record) -> str:
-        """The vector a parent row stands for (``""`` for any other row)."""
-        from .constant_rows import parent_key
-
-        if not isinstance(record, dict) or record.get("param"):
-            return ""
-        key = str(record.get("key", ""))
-        return key[:-2] if key.endswith("[]") and key == parent_key(key[:-2]) else ""
-
-    def cell_editable(self, record, key) -> bool:
-        """A vector's parent row takes only *Fixed* (for all its elements)."""
-        if self._vector_of(record):
-            return key == "fixed"
-        if self.group is None:
-            return key == "value"
-        parameter = self._parameter(record)
-        return not (key == "value" and getattr(parameter, "is_linked", False))
-
-    def edit_parameter(self, record, key, value) -> None:
-        vector = self._vector_of(record)
-        if vector:
-            if key == "fixed" and self.group is not None:
-                from ...core import constants_group as cg
-
-                for _label, parameter in cg.vector_elements(self.group, vector):
-                    parameter.fixed = bool(value)
-                self.changed()
-            return
-        if self.group is None:
-            number = _number(value)
-            if key == "value" and number is not None:
-                self.mapping[record.get("param") or record["name"]] = number
-                self.changed()
-            return
-        super().edit_parameter(record, key, value)
+        return list(self.group.parameters_all)
 
     # -- vectors --------------------------------------------------------------
-    def parameter_menu(self, record, key, where) -> None:
-        """A vector's own menu on its parent row; *Make vector…* on a scalar."""
-        vector = self._vector_of(record)
-        if vector:
-            values = [r["value"] for r in self.parameter_rows()
-                      if r.get("parent") == record.get("key") and r.get("name") != "(global)"]
-            entries = [
-                ("Copy values", lambda: self.feature.copy_text(
-                    "\t".join(repr(float(v)) for v in values))),
-                ("Paste values", lambda: self.paste_vector(vector)),
-                ("Populations…", lambda: self.feature.open_window(
-                    VectorDialog(self.feature, self, vector))),
-                ("Make scalar", lambda: self.make_scalar(vector)),
-            ]
-            self.feature.open_menu(entries, where)
-            return
-        parameter = self._parameter(record)
-        if parameter is None:
-            return
-        from ...core.vector_constants import split_element
-
-        if self.group is None or record.get("parent"):
-            super().parameter_menu(record, key, where)
-            return
-        name = parameter.name
-        if split_element(name) is not None:
-            super().parameter_menu(record, key, where)
-            return
-        entries = [("Copy", lambda: self.feature.copy_text(repr(float(parameter.value)))),
-                   ("Paste", lambda: self._paste(parameter)),
-                   ("Link…", lambda: self.feature.open_link(parameter, self))]
-        if getattr(parameter, "is_linked", False):
-            entries.append(("Unlink", lambda: self._unlink(parameter)))
-        entries.append(("Make vector…", lambda: self.feature.open_window(
-            VectorDialog(self.feature, self, name))))
-        self.feature.open_menu(entries, where)
-
     def column_options(self) -> List[str]:
         """The burst columns a vector can pick its populations by."""
         from ...core.vector_constants import DEFAULT_COLUMN
@@ -458,24 +254,14 @@ class ConstantsPanel(_ParameterPanel):
         assignment probabilities (then a burst gets the weighted mix), *codes*
         ``label -> value in column``.
         """
-        from ...core.vector_constants import element_name
+        from ...core import constants_group as cg
 
-        if self.group is not None:
-            from ...core import constants_group as cg
-
-            cg.set_vector(self.group, name, values, populations, uncertainties=uncertainties,
-                          default=default, column=column, probabilities=probabilities,
-                          codes=codes)
-        else:
-            for label, value in zip(populations, values):
-                self.mapping[element_name(name, str(label))] = float(value)
-            if default is not None or name not in self.mapping:
-                self.mapping[name] = float(default if default is not None else
-                                           sum(values) / max(len(values), 1))
+        cg.set_vector(self.group, name, values, populations, uncertainties=uncertainties,
+                      default=default, column=column, probabilities=probabilities, codes=codes)
         if expand:
             from .constant_rows import parent_key
 
-            self.expanded.add(parent_key(name))
+            self.table.expanded.add(parent_key(name))
         self.changed()
 
     def make_vector(self, name: str, populations: Sequence[str],
@@ -487,36 +273,29 @@ class ConstantsPanel(_ParameterPanel):
 
     def make_scalar(self, name: str) -> None:
         """A vector becomes its global value: the elements go."""
-        from ...core.vector_constants import split_element
+        from ...core import constants_group as cg
 
-        if self.group is not None:
-            from ...core import constants_group as cg
-
-            cg.to_scalar(self.group, name)
-        else:
-            for key in [k for k in self.mapping if (split_element(k) or ("",))[0] == name]:
-                del self.mapping[key]
+        cg.to_scalar(self.group, name)
         self.changed()
 
     def paste_vector(self, name: str) -> None:
         """Paste one number per population (tabs, commas or spaces between)."""
         from ...core.vector_constants import element_name
 
-        text = str(self.feature.clipboard).replace(",", " ").split()
+        text = clipboard_text().replace(",", " ").split()
         numbers = [_number(t) for t in text]
-        labels = [r["name"] for r in self.parameter_rows()
+        labels = [r["name"] for r in self.table.rows()
                   if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
         if len(numbers) != len(labels) or any(n is None for n in numbers):
             self.feature.app.message = ("Paste values",
                                         f"{name} has {len(labels)} populations; the clipboard "
                                         f"holds {len(numbers)} number(s).")
             return
+        params = self.group.parameters_all_dict
         for label, number in zip(labels, numbers):
-            parameter = self._parameter({"param": element_name(name, label)})
-            if parameter is not None and not getattr(parameter, "is_linked", False):
+            parameter = params.get(element_name(name, label))
+            if parameter is not None and not parameter.is_linked:
                 parameter.value = number
-            elif self.group is None:
-                self.mapping[element_name(name, label)] = number
         self.changed()
 
     def _axes_token(self) -> Any:
@@ -547,8 +326,7 @@ class ConstantsPanel(_ParameterPanel):
         """Make the data manager read these constants (again, after a Clear)."""
         manager = self.feature.app.model.manager
         if manager.constants is not self.mapping:
-            if isinstance(manager.constants, dict) and manager.constants \
-                    and self.group is not None:
+            if isinstance(manager.constants, dict) and manager.constants:
                 from ...core import constants_group as cg
 
                 # Settings > Load settings wrote into the manager's dict.
@@ -599,12 +377,9 @@ class ConstantsPanel(_ParameterPanel):
         model = self.feature.app.model
         name = model.bundle.settings.get("constants") or "mfd.constants.json"
         path = get_settings_path() / pathlib.Path(name).name
-        if self.group is not None:
-            from ...core import constants_group as cg
+        from ...core import constants_group as cg
 
-            payload = cg.group_state(self.group)
-        else:
-            payload = dict(self.mapping)
+        payload = cg.group_state(self.group)
         try:
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=4)
@@ -634,12 +409,9 @@ class ConstantsPanel(_ParameterPanel):
             self.set_vector(name, [float(value)] * len(populations), list(populations),
                             default=float(value), column=column)
             return None
-        if self.group is not None:
-            from ...core import constants_group as cg
+        from ...core import constants_group as cg
 
-            cg.apply_value_dict(self.group, {name: float(value)})
-        else:
-            self.mapping[name] = float(value)
+        cg.apply_value_dict(self.group, {name: float(value)})
         self.changed()
         return None
 
@@ -753,10 +525,10 @@ class VectorDialog(Dialog):
 
         self.panel = panel
         self.name = name
-        self.is_vector = any(r.get("key") == f"{name}[]" for r in panel.parameter_rows())
+        self.is_vector = any(r.get("key") == f"{name}[]" for r in panel.table.rows())
         super().__init__(feature, f"Populations of {name}" if self.is_vector
                          else f"Make {name} a vector")
-        labels = [r["name"] for r in panel.parameter_rows()
+        labels = [r["name"] for r in panel.table.rows()
                   if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
         self.populations = ", ".join(labels) if labels else "2"
         column = DEFAULT_COLUMN
@@ -825,33 +597,30 @@ class LinkDialog(Dialog):
     spec_name = "link"
     size = (520.0, 400.0)
 
-    def __init__(self, feature, parameter, panel: _ParameterPanel) -> None:
+    def __init__(self, feature, parameter, table: ParameterTable) -> None:
         super().__init__(feature, f"Link {parameter.name}")
         self.parameter = parameter
-        self.panel = panel
+        self.table = table
         self.picked: Optional[dict] = None
         self._targets = self._collect()
 
     def _collect(self) -> List[dict]:
-        rows = []
-        try:
-            from chisurf.core.parameter_group_registry import iter_registered_parameter_groups
-        except Exception:  # noqa: BLE001
-            return rows
-        for owner_id, label, group in iter_registered_parameter_groups():
-            for p in getattr(group, "parameters_all", []):
-                if p is self.parameter:
-                    continue
-                rows.append({"id": f"{owner_id}:{p.name}", "owner": str(label),
-                             "name": str(p.name), "value": float(p.value), "_p": p})
-        return rows
+        from ...core.parameters import link_targets
+
+        return [{"id": f"{label}:{name}:{i}", "owner": label, "name": name,
+                 "value": float(p.value), "_p": p}
+                for i, (label, name, p) in enumerate(link_targets(self.parameter))]
 
     @property
     def hint(self) -> str:
+        from ...core import chisurf_binding
+
         if not self._targets:
-            return "No other parameters are open to link to (a fit, a curve or the Gaussians)."
+            return "No other parameters are open to link to (a curve, the Gaussians or a fit)."
+        fits = "" if chisurf_binding.available() else \
+            " ChiSurf's fits are not listed: ChiSurf is not available here."
         return (f"{self.parameter.name} will follow the parameter you pick "
-                "(double-click, or select and Link).")
+                "(double-click, or select and Link)." + fits)
 
     def targets(self) -> List[dict]:
         return self._targets
@@ -871,20 +640,26 @@ class LinkDialog(Dialog):
         except Exception as exc:  # noqa: BLE001 - a cycle, a type the link refuses
             self.feature.app.message = ("Link", f"Could not link: {exc}")
             return
-        self.panel.changed()
+        self.table.changed()
         self.close()
 
 
 # -------------------------------------------------------------------- curves
-class CurvePanel(_ParameterPanel):
-    """One overlay curve's group in the Overlays tab."""
+class CurvePanel:
+    """One overlay curve in the Overlays tab: its equation, colour and parameters."""
 
     def __init__(self, feature: "OverlaysFeature", curve) -> None:
         from emtk.view_form import FormState
 
-        super().__init__(feature)
+        self.feature = feature
         self.curve = curve
         self.form = FormState()
+        #: The curve's parameters (``views/parameter_table.view.json``).
+        self.table = ParameterTable(feature.app, lambda: curve.group.parameters_all,
+                                    label=lambda p: p.name)
+
+    def enabled(self, _name: str) -> bool:
+        return True
 
     # what the spec binds to
     @property
@@ -926,9 +701,6 @@ class CurvePanel(_ParameterPanel):
     def error_text(self) -> str:
         return self.curve.error
 
-    def parameters(self) -> list:
-        return list(self.curve.group.parameters_all)
-
     def fit(self) -> None:
         self.feature.open_fit(self.curve)
 
@@ -964,8 +736,6 @@ class OverlaysPanel:
         self.panels: List[CurvePanel] = []
 
     def enabled(self, name: str) -> bool:
-        if name in ("add_curve",):
-            return _has_chisurf()
         if name == "save_csv":
             return any(p.curve.visible for p in self.panels)
         return True
@@ -1037,9 +807,6 @@ class OverlaysPanel:
         import emtk
         from emtk.view_form import draw_form
 
-        if not _has_chisurf():
-            emtk.text_wrapped(_no_chisurf_text())
-            return
         for panel in list(self.panels):
             emtk.separator()
             draw_form(panel.spec(), panel, panel.form, titles=False)
@@ -1068,7 +835,14 @@ class CurveFitDialog(Dialog):
         self._cancel = False
         self._thread: Optional[threading.Thread] = None
         self._result = None
-        self._curve_cache, self._data_cache = _RowCache(), _RowCache()
+        app = feature.app
+        #: The curve's parameters, and the constants that move the data.
+        self.curve_table = ParameterTable(
+            app, lambda: self.cf.parameters if self.cf is not None else [],
+            label=lambda p: p.name)
+        self.data_table = ParameterTable(
+            app, lambda: getattr(self.cf, "data_parameters", []) if self.cf is not None else [],
+            label=lambda p: p.name)
         self.rebuild()
 
     # -- choices -------------------------------------------------------------
@@ -1123,31 +897,9 @@ class CurveFitDialog(Dialog):
         except Exception as exc:  # noqa: BLE001
             self.cf, self.status_text_value = None, f"cannot fit: {exc}"
 
-    # -- tables ----------------------------------------------------------------
-    def curve_rows(self):
-        return self._curve_cache.get(parameter_records(self.cf.parameters if self.cf else []))
-
-    def data_rows(self):
-        return self._data_cache.get(parameter_records(
-            getattr(self.cf, "data_parameters", []) if self.cf else []))
-
     @property
     def has_data_parameters(self) -> bool:
         return bool(self.cf is not None and getattr(self.cf, "data_parameters", []))
-
-    def _edit(self, parameters, record, key, value) -> None:
-        name = record.get("name") if isinstance(record, dict) else None
-        parameter = next((p for p in parameters if p.name == name), None)
-        if parameter is not None:
-            edit_parameter(parameter, key, value)
-
-    def edit_curve_parameter(self, record, key, value) -> None:
-        if self.cf is not None:
-            self._edit(self.cf.parameters, record, key, value)
-
-    def edit_data_parameter(self, record, key, value) -> None:
-        if self.cf is not None:
-            self._edit(self.cf.data_parameters, record, key, value)
 
     # -- running ---------------------------------------------------------------
     def status_text(self) -> str:
@@ -1603,11 +1355,15 @@ class ColumnsDialog(Dialog):
     def __init__(self, feature, editor: StoreEditorDialog) -> None:
         super().__init__(feature, "Columns")
         self.editor = editor
-        self._cache = _RowCache()
+        self._rows: List[dict] = []
 
     def rows(self) -> List[dict]:
-        return self._cache.get([{"column": name, "shown": name not in self.editor.hidden}
-                                for name in self.editor.arrays()])
+        """The columns, as the same list while nothing changed (the table keeps its order)."""
+        rows = [{"column": name, "shown": name not in self.editor.hidden}
+                for name in self.editor.arrays()]
+        if rows != self._rows:
+            self._rows = rows
+        return self._rows
 
     def edit(self, record, key, value) -> None:
         if key == "shown" and isinstance(record, dict):
@@ -1697,7 +1453,6 @@ class OverlaysFeature(Feature):
         self.window: Optional[Dialog] = None
         #: A dialog over :attr:`window` (the column picker over the Table Editor).
         self.top: Optional[Dialog] = None
-        self.clipboard = ""
         self._file_answers: List[str] = []
         self.constants.install()
         self.register_form(self.overlays.form)
@@ -1722,14 +1477,17 @@ class OverlaysFeature(Feature):
             logger.info(text)
 
     def copy_text(self, text: str) -> None:
-        """Copy: to this window's clipboard, and the system's where there is one."""
-        self.clipboard = str(text)
-        try:
-            from emtk import clipboard
+        """Copy: to the app's clipboard, and the system's where there is one."""
+        copy_text(text)
 
-            clipboard.copy(self.clipboard)
-        except Exception:  # noqa: BLE001 - the window's own copy still pastes
-            pass
+    @property
+    def clipboard(self) -> str:
+        """What Copy last put on the app's clipboard (what Paste pastes)."""
+        return clipboard_text()
+
+    @clipboard.setter
+    def clipboard(self, text: str) -> None:
+        copy_text(text)
 
     def _file_service(self):
         return getattr(self.app, "io_service", None)
@@ -1814,8 +1572,9 @@ class OverlaysFeature(Feature):
     def open_fit(self, curve) -> None:
         self.open_window(CurveFitDialog(self, curve))
 
-    def open_link(self, parameter, panel) -> None:
-        self.open_window(LinkDialog(self, parameter, panel), stack=True)
+    def open_link(self, parameter, table: ParameterTable) -> None:
+        """Link…: *parameter* follows the one picked (any parameter table's menu)."""
+        self.open_window(LinkDialog(self, parameter, table), stack=True)
 
     def fit_last_curve(self) -> None:
         if self.overlays.panels:

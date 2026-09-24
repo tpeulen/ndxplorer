@@ -218,15 +218,14 @@ def test_gaussians_seed_fit_select_and_draw(closing):
     closing(run)
     feature, model = feature_of(run), run.app.model
     panel = feature.gaussians
-    assert panel.error == "", panel.error
     assert run.app.docks.is_shown("Gaussian Fit") and run.app.panel.show_fit_gaussians
     components = panel.components()
     assert len(components) == 2
     assert components[0].fix_mu.all()              # a click holds the centre
-    rows = panel.parameter_rows()
+    rows = panel.table.rows()
     assert len(rows) == 12 and rows[0]["name"] == "x1" and rows[2]["name"] == "σx,1"
     # select the first as a gate at 2 sigma
-    panel.select_parameter(rows[0])
+    panel.table.select(rows[0])
     panel.sigma = 2.0
     before = len(model.gates)
     panel.select()
@@ -242,18 +241,29 @@ def test_gaussian_table_edits_links_and_deletes(closing):
     run = replay(GAUSS, setup="mfd")
     closing(run)
     panel = feature_of(run).gaussians
-    rows = panel.parameter_rows()
-    sd_x_1 = next(r for r in rows if r["key"] == "0.sd_x")
-    panel.edit_parameter(sd_x_1, "value", 0.5)
-    panel.edit_parameter(sd_x_1, "fixed", True)
+    table = panel.table
+
+    def row(key):
+        return next(r for r in table.rows() if r["key"] == key)
+
+    table.edit(row("sd_x_1"), "value", "0.5")
+    table.edit(row("sd_x_1"), "fixed", True)
     assert panel.components()[0].cov[0, 0] == pytest.approx(0.25)
-    sd_x_2 = next(r for r in panel.parameter_rows() if r["key"] == "1.sd_x")
-    panel.edit_parameter(sd_x_2, "link", "sd_x_1")
+    assert panel.components()[0].fix_cov[0, 0]
+    table.edit(row("sd_x_1"), "hi", "0.4")          # a bound: Lo stays open
+    assert (row("sd_x_1")["lo"], row("sd_x_1")["hi"]) == ("0", "0.4")
+    assert panel.components()[0].cov[0, 0] == pytest.approx(0.16)
+    table.edit(row("sd_x_1"), "hi", "∞")
+    assert row("sd_x_1")["hi"] == "∞"
+    assert "link" not in [c["key"] for c in table.columns()]
+    table.parameter(row("sd_x_2")).link = table.parameter(row("sd_x_1"))
     assert panel.components()[1].cov[0, 0] == pytest.approx(0.25)
-    assert next(r for r in panel.parameter_rows() if r["key"] == "1.sd_x")["link"] == "sd_x_1"
-    panel.edit_parameter(sd_x_2, "link", "")
-    panel.delete_parameter(sd_x_2)
-    panel.delete_parameter(next(r for r in panel.parameter_rows() if r["key"] == "1.y"))
+    assert row("sd_x_2")["link"] == "sd_x_1"
+    assert "link" in [c["key"] for c in table.columns()]
+    assert not table.cell_editable(row("sd_x_2"), "value")
+    table.unlink(table.parameter(row("sd_x_2")))
+    table.delete(row("sd_x_2"))
+    table.delete(row("y_2"))
     run.settle()
     assert len(panel.components()) == 1          # one component, however many rows
     panel.add_component()

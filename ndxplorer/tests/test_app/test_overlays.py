@@ -15,11 +15,6 @@ import sys
 import numpy as np
 import pytest
 
-from ndxplorer.app.features import overlays as _overlays
-
-needs_chisurf = pytest.mark.skipif(not _overlays._has_chisurf(),
-                                   reason="chisurf parameters cannot be built here")
-
 REPO = pathlib.Path(__file__).resolve().parents[3]
 MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
 SIZE = (1400, 900)
@@ -81,8 +76,7 @@ def test_nothing_in_the_feature_imports_qt_or_chimol():
         f"m = ExplorerModel(); assert m.open({str(MFD)!r}), m.error\n"
         "assert 'Proximity ratio' in m.parameter_names\n"
         "from ndxplorer.core.overlay_curves import OverlayCurve\n"
-        "if o._has_chisurf():\n"
-        "    c = OverlayCurve('c', 'a*x+b'); assert list(c.get_parameters()) == ['a', 'b']\n"
+        "c = OverlayCurve('c', 'a*x+b'); assert list(c.get_parameters()) == ['a', 'b']\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                             cwd=str(REPO))
@@ -93,11 +87,11 @@ def test_nothing_in_the_feature_imports_qt_or_chimol():
 def test_the_constants_are_the_data_managers_and_an_edit_recomputes_the_columns(app):
     f = feature(app)
     assert app.model.manager.constants is f.constants.mapping
-    rows = f.constants.parameter_rows()
+    rows = f.constants.table.rows()
     assert [r["name"] for r in rows][:3] == ["gG/gR", "Bg", "Br"]
     before = column(app, "Fd/Fa")
     gamma = next(r for r in rows if r["name"] == "gG/gR")
-    f.constants.edit_parameter(gamma, "value", gamma["value"] * 2.0)
+    f.constants.table.edit(gamma, "value", gamma["value"] * 2.0)
     draw(app)
     after = column(app, "Fd/Fa")
     good = np.isfinite(before) & np.isfinite(after)
@@ -124,7 +118,6 @@ def test_add_parameter_asks_for_a_name_then_a_value_and_refuses_a_duplicate(app)
     assert app.message == ("Add parameter", "A parameter named 'Bg' already exists.")
 
 
-@needs_chisurf
 def test_save_writes_value_bounds_and_fixed(app, tmp_path):
     import json
 
@@ -149,7 +142,6 @@ def test_the_equation_list_is_custom_plus_the_predefined_curves(app):
     assert "FD/FA vs tau (static line)" in options and "Circle" in options
 
 
-@needs_chisurf
 def test_a_static_line_is_drawn_over_the_map_and_follows_its_parameters(app):
     f, curve = add_static_line(app)
     assert curve.title == "FD/FA vs tau (static line) 1"
@@ -159,8 +151,9 @@ def test_a_static_line_is_drawn_over_the_map_and_follows_its_parameters(app):
     assert x.size > 100
     panel = f.overlays.panels[0]
     assert panel.filled.startswith("x*4.0000e+00*2.0000e-01")
-    record = next(r for r in panel.parameter_rows() if r["name"] == "kf")
-    panel.edit_parameter(record, "value", 0.4)
+    record = next(r for r in panel.table.rows() if r["name"] == "kf")
+    panel.table.edit(record, "value", "0.4")
+    assert curve.get_parameters()["kf"] == 0.4
     x2, y2 = curve.points(500, hist.x_edges, hist.y_edges)
     assert not np.allclose(y2[:10], y[:10])
     panel.visible = False
@@ -169,7 +162,6 @@ def test_a_static_line_is_drawn_over_the_map_and_follows_its_parameters(app):
     assert f.overlays.panels == []
 
 
-@needs_chisurf
 def test_save_csv_writes_the_visible_curves(app, tmp_path):
     f, curve = add_static_line(app)
     out = tmp_path / "curves.csv"
@@ -179,22 +171,21 @@ def test_save_csv_writes_the_visible_curves(app, tmp_path):
     assert lines[0].startswith(curve.title) and lines[1] == "x,y" and len(lines) > 100
 
 
-@needs_chisurf
 def test_a_curve_parameter_linked_to_a_constant_follows_it(app):
     f, curve = add_static_line(app)
     tau = curve.group.parameters_all_dict["tauD0"]
     panel = f.overlays.panels[0]
-    f.open_link(tau, panel)
+    f.open_link(tau, panel.table)
     dialog = f.top or f.window
     target = next(r for r in dialog.targets() if r["owner"] == "ndX" and r["name"] == "tauD0")
     dialog.link(target)
     f.constants.group.parameters_all_dict["tauD0"].value = 3.3
     assert curve.get_parameters()["tauD0"] == pytest.approx(3.3)
-    assert next(r for r in panel.parameter_rows() if r["name"] == "tauD0")["link"] == "tauD0"
+    assert next(r for r in panel.table.rows() if r["name"] == "tauD0")["link"] == "tauD0"
+    assert "link" in [c["key"] for c in panel.table.columns()]
 
 
 # ---------------------------------------------------------------- curve fit
-@needs_chisurf
 def test_fit_moves_the_curve_onto_the_data(app):
     f, curve = add_static_line(app)
     f.open_fit(curve)
@@ -211,7 +202,6 @@ def test_fit_moves_the_curve_onto_the_data(app):
     assert curve.get_parameters() != before
 
 
-@needs_chisurf
 def test_every_target_and_reduction_builds_a_fit(app):
     f, curve = add_static_line(app)
     f.open_fit(curve)
@@ -310,44 +300,17 @@ def test_the_table_editor_hides_colours_filters_and_exports(app, tmp_path):
     assert f.window is None
 
 
-@needs_chisurf
 def test_a_right_click_menu_copies_and_pastes_a_value(app):
     f = feature(app)
-    rows = f.constants.parameter_rows()
+    rows = f.constants.table.rows()
     bg = next(r for r in rows if r["name"] == "Bg")
-    f.constants.parameter_menu(bg, "value", (100.0, 200.0))
+    f.constants.table.menu(bg, "value", (100.0, 200.0))
     popup, _on_choose = app.popup
     assert [i.label for i in popup.entries][:3] == ["Copy", "Paste", "Link…"]
     pick(app, popup, 0)                          # Copy
     assert float(f.clipboard) == bg["value"]
     f.clipboard = "7.5"
     phia = next(r for r in rows if r["name"] == "PhiA")
-    f.constants.parameter_menu(phia, "value", (100.0, 200.0))
+    f.constants.table.menu(phia, "value", (100.0, 200.0))
     pick(app, app.popup[0], 1)                   # Paste
     assert dict(f.constants.mapping)["PhiA"] == 7.5
-
-
-def test_without_chisurf_parameters_the_constants_are_plain_numbers(monkeypatch, tmp_path):
-    """A browser has no chisurf port runtime: constants still edit and recompute."""
-    monkeypatch.setattr(_overlays, "_CHISURF", {"ok": False, "why": "no port runtime"})
-    monkeypatch.setenv("HOME", str(tmp_path))
-    from ndxplorer.app.frame import NdxApp
-
-    app = NdxApp(features=["io", "overlays"])
-    try:
-        assert app.open_path(str(MFD))
-        f = feature(app)
-        assert f.constants.degraded and "no port runtime" in f.constants.degraded_text()
-        assert not f.overlays.enabled("add_curve")
-        before = column(app, "Fd/Fa")
-        gamma = next(r for r in f.constants.parameter_rows() if r["name"] == "gG/gR")
-        f.constants.edit_parameter(gamma, "value", gamma["value"] * 2.0)
-        app.docks.focus("Parameters")
-        draw(app)
-        after = column(app, "Fd/Fa")
-        good = np.isfinite(before) & np.isfinite(after)
-        assert np.allclose(after[good] * 2.0, before[good])
-        app.docks.focus("Overlays")
-        draw(app)
-    finally:
-        app.close()

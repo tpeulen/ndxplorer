@@ -470,14 +470,26 @@ class NdxApp:
         return self.box
 
     def _press_overlays(self, px: float, py: float) -> bool:
-        """The menu bar takes a press first: its menus hang over the window."""
+        """The menu bar takes a press first: its menus hang over the window.
+
+        A press it takes never reaches the tables, so a cell being typed into
+        is committed here, as a click anywhere else commits it.
+        """
         result = self.menubar.press(px, py, *self._menu_box)
+        if result.consumed or result.item is not None:
+            self._commit_table_edits()
         if result.item is not None:
             action = getattr(result.item, "action", "")
             self.menubar.close()
             self.run_action(action)
             return True
         return bool(result.consumed)
+
+    def _commit_table_edits(self) -> None:
+        for form in list(self.forms.values()):
+            for binding in list(getattr(form, "tables", {}).values()):
+                if binding.control.editing is not None:
+                    binding.control.commit_edit()
 
     def show_status(self, text: str) -> None:
         """Say *text* in the status line, until the next one.
