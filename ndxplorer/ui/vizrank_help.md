@@ -48,6 +48,14 @@ between populations. *Weight by photons* counts each burst by its photons;
 **Show islands on the map** colours the map by the islands found in the view on
 the axes (emtk app).
 
+**Use islands as clusters** labels every burst of the table by the island of
+the view on the axes and writes the labels as the clusters (`Cluster Label`,
+replacing K-means/HDBSCAN clusters) and as a column `Island Label (x vs y)`.
+Islands are numbered by the bursts they hold, largest first; a burst on a bridge
+between islands, in a thin tail or an outlier gets -1. The Cluster spin box,
+*colour*, gates, Save Burst IDs and vector parameters' population axis then
+work on the islands.
+
 **Correlation** — which parameters move together (Spearman |ρ|, sign shown)?
 It finds related measurements — E and a lifetime, a rate and its count — not
 populations; the same set-aside rules apply, so duplicated parameters do not

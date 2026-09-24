@@ -452,6 +452,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [x] "Classes" choice (for Classes only): Gate: inside vs outside, Gates: one population per gate, Clusters, z parameter: <name> when z holds labels (a quantity is no longer offered). Clusters come from a feature's cluster_labels (analysis group).
 - [x] NEW (Separation only): "Bursts" choice (All bursts / Weight by photons / Only bursts with at least Min photons, the last two with a Number of Photons column) and "Min photons"
 - [x] NEW (emtk only): "Show islands on the map" colours the map by the islands of the view on the axes (PlaybackExportFeature.map_image); hidden in the Qt host, which does not paint it
+- [x] NEW (both hosts): "Use islands as clusters" writes the islands of the view on the axes as the clusters of every burst (Cluster Label via AnalysisFeature.set_clusters / Qt on_clustering_done, plus "Island Label (x vs y)"); -1 for bridges, tails, outliers
 - [x] NEW: the table has an "Islands" column (populations in the view); flags, the acquisition clock and folds are left out and same-quantity parameters ranked once (named in the row note)
 - [x] "Sample" (200..200000, default 5000)
 - [x] Start / Pause; the Start label reads Start / Continue / Restart with new settings / Finished
