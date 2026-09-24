@@ -102,75 +102,6 @@ def _number(value) -> Optional[float]:
 
 
 # ---------------------------------------------------------------- constants
-class ConstantsTable(ParameterTable):
-    """The Parameters tab's table: the shared one, with vectors as expandable rows."""
-
-    def __init__(self, panel: "ConstantsPanel") -> None:
-        super().__init__(
-            panel.feature.app, lambda: panel.group.parameters_all, changed=panel.changed,
-            label=lambda p: p.name,
-            name_tooltip="A vector (▸ gamma [2]) holds one value per population; "
-                         "open it for the elements.")
-        self.panel = panel
-
-    def records(self) -> List[dict]:
-        from ...core import constants_group as cg
-        from .constant_rows import constant_rows
-
-        group = self.panel.group
-        return constant_rows(group.parameters_all, cg.vectors_state(group))
-
-    def vector_of(self, record) -> str:
-        """The vector a parent row stands for (``""`` for any other row)."""
-        from .constant_rows import parent_key
-
-        if not isinstance(record, dict) or record.get("param"):
-            return ""
-        key = str(record.get("key", ""))
-        return key[:-2] if key.endswith("[]") and key == parent_key(key[:-2]) else ""
-
-    def cell_editable(self, record, key) -> bool:
-        """A vector's parent row takes only *Fixed* (for all its elements)."""
-        if self.vector_of(record):
-            return key == "fixed"
-        return super().cell_editable(record, key)
-
-    def edit(self, record, key, value) -> None:
-        vector = self.vector_of(record)
-        if not vector:
-            super().edit(record, key, value)
-            return
-        if key == "fixed":
-            from ...core import constants_group as cg
-
-            for _label, parameter in cg.vector_elements(self.panel.group, vector):
-                parameter.fixed = bool(value)
-            self.changed()
-
-    def menu_entries(self, record, key) -> List[Tuple[str, Callable[[], Any]]]:
-        """A vector's own menu on its parent row; *Make vector…* on a scalar."""
-        from ...core.vector_constants import split_element
-
-        panel, feature = self.panel, self.panel.feature
-        vector = self.vector_of(record)
-        if vector:
-            values = [r["value"] for r in self.rows()
-                      if r.get("parent") == record.get("key") and r.get("name") != "(global)"]
-            return [
-                ("Copy values", lambda: copy_text("\t".join(repr(float(v)) for v in values))),
-                ("Paste values", lambda: panel.paste_vector(vector)),
-                ("Populations…", lambda: feature.open_window(VectorDialog(feature, panel, vector))),
-                ("Make scalar", lambda: panel.make_scalar(vector)),
-            ]
-        entries = super().menu_entries(record, key)
-        parameter = self.parameter(record)
-        if parameter is not None and not record.get("parent") \
-                and split_element(parameter.name) is None:
-            entries.append(("Make vector…", lambda: feature.open_window(
-                VectorDialog(feature, panel, parameter.name))))
-        return entries
-
-
 class ConstantsPanel:
     """The Parameters tab: the constants, their group, saving them, adding one.
 
@@ -191,8 +122,12 @@ class ConstantsPanel:
         self._axis_token: Any = None
         self._axis_checked = 0.0
         self.build()
-        #: The table (``views/parameter_table.view.json``).
-        self.table = ConstantsTable(self)
+        #: The table (``views/parameter_table.view.json``); vectors are its trees.
+        self.table = ParameterTable(
+            feature.app, lambda: self.group.parameters_all, changed=self.changed,
+            label=lambda p: p.name,
+            name_tooltip="A vector (▸ gamma [2]) holds one value per population; "
+                         "open it for the elements.")
 
     # -- the group ----------------------------------------------------------
     def build(self) -> None:
@@ -232,14 +167,6 @@ class ConstantsPanel:
         return list(self.group.parameters_all)
 
     # -- vectors --------------------------------------------------------------
-    def column_options(self) -> List[str]:
-        """The burst columns a vector can pick its populations by."""
-        from ...core.vector_constants import DEFAULT_COLUMN
-
-        model = self.feature.app.model
-        names = list(model.parameter_names) if model.has_data else []
-        return [DEFAULT_COLUMN] + [n for n in names if n != DEFAULT_COLUMN]
-
     def set_vector(self, name: str, values: Sequence[float], populations: Sequence[str],
                    uncertainties: Optional[Sequence[float]] = None, *,
                    default: Optional[float] = None, column: Optional[str] = None,
@@ -259,43 +186,9 @@ class ConstantsPanel:
         cg.set_vector(self.group, name, values, populations, uncertainties=uncertainties,
                       default=default, column=column, probabilities=probabilities, codes=codes)
         if expand:
-            from .constant_rows import parent_key
+            from ..parameter_table import parent_key
 
             self.table.expanded.add(parent_key(name))
-        self.changed()
-
-    def make_vector(self, name: str, populations: Sequence[str],
-                    column: Optional[str] = None) -> None:
-        """A scalar becomes a vector, every element at the scalar's value."""
-        value = float(self.values()[name])
-        self.set_vector(name, [value] * len(populations), populations, default=value,
-                        column=column)
-
-    def make_scalar(self, name: str) -> None:
-        """A vector becomes its global value: the elements go."""
-        from ...core import constants_group as cg
-
-        cg.to_scalar(self.group, name)
-        self.changed()
-
-    def paste_vector(self, name: str) -> None:
-        """Paste one number per population (tabs, commas or spaces between)."""
-        from ...core.vector_constants import element_name
-
-        text = clipboard_text().replace(",", " ").split()
-        numbers = [_number(t) for t in text]
-        labels = [r["name"] for r in self.table.rows()
-                  if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
-        if len(numbers) != len(labels) or any(n is None for n in numbers):
-            self.feature.app.message = ("Paste values",
-                                        f"{name} has {len(labels)} populations; the clipboard "
-                                        f"holds {len(numbers)} number(s).")
-            return
-        params = self.group.parameters_all_dict
-        for label, number in zip(labels, numbers):
-            parameter = params.get(element_name(name, label))
-            if parameter is not None and not parameter.is_linked:
-                parameter.value = number
         self.changed()
 
     def _axes_token(self) -> Any:
@@ -479,14 +372,14 @@ class AddParameterDialog(Dialog):
         #: "Scalar", or "Vector": one value per population.
         self.kind = "Scalar"
         self.populations = "2"
-        self.column = panel.column_options()[0]
+        self.column = panel.table.column_options()[0]
 
     @property
     def vector_hidden(self) -> bool:
         return self.step != "value" or self.kind != "Vector"
 
     def column_options(self) -> List[str]:
-        return self.panel.column_options()
+        return self.panel.table.column_options()
 
     def spec(self) -> dict:
         return _fill(load_spec(self.spec_name), value_label=f"Value for '{self.name}':")
@@ -505,7 +398,7 @@ class AddParameterDialog(Dialog):
             self.name = name
             self.step = "value"
             return
-        from .constant_rows import parse_populations
+        from ..parameter_table import parse_populations
 
         populations = parse_populations(self.populations) if self.kind == "Vector" else None
         problem = self.panel.add(self.name, float(self.value), populations, self.column)
@@ -515,28 +408,25 @@ class AddParameterDialog(Dialog):
 
 
 class VectorDialog(Dialog):
-    """Make vector… / Populations…: a constant's populations and the column picking them."""
+    """Make vector… / Populations…: a parameter's populations and the column picking them.
+
+    Opened from any parameter table's menu (:class:`ParameterTable`).
+    """
 
     spec_name = "vector"
     size = (400.0, 170.0)
 
-    def __init__(self, feature, panel: ConstantsPanel, name: str) -> None:
+    def __init__(self, feature, parameter, table: ParameterTable) -> None:
         from ...core.vector_constants import DEFAULT_COLUMN
 
-        self.panel = panel
-        self.name = name
-        self.is_vector = any(r.get("key") == f"{name}[]" for r in panel.table.rows())
-        super().__init__(feature, f"Populations of {name}" if self.is_vector
-                         else f"Make {name} a vector")
-        labels = [r["name"] for r in panel.table.rows()
-                  if r.get("parent") == f"{name}[]" and r.get("name") != "(global)"]
-        self.populations = ", ".join(labels) if labels else "2"
-        column = DEFAULT_COLUMN
-        if self.is_vector and panel.group is not None:
-            from ...core import constants_group as cg
-
-            column = cg.vector_axis(panel.group, name).column
-        self.column = column
+        self.parameter = parameter
+        self.table = table
+        self.name = parameter.name
+        self.is_vector = bool(parameter.is_vector)
+        super().__init__(feature, f"Populations of {self.name}" if self.is_vector
+                         else f"Make {self.name} a vector")
+        self.populations = ", ".join(parameter.populations) if self.is_vector else "2"
+        self.column = str(parameter.vector_state().get("column") or DEFAULT_COLUMN)
 
     @property
     def hint(self) -> str:
@@ -544,29 +434,18 @@ class VectorDialog(Dialog):
                 "value, and a burst in no population the global one.")
 
     def column_options(self) -> List[str]:
-        options = self.panel.column_options()
+        options = self.table.column_options()
         return options if self.column in options else [self.column] + options
 
     def ok(self) -> None:
-        from .constant_rows import parse_populations
+        from ..parameter_table import parse_populations
 
         labels = parse_populations(self.populations)
         if not labels:
             self.feature.app.message = ("Populations", "Give how many populations, or their "
                                                        "names (HF, LF).")
             return
-        if not self.is_vector:
-            self.panel.make_vector(self.name, labels, self.column)
-        else:
-            values = self.panel.values()
-            from ...core.vector_constants import element_name
-
-            default = values.get(self.name)
-            numbers = [values.get(element_name(self.name, l), default) for l in labels]
-            fallback = default if default is not None else sum(
-                n for n in numbers if n is not None) / max(sum(n is not None for n in numbers), 1)
-            self.panel.set_vector(self.name, [fallback if n is None else n for n in numbers],
-                                  labels, column=self.column)
+        self.table.set_populations(self.parameter, labels, self.column)
         self.close()
 
 
@@ -1575,6 +1454,10 @@ class OverlaysFeature(Feature):
     def open_link(self, parameter, table: ParameterTable) -> None:
         """Link…: *parameter* follows the one picked (any parameter table's menu)."""
         self.open_window(LinkDialog(self, parameter, table), stack=True)
+
+    def open_populations(self, parameter, table: ParameterTable) -> None:
+        """Make vector… / Populations… (any parameter table's menu)."""
+        self.open_window(VectorDialog(self, parameter, table))
 
     def fit_last_curve(self) -> None:
         if self.overlays.panels:

@@ -19,7 +19,7 @@
     {"label": "Delete", "action": "delete", "description": "Remove the curve."}]}
   ]},
   {"type": "info", "source": "error_text", "hidden_when": {"attr": "has_error", "equals": false}},
-  {"type": "parameter_table", "table": "table", "height": 132,
+  {"type": "parameter_table", "table": "table", "height": 170,
    "hidden_when": {"attr": "visible", "equals": false}}
  ]
 }

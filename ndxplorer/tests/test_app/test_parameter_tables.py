@@ -155,7 +155,7 @@ def test_the_right_click_menu_copies_pastes_and_links(gaussians):
     table = panel.table
     record = next(r for r in table.rows() if r["key"] == "sd_x_1")
     labels = [label for label, _ in table.menu_entries(record, "value")]
-    assert labels == ["Copy", "Paste", "Link…"]
+    assert labels == ["Copy", "Paste", "Link…", "Make vector…"]
     dict(table.menu_entries(record, "value"))["Copy"]()
     other = next(r for r in table.rows() if r["key"] == "sd_x_2")
     dict(table.menu_entries(other, "value"))["Paste"]()
@@ -167,7 +167,7 @@ def test_the_right_click_menu_copies_pastes_and_links(gaussians):
     target = next(r for r in dialog.targets() if r["name"] == "sd_y_1")
     dialog.link(target)
     assert group["sd_x_2"].link is group["sd_y_1"]
-    assert [label for label, _ in table.menu_entries(other, "value")][-1] == "Unlink"
+    assert "Unlink" in [label for label, _ in table.menu_entries(other, "value")]
 
 
 def test_a_curve_parameter_is_edited_in_the_same_table(tmp_path, monkeypatch):
