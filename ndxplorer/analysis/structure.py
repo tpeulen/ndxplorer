@@ -22,9 +22,10 @@ Backends: HDBSCAN and K-means are tttrlib's compiled kernels
 every data source is a ``tttrlib.DataStore``, and its Pyodide wheel carries
 them, so the desktop and the browser run the same code and neither needs
 scikit-learn. PCA is a singular value decomposition in NumPy
-(:mod:`ndxplorer.analysis.pca_helpers`). UMAP needs ``umap-learn``, which
-needs numba and so cannot run in a browser at all; :meth:`Method.unavailable`
-says so in words.
+(:mod:`ndxplorer.analysis.pca_helpers`). UMAP is tttrlib's too
+(``tttrlib.umap``, which follows umap-learn step for step and needs no numba,
+so it runs in the browser); umap-learn is used only for a non-Euclidean metric,
+or when the installed tttrlib predates UMAP (:func:`..utils.lazy_imports.get_umap`).
 """
 
 from __future__ import annotations
@@ -161,11 +162,11 @@ METHODS: Tuple[Method, ...] = (
         title="UMAP",
         family=PROJECTION,
         probe=get_umap,
-        package="umap-learn",
-        import_name="umap",
+        package="tttrlib",
+        import_name="tttrlib",
         blurb="Non-linear projection to 2-3 dimensions for visual inspection.",
         min_columns=2,
-        browser=False,
+        installable=False,
     ),
     Method(
         key="hdbscan",
@@ -385,7 +386,7 @@ def embed_umap(task, data: np.ndarray, params: Dict[str, Any]):
     Raises
     ------
     RuntimeError
-        umap-learn is missing, or there are fewer rows than neighbours.
+        No UMAP backend is available, or there are fewer rows than neighbours.
     """
     backend = get_umap()
     if backend is None:
