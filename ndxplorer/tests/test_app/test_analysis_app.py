@@ -127,7 +127,7 @@ def test_view_umap_opens_find_structure_on_umap(closing):
     assert feature.structure.open and feature.structure.method == "umap"
 
 
-def test_missing_umap_offers_to_install_or_says_why(closing, monkeypatch):
+def test_missing_umap_says_why_without_an_install_offer(closing, monkeypatch):
     run = replay([OPEN])
     closing(run)
     feature = feature_of(run)
@@ -137,16 +137,15 @@ def test_missing_umap_offers_to_install_or_says_why(closing, monkeypatch):
         feature.structure.method = "umap"
         feature.structure.columns = {"petal length", "petal width"}
         feature.structure.run()
-        question = feature.modal[-1]
-        assert "not installed" in question.title and question.yes_label() == "Install"
-        question.no()
-        assert run.app.message[1] == ("Installation was cancelled or failed, so this method "
-                                      "cannot run.")
+        # tttrlib ships with the application: nothing to install, the reason is shown
+        assert not any("Install" in getattr(q, "yes_label", lambda: "")() for q in feature.modal)
+        title, text = run.app.message
+        assert "tttrlib" in text and "could not be imported" in text
         run.app.message = None
         monkeypatch.setattr(structure.sys, "platform", "emscripten")
         feature.structure.run()
         title, text = run.app.message
-        assert "not available in the browser" in text and "numba" in text
+        assert "needs tttrlib" in text and "page" in text
     finally:
         from ndxplorer.utils.lazy_imports import get_umap
 

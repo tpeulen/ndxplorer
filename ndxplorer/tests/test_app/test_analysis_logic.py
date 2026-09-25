@@ -65,8 +65,9 @@ def test_methods_say_why_they_cannot_run(monkeypatch):
     monkeypatch.setattr(structure.sys, "platform", "emscripten")
     object.__setattr__(umap, "probe", lambda: None)
     try:
-        assert "not available in the browser" in umap.unavailable()
-        assert "numba" in umap.unavailable()
+        # UMAP is tttrlib's (it runs in a page): a page without tttrlib says so
+        assert umap.browser
+        assert "needs tttrlib" in umap.unavailable() and "page" in umap.unavailable()
     finally:
         from ndxplorer.utils.lazy_imports import get_umap
 
