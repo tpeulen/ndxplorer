@@ -327,7 +327,7 @@ class NdxApp:
             io.mouse_released[i] = False
             io.mouse_double_clicked[i] = False
         io.mouse_wheel = 0.0
-        io.key, io.text = 0, ""
+        io.key, io.text, io.key_events = 0, "", []
 
     def _draw_plot_controls(self, _box) -> None:
         """The Plot controls window: the ``plot_controls`` spec."""
@@ -649,10 +649,21 @@ class NdxApp:
         action = self.shortcut_action(key, modifiers) if modifiers else None
         if action is not None and self.run_action(action):
             return True
-        self.io.key = int(key)
+        from emtk.keys import typed_text
+        from emtk.events import ALT_MODIFIER, CONTROL_MODIFIER, META_MODIFIER, SHIFT_MODIFIER
+
+        io = self.io
+        io.key = int(key)
         # Appended: several keys can arrive before the frame that spends them
         # (a host draws on demand; a page's frame is slow) -- see _spend_edges.
-        self.io.text += "".join(c for c in (text or "") if c >= " " and c != "\x7f")
+        # A shortcut's letter (Cmd+A arrives with text "a") types nothing.
+        io.text += "".join(c for c in typed_text(text, modifiers) if c >= " " and c != "\x7f")
+        # the ordered queue text fields read: select all, copy, paste, undo ...
+        io.key_events.append((int(key), str(text or ""), int(modifiers)))
+        io.key_ctrl = bool(modifiers & CONTROL_MODIFIER)
+        io.key_shift = bool(modifiers & SHIFT_MODIFIER)
+        io.key_alt = bool(modifiers & ALT_MODIFIER)
+        io.key_super = bool(modifiers & META_MODIFIER)
         return True
 
     def files_dropped(self, paths) -> None:

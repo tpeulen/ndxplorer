@@ -605,3 +605,35 @@ def test_axis_control_switches_the_y_top_and_z_titles(app, source):
     painter = RecordingPainter()
     app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
     assert "counts" not in painter.strings
+
+
+def test_the_axis_filter_takes_select_all_and_paste_through_app_keys(app):
+    """Keys arrive the way a host delivers them (``app.key``), not straight to the
+    popup: the filter must see the ordered key queue and the primary modifier."""
+    from emtk import clipboard
+    from emtk.events import CONTROL_MODIFIER
+    from emtk.overlays import open_panels
+
+    rng = np.random.default_rng(1)
+    names = ["E", "S", "Tau", "tau red", "Duration", "Photons", "rate green",
+             "rate red", "Sg", "Sr"]                  # a list long enough to filter
+    app.model.set_source(DataSource.from_columns({n: rng.random(200) for n in names}))
+    draw(app)
+    click(app, *centre(app.forms["plot_controls"].rects["x_name"]))
+    (popup,) = open_panels(app.storage)
+    for ch in "xyz":
+        app.key(ord(ch), ch, 0)
+    draw(app)
+    assert popup.query == "xyz"
+    app.key(ord("A"), "a", CONTROL_MODIFIER)          # select all (Cmd+A / Ctrl+A)
+    app.key(ord("t"), "t", 0)                      # typing replaces the selection
+    draw(app)
+    assert popup.query == "t"
+    clipboard.set_hook(lambda text: None, lambda: "tau")
+    try:
+        app.key(ord("A"), "a", CONTROL_MODIFIER)
+        app.key(ord("V"), "v", CONTROL_MODIFIER)      # paste replaces the selection
+        draw(app)
+        assert popup.query == "tau"
+    finally:
+        clipboard.set_hook(None)
