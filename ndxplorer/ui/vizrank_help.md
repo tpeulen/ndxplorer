@@ -51,10 +51,24 @@ the axes (emtk app).
 **Use islands as clusters** labels every burst of the table by the island of
 the view on the axes and writes the labels as the clusters (`Cluster Label`,
 replacing K-means/HDBSCAN clusters) and as a column `Island Label (x vs y)`.
-Islands are numbered by the bursts they hold, largest first; a burst on a bridge
-between islands, in a thin tail or an outlier gets -1. The Cluster spin box,
-*colour*, gates, Save Burst IDs and vector parameters' population axis then
-work on the islands.
+Islands are numbered by the bursts they hold, largest first. The Cluster spin
+box, *colour*, gates, Save Burst IDs and vector parameters' population axis then
+work on the islands. **Label** next to the button says which bursts get one:
+
+- *Whole islands* (default): every burst in the island's catchment basin -- the
+  watershed of the smoothed density the Separation score segments -- including
+  the low-photon smear between species. -1 only for bursts on the ridge between
+  two islands (the island holds less than 2/3 of the smoothed density there, a
+  band of about half a kernel width), in a clump too small to be an island
+  (under 3 % of the bursts; it is not merged into a neighbour), and outliers or
+  missing values. On the cal1 ALEX file (S vs PR) that labels 94 % of the bursts.
+- *Cores only*: just the bursts clearly inside an island, 2 shot-noise sigmas
+  above its valley to the others; bridges, tails and the smear stay -1 (37 % of
+  the cal1 bursts labelled).
+
+`Cluster Probability` is the island's share of the smoothed density at the
+burst: 1 deep inside an island, falling toward 1/2 at a ridge, 0 for -1. The
+status line says how many bursts were labelled.
 
 **Correlation** — which parameters move together (Spearman |ρ|, sign shown)?
 It finds related measurements — E and a lifetime, a rate and its count — not
