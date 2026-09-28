@@ -1,0 +1,102 @@
+{
+ "_comment": "The Phasor / FRET window (Qt: ndxplorer/ui/phasor_panel.py PhasorControlPanel, opened by the 'ChiSurf Phasor' toolbar). The geometry is computed by ChiSurf over app.chisurf_rpc.",
+ "sections": [
+  {
+   "type": "info",
+   "source": "reason",
+   "hidden_when": {"attr": "usable", "equals": "true"}
+  },
+  {
+   "type": "panel",
+   "title": "Phasor overlays",
+   "collapsible": true,
+   "sections": [
+    {
+     "type": "value", "attr": "frequency", "label": "Frequency (MHz)", "kind": "float",
+     "minimum": 0.001, "maximum": 10000.0, "decimals": 3,
+     "description": "Modulation frequency for the phasor geometry and the apparent lifetimes."
+    },
+    {
+     "type": "value", "attr": "harmonic", "label": "Harmonic", "kind": "int",
+     "minimum": 1, "maximum": 16, "style": "spin",
+     "description": "Harmonic number; the effective frequency is frequency x harmonic."
+    },
+    {
+     "type": "value", "attr": "lifetimes", "label": "Lifetimes (ns)", "kind": "str",
+     "description": "Comma-separated reference lifetimes (ns) for the grid and the ticks."
+    },
+    {
+     "type": "value", "attr": "tau_d0", "label": "Donor τ0 (ns)", "kind": "float",
+     "minimum": 0.001, "maximum": 1000.0, "decimals": 3,
+     "description": "Donor-only lifetime for the FRET trajectory (τ_DA = τ_D0·(1−E))."
+    },
+    {"type": "toggle", "attr": "show_semicircle", "label": "Universal semicircle",
+     "description": "The universal semicircle of single-exponential decays."},
+    {"type": "toggle", "attr": "show_lifetime_grid", "label": "Iso-lifetime grid",
+     "description": "Lines of constant apparent lifetime through the reference lifetimes."},
+    {"type": "toggle", "attr": "show_lifetime_ticks", "label": "Lifetime ticks",
+     "description": "The reference lifetimes marked on the semicircle."},
+    {"type": "toggle", "attr": "show_polar_grid", "label": "Polar grid",
+     "description": "Circles of constant modulation and rays of constant phase."},
+    {"type": "toggle", "attr": "show_fret", "label": "FRET trajectory",
+     "description": "The donor's phasor as FRET quenches it, from donor τ0."},
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "Draw overlays", "action": "draw_overlays",
+       "description": "Draw the checked sets on the map; the axes must be g and s."},
+      {"label": "Clear", "action": "clear_overlays",
+       "description": "Remove the phasor overlays and FRET lines from the map."}
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "FRET line",
+   "collapsible": true,
+   "sections": [
+    {
+     "type": "choice", "attr": "fret_model", "label": "Model", "options_source": "fret_models",
+     "call": "fret_model_changed",
+     "description": "The FRET component model the line is computed with."
+    },
+    {
+     "type": "choice", "attr": "sweep_param", "label": "Sweep param",
+     "options_source": "sweep_params",
+     "description": "The model parameter swept along the FRET line."
+    },
+    {"type": "value", "attr": "sweep_min", "label": "Min", "kind": "float",
+     "minimum": -1000000.0, "maximum": 1000000.0, "decimals": 3,
+     "description": "Where the sweep starts."},
+    {"type": "value", "attr": "sweep_max", "label": "Max", "kind": "float",
+     "minimum": -1000000.0, "maximum": 1000000.0, "decimals": 3,
+     "description": "Where the sweep ends."},
+    {"type": "value", "attr": "points", "label": "Points", "kind": "int",
+     "minimum": 2, "maximum": 2000, "style": "spin",
+     "description": "Points along the line."},
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "Draw FRET line", "action": "draw_fret_line",
+       "description": "Compute the FRET line in ChiSurf and draw it on the map."}
+     ]
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "title": "Derived columns",
+   "collapsible": true,
+   "sections": [
+    {
+     "type": "button_row",
+     "buttons": [
+      {"label": "τ φ/M columns", "action": "lifetime_columns",
+       "description": "Compute τ_φ and τ_M from the g and s columns and add them as columns."}
+     ]
+    }
+   ]
+  }
+ ]
+}
