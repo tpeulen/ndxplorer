@@ -199,6 +199,20 @@ class NdxApp:
 
                 logging.getLogger(__name__).exception("%s.on_data_changed", feature.name)
 
+    def data_leaving(self) -> None:
+        """Tell the features the table is about to be replaced (its state can
+        still be read now: the session feature keeps it in its measurement)."""
+        self._each_feature("on_data_leaving")
+
+    def _each_feature(self, hook: str) -> None:
+        for feature in self.features:
+            try:
+                getattr(feature, hook)()
+            except Exception:  # noqa: BLE001 - logged, the window goes on
+                import logging
+
+                logging.getLogger(__name__).exception("%s.%s", feature.name, hook)
+
     # ------------------------------------------------------------- actions
     def _checked(self, attr: str) -> bool:
         return bool(getattr(self.panel, attr, False))
@@ -237,8 +251,13 @@ class NdxApp:
             self.on_exit()
 
     def close(self) -> None:
-        """Release what the window holds (nothing global since it draws in the
-        default style); kept for hosts, which call it when the window closes."""
+        """The window closes: the features finish (the session feature keeps the
+        analysis view in its measurement). Hosts call it; a second call does
+        nothing."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self._each_feature("on_close")
 
     # ------------------------------------------------------------- drawing
     def draw(self, painter, x: float, y: float, w: float, h: float) -> None:

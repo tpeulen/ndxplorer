@@ -216,6 +216,8 @@ class ExplorerModel:
 
     def set_source(self, source: DataSource) -> None:
         """Show *source*: compute its equation columns, choose the axes, redraw."""
+        if self.app is not None and self.source is not None:
+            self.app.data_leaving()
         self.manager.data_source = source          # computes the equation columns
         self.source = self.manager.data_source
         self.gates.clear()
@@ -225,6 +227,8 @@ class ExplorerModel:
 
     def clear(self) -> None:
         """The Clear button: no data, no gates, no working path."""
+        if self.app is not None and self.source is not None:
+            self.app.data_leaving()
         self.source = None
         self.manager = DataManager()
         self.manager.constants = dict(self.bundle.constants)

@@ -87,6 +87,20 @@ The hooks (all optional; the base class does nothing):
     photograph (``"dialog:QFileDialog"``, ``"widget:pc.widgetSelection"``).
     ``None`` from ``fn`` means "not on screen now": the next feature, then
     the core, is asked.
+``session_state()``
+    The feature's part of the analysis view kept in the measurement
+    (:mod:`ndxplorer.app.session_state`): a JSON-able dict, or ``None`` for
+    nothing to keep. Columns by name, never by index.
+``restore_session_state(state, context)``
+    Apply that part again after the table loaded. *context* is a
+    :class:`~ndxplorer.app.session_state.SessionContext`: the columns now
+    there, whether the rows match; ``context.skip(note)`` says what could not
+    be restored.
+``on_data_leaving()``
+    The table is about to be replaced (another file opens, Clear): the last
+    moment its state can be read.
+``on_close()``
+    The window is closing.
 """
 
 from __future__ import annotations
@@ -109,6 +123,7 @@ FEATURES: List[str] = [
     "overlays",
     "playback_export",
     "window",
+    "session",
 ]
 
 
@@ -180,6 +195,23 @@ class Feature:
 
     def animating(self) -> bool:
         return False
+
+    @property
+    def session_key(self) -> str:
+        """The key of this feature's part in a session state."""
+        return self.name
+
+    def session_state(self) -> Optional[Dict[str, Any]]:
+        return None
+
+    def restore_session_state(self, state: Dict[str, Any], context) -> None:
+        pass
+
+    def on_data_leaving(self) -> None:
+        pass
+
+    def on_close(self) -> None:
+        pass
 
 
 def load_features(app, names: Optional[List[str]] = None) -> List[Feature]:
