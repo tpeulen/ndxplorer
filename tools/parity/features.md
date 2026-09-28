@@ -514,15 +514,15 @@ from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
 - the **MMFDB** toolbar (Open from MMFDB), only when `mmfdb.status` answers;
 - the constants published as fitting parameters in the **Global View** (`window._bind_global_view`: since 2026-09-24 the window's own constants group through `core/chisurf_binding`'s one mirror; the "⟲ Sync constants" action went with the copy it synchronised).
 - Not GUI: `cli.py` (`chisurf ndxplorer filter|image`, MMFDB-backed headless runs) and `mmfdb_launcher.open_burst_selection_from_mmfdb` / `send_path_to_ndxplorer` (other plugins open ndX with a path).
-- Trap: ChiSurf's *menu* route (`run_plugin_from_dir`) opens the manifest's `entrypoints.gui` (`make_ndxplorer`) and never runs `__init__.py`, so a window opened from the menu has the Phasor toolbar and the restore, but **no Accurate FRET or MMFDB toolbar and no Global View parameters**; only the ribbon route runs the decoration.
+- Trap (Qt baseline only): ChiSurf's *menu* route (`run_plugin_from_dir`) opened the manifest's `entrypoints.gui` (`make_ndxplorer`) and never ran `__init__.py`, so a window opened from the menu had the Phasor toolbar and the restore, but no Accurate FRET or MMFDB toolbar and no Global View parameters. Since 2026-09-28 ChiSurf opens only the emtk app through `build_ndxplorer_window` on every route.
 
 ## chisurf_toolbars — ChiSurf-hosted window: the toolbars and constants ChiSurf adds
 
 - [~] Toolbar "Accurate FRET" (🎯 FRET calibration, 💾 Save calibration, 📂 Load calibration, ⟲ Sync constants) — the **FRET** menu (before Help): FRET calibration…, Save calibration…, Load calibration…, in the app whether or not ChiSurf hosts it; no toolbar button (the toolbar's space was just given to the map)
 - [-] "⟲ Sync constants" (Global View -> window, then back) — not needed: the emtk constants *are* the registered parameter group (`overlays.ConstantsPanel` registers it as owner `ndxplorer`, the slot the Qt window publishes in too), so a Global View edit is the window's value; there is no copy to sync
-- [ ] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — not ported (see chisurf_phasor)
-- [ ] Opening a `.pto` restores its stored calibration (Qt shot `parameters_restored`: gG/gR 1.333, PhiA = PhiD = 1, alpha 0.157, beta 0.0674, r 0.9435, Bg/Br/By 4.24/0.538/2.02) — not yet: the restore is `calibration_bridge.restore_calibration_from_container`, held for the accurate-FRET library move. The emtk app opens with the settings' constants, and a calibration started there starts from them (see accurate_fret_run)
-- [-] Global View publishing — the emtk constants group is registered in ChiSurf's parameter-group registry already; it reaches the Global View once the emtk app runs inside ChiSurf's process, which no ChiSurf plugin does yet
+- [~] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — View > Phasor / FRET… and View > Clear phasor overlays (see chisurf_phasor)
+- [x] Opening a `.pto` restores its stored calibration — `AccurateFretFeature.restore_stored()` on every opened table; status "Restored 16 constants stored in …" (values follow the container's newest saved calibration, which is newer than the Qt shot's: gG/gR 0.533, PhiA/PhiD 0.32/0.8, gamma 0.739, alpha 0.157, beta 0.0674, r 0.9435, Bg/Br/By 4.24/0.538/2.02)
+- [x] Global View publishing — ChiSurf's window hosts the app in-process (2026-09-28): the constants group is in the slot `ndxplorer` (group "ndX"), withdrawn when the window closes
 
 ## accurate_fret_options — Accurate FRET > FRET calibration: the options dialog
 
@@ -554,10 +554,10 @@ from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
 
 ## mmfdb_open — MMFDB > Open from MMFDB (ChiSurf-hosted)
 
-- [~] Toolbar "MMFDB" > "Open from MMFDB" (dataset picker, then open like a drop) — File > Import > "From MMFDB… (only inside ChiSurf)", disabled: it needs ChiSurf's MMFDB client
+- [x] Toolbar "MMFDB" > "Open from MMFDB" (dataset picker, then open like a drop) — File > Import > "From MMFDB…": enabled when ChiSurf hosts the app (`app.mmfdb_opener`, ChiSurf's session client and dataset picker), disabled with the reason in its description standalone
 - [-] (Qt: broken) The Qt toolbar is never added: the plugin builds `MMFDBClient(inprocess=True)` without a session token, and `mmfdb.status` requires one, so `status()` raises and the toolbar is skipped silently (the log's toolbars list has no MMFDB entry)
 
 ## chisurf_phasor — ChiSurf Phasor > Phasor / FRET… (ChiSurf-hosted)
 
-- [ ] "Phasor / FRET…" shows the ChiSurf Phasor / FRET dock: Phasor overlays (Frequency, Harmonic, Lifetimes, Donor τ0, Show: universal semicircle / iso-lifetime grid / lifetime ticks / polar grid / FRET trajectory, Draw overlays, Clear), FRET line (Model, Sweep param, Min, Max, Points, Draw FRET line), Derived columns (τ φ/M columns) — not ported: it needs a ChiSurf RPC client, which the emtk app does not get yet (`--chisurf-rpc` does not reach `NdxApp`)
-- [ ] "✕ Clear" removes the ChiSurf overlays — not ported (as above)
+- [x] "Phasor / FRET…" shows the ChiSurf Phasor / FRET dock: Phasor overlays (Frequency, Harmonic, Lifetimes, Donor τ0, Show: universal semicircle / iso-lifetime grid / lifetime ticks / polar grid / FRET trajectory, Draw overlays, Clear), FRET line (Model, Sweep param, Min, Max, Points, Draw FRET line), Derived columns (τ φ/M columns) — View > Phasor / FRET… opens the "Phasor / FRET" window (`features/phasor.py`, `phasor/phasor.view.json`), every control there; overlays drawn over the map in data coordinates; off with a reason without a ChiSurf client
+- [x] "✕ Clear" removes the ChiSurf overlays — Clear in the window, and View > Clear phasor overlays
