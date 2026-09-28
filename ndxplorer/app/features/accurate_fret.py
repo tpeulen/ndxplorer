@@ -14,8 +14,10 @@ The Qt window has this only when ChiSurf opens it (ChiSurf's ndX plugin adds an
   :mod:`ndxplorer.io.fret_calibration_io` is the format, shared with the Qt
   window.
 
-File > Import > *From MMFDB…* is listed, disabled: it needs ChiSurf's MMFDB
-client, and the emtk app does not run inside ChiSurf.
+File > Import > *From MMFDB…* opens a burst selection registered in MMFDB. It
+needs ChiSurf's MMFDB client, which ndX does not have: a host that has one
+(ChiSurf's ndX window) sets ``app.mmfdb_opener``, and without it the entry is
+disabled and says why.
 
 The calibration itself is :func:`ndxplorer.analysis.fret_calibration.calibrate`:
 columns and constants in, a result out, applied here. The algorithm behind it
@@ -593,7 +595,7 @@ class AccurateFretFeature(Feature):
 
     def available(self, action: str) -> Optional[bool]:
         if action == "open_from_mmfdb":
-            return False
+            return callable(getattr(self.app, "mmfdb_opener", None))
         if action in ("fret_calibration", "save_fret_calibration", "load_fret_calibration"):
             return self.app.model.has_data and self.task is None
         return None
@@ -605,7 +607,9 @@ class AccurateFretFeature(Feature):
             (("FRET",), {"label": "Save calibration…", "action": "save_fret_calibration"}),
             (("FRET",), {"label": "Load calibration…", "action": "load_fret_calibration"}),
             (("File", "Import"),
-             {"label": f"From MMFDB… ({MMFDB_REASON})", "action": "open_from_mmfdb"}),
+             {"label": "From MMFDB…", "action": "open_from_mmfdb",
+              "description": "Open a burst selection registered in MMFDB "
+                             f"(ChiSurf's database; {MMFDB_REASON})."}),
         ]
 
     def animating(self) -> bool:
@@ -854,6 +858,11 @@ class AccurateFretFeature(Feature):
 
     # --------------------------------------------------------------- MMFDB
     def open_from_mmfdb(self) -> None:
+        """File > Import > From MMFDB: the host's picker, or why there is none."""
+        opener = getattr(self.app, "mmfdb_opener", None)
+        if callable(opener):
+            opener()
+            return
         self.message("Open from MMFDB", "Opening a burst selection registered in MMFDB needs "
                      "ChiSurf's MMFDB client: it works when ndX runs inside ChiSurf.")
 

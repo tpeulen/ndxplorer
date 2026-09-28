@@ -254,9 +254,21 @@ def test_the_fret_menu_sits_before_help_and_mmfdb_says_why_it_is_off(app):
         [m for m in menus]) if entry}
     assert rows["fret_calibration"][0] == ("FRET",)
     path, label = rows["open_from_mmfdb"]
-    assert path == ("File", "Import") and "only inside ChiSurf" in label
+    assert path == ("File", "Import") and label == "From MMFDB…"
     assert not app.panel.available("open_from_mmfdb")
     assert app.panel.available("fret_calibration")
+    entry = next(e for _p, e in iter_entries(menus) if e and e["action"] == "open_from_mmfdb")
+    assert "only inside ChiSurf" in entry["description"]
+
+
+def test_a_host_with_an_mmfdb_client_enables_from_mmfdb(app):
+    """ChiSurf's window sets ``app.mmfdb_opener``; the entry then runs it."""
+    opened = []
+    app.mmfdb_opener = lambda: opened.append(True)
+    assert app.panel.available("open_from_mmfdb")
+    assert app.run_action("open_from_mmfdb")
+    assert opened == [True]
+    assert app.message is None
 
 
 def test_report_text_lists_what_was_written_and_held():

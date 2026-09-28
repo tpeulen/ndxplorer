@@ -171,6 +171,9 @@ class NdxApp:
         #: The ChiSurf RPC client (``--chisurf-rpc``), or ``None``: what "Send
         #: selection to" and the phasor features talk to.
         self.chisurf_rpc = None
+        #: What File > Import > From MMFDB runs: set by a host that has an MMFDB
+        #: client (ChiSurf's ndX window); ``None`` keeps the entry disabled.
+        self.mmfdb_opener: Optional[Callable[[], None]] = None
         #: One line of non-modal feedback (Qt's status bar), in the menu bar's
         #: row; set it with :meth:`show_status`.
         self.status = ""
