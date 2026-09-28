@@ -190,6 +190,58 @@ def test_only_the_users_app_writes_unasked(tmp_path):
     assert "ndx_session" not in names_in(path)
 
 
+def test_a_bare_app_and_a_capture_replay_never_write_unasked(tmp_path):
+    """NdxApp() and a capture Replay: open, change the view, switch, close -- nothing written.
+
+    Only the interactive launcher and the web page (make_app) opt in, the way
+    they opt in to a persistent window layout.
+    """
+    from ndxplorer.app.capture import Replay
+    from ndxplorer.app.frame import NdxApp
+
+    first, second = make_pto(tmp_path / "a.pto"), make_pto(tmp_path / "b.pto", seed=1)
+    bare = NdxApp()
+    replay = Replay({"id": "session-guard", "steps": []}, {}).app
+    for app in (bare, replay):
+        assert not app.session_autosave
+        assert app.open_path(str(first))
+        draw(app)
+        app.model.set_parameter("x", "Duration (ms)")
+        app.model.add_interval("Tau (green)", 10.0, 20.0)
+        draw(app)
+        assert app.open_path(str(second))                # leaving the first
+        app.model.set_parameter("x", "Tau (green)")
+        draw(app)
+        app.close()
+    assert "ndx_session" not in names_in(first) + names_in(second)
+
+
+def test_the_launcher_and_the_page_opt_in():
+    import inspect
+
+    from ndxplorer.app import frame, launch
+
+    assert frame.make_app().session_autosave
+    assert "session_autosave=True" in inspect.getsource(launch.run)
+
+
+def test_forget_removes_every_stored_session(tmp_path):
+    path = make_pto(tmp_path / "m.pto")
+    app = open_app(path, autosave=False)
+    for bins in (40, 50, 60):
+        app.model.x.bins_1d = bins
+        app.run_action("save_session")
+    assert names_in(path).count("ndx_session") == 3
+    app.run_action("forget_session")
+    assert "Removed 3 saved session(s)" in app.status
+    assert "ndx_session" not in names_in(path)
+    assert "run/bi4_bur/m.bur" in names_in(path)            # the bursts stay
+    app.close()
+    from ndxplorer.io.pto_reader import read_container
+
+    assert read_container(path).size == 600
+
+
 def test_a_measurement_without_a_state_opens_as_before(tmp_path):
     path = make_pto(tmp_path / "m.pto")
     app = open_app(path)
