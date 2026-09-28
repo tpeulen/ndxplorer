@@ -30,6 +30,12 @@ MENUS: List[tuple] = [
             {"label": "Histograms", "action": "save_histograms"},
         ]),
         None,
+        # the analysis view kept in the .pto (features/session.py)
+        {"label": "Save session", "action": "save_session", "shortcut": "Ctrl+S"},
+        {"label": "Revert to saved session", "action": "revert_session"},
+        {"label": "Forget session", "action": "forget_session"},
+        {"label": "Download .pto with session…", "action": "download_session_pto"},
+        None,
         {"label": "Make Report", "action": "make_report"},
         {"label": "Print window", "action": "print_window"},
         None,
