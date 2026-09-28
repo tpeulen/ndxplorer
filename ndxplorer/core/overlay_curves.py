@@ -2,7 +2,13 @@
 
 An overlay curve is ``y = f(x; p)`` typed as text (``x*tauD0*kf/((tauD0-x)*PhiA)``)
 or a Python function that traces a parametric line and returns ``(x, y)`` (a
-static FRET line from a distance distribution). Its free parameters are a
+static FRET line from a distance distribution), a **parametric** line
+``(x(t), y(t))`` for ``t`` in ``[t0, t1]`` (the phasor's universal circle, a
+FRET trajectory), or a **point set**: markers at listed ``t`` values, labelled
+(lifetime points on the circle). Parametric curves and point sets are specs
+(``x``, ``y``, ``where``, ``t``, ``labels``) compiled to the same traced-function
+contract a ``def`` has, so drawing, the CSV, population-wise curves and the fit
+take all kinds alike. Its free parameters are a
 :class:`~ndxplorer.core.parameters.ParameterGroup` (see
 :mod:`ndxplorer.core.curve_parameters`), so they have value / fixed / bounds and
 can be crosslinked to another parameter (with ChiSurf present, to a fit's).
@@ -30,7 +36,15 @@ from ..logging_config import logging
 __all__ = [
     "NON_PARAMETER_NAMES",
     "CUSTOM_EQUATION",
+    "KINDS",
+    "TRACED_KINDS",
     "CurveEvaluator",
+    "parse_where",
+    "spec_parameter_names",
+    "compile_spec",
+    "spec_labels",
+    "spec_t",
+    "spec_function_source",
     "OverlayCurve",
     "equation_parameter_names",
     "signature_defaults",
@@ -63,11 +77,21 @@ NON_PARAMETER_NAMES = frozenset({
     "minimum", "maximum", "heaviside", "nan_to_num", "sinc", "erf",
 })
 
-#: What an equation or a function body may call, besides its parameters.
-_NAMESPACE = {
-    "np": np, "sin": np.sin, "cos": np.cos, "tan": np.tan, "exp": np.exp,
-    "log": np.log, "log10": np.log10, "sqrt": np.sqrt, "pi": np.pi, "e": np.e,
-}
+#: What an equation or a function body may call, besides its parameters: every
+#: maths name above that numpy has (so ``arctan``, ``where`` or ``clip`` in a curve
+#: evaluate instead of turning into a parameter that then fails).
+_NAMESPACE = {"np": np, "abs": np.abs, "inf": np.inf, "nan": np.nan}
+_NAMESPACE.update({name: getattr(np, name) for name in NON_PARAMETER_NAMES
+                   if name not in _NAMESPACE and hasattr(np, name)})
+
+#: The kinds of overlay curve: ``y = f(x)`` text, a ``def`` that traces itself,
+#: a parametric line ``(x(t), y(t))`` for ``t`` in ``[t0, t1]``, and a point set
+#: (markers, optionally labelled, at listed ``t`` values).
+KINDS = ("equation", "function", "parametric", "points")
+#: The kinds drawn from ``(x, y)`` a curve computes itself (not sampled over x).
+TRACED_KINDS = ("function", "parametric", "points")
+#: The curve variable of a parametric curve or a point set.
+T_NAME = "t"
 
 
 class CurveEvaluator:
@@ -200,6 +224,128 @@ def filled_text(text: str, values: Mapping[str, Any], function: Optional[Callabl
     for name, spelled in shown.items():
         text = re.sub(r"\b" + re.escape(name) + r"\b", spelled, text)
     return text
+
+
+# ------------------------------------------------- parametric curves and points
+def parse_where(text: Any) -> List[Tuple[str, str]]:
+    """``[(name, expression)]`` from ``"omega = 2*pi*f\\ntau = tan(t)/omega"``.
+
+    Definitions are separated by new lines or ``;`` and evaluated in order, so
+    a later one may use an earlier one. A mapping is accepted as well.
+    """
+    if isinstance(text, Mapping):
+        return [(str(k).strip(), str(v).strip()) for k, v in text.items()]
+    out = []
+    for line in re.split(r"[;\n]", str(text or "")):
+        name, sep, expression = line.partition("=")
+        if sep and name.strip() and expression.strip():
+            out.append((name.strip(), expression.strip()))
+    return out
+
+
+def spec_parameter_names(spec: Mapping[str, Any]) -> List[str]:
+    """The free parameters of a parametric / points spec, in order of appearance.
+
+    Every identifier of its ``where``, ``x`` and ``y`` expressions except ``t``,
+    the names ``where`` defines and the maths names.
+    """
+    where = parse_where(spec.get("where"))
+    defined = {name for name, _ in where} | {T_NAME}
+    names: List[str] = []
+    for text in [e for _, e in where] + [str(spec.get("x", "")), str(spec.get("y", ""))]:
+        for name in re.findall(r"\b([a-zA-Z][a-zA-Z0-9_]*)\b", text):
+            if name not in NON_PARAMETER_NAMES and name not in defined and name not in names:
+                names.append(name)
+    return names
+
+
+def spec_t(spec: Mapping[str, Any], samples: int = 256) -> np.ndarray:
+    """The ``t`` values: ``samples`` over ``[t0, t1]`` (parametric), the list (points)."""
+    values = [float(v) for v in (spec.get("t") or [])]
+    if spec.get("kind") == "points":
+        return np.asarray(values, dtype=float)
+    t0, t1 = values[:2] if len(values) >= 2 else (0.0, 1.0)
+    return np.linspace(t0, t1, max(int(samples), 2))
+
+
+def _evaluate_spec(spec: Mapping[str, Any], values: Mapping[str, float],
+                   t: np.ndarray) -> Tuple[np.ndarray, np.ndarray, dict]:
+    local = dict(_NAMESPACE)
+    local.update({k: float(v) for k, v in values.items()})
+    local[T_NAME] = t
+    with np.errstate(all="ignore"):
+        for name, expression in parse_where(spec.get("where")):
+            local[name] = eval(expression, {"__builtins__": {}}, local)  # noqa: S307
+        x = eval(str(spec.get("x", T_NAME)), {"__builtins__": {}}, local)  # noqa: S307
+        y = eval(str(spec.get("y", T_NAME)), {"__builtins__": {}}, local)  # noqa: S307
+    x = np.broadcast_to(np.asarray(x, dtype=float), t.shape).copy()
+    y = np.broadcast_to(np.asarray(y, dtype=float), t.shape).copy()
+    return x, y, local
+
+
+def compile_spec(spec: Mapping[str, Any], samples: Callable[[], int] = lambda: 256
+                 ) -> Callable[..., Tuple[np.ndarray, np.ndarray]]:
+    """``f(**parameters) -> (x, y)`` for a parametric curve or a point set.
+
+    The traced-function contract function curves have, so drawing, the CSV,
+    population-wise curves and the curve fit take it as they take a ``def``.
+
+    Parameters
+    ----------
+    spec : mapping
+        ``{"kind": "parametric" | "points", "x", "y", "where", "t", "labels"}``.
+    samples : callable
+        How many ``t`` a parametric curve is traced with (read on every call).
+    """
+    spec = dict(spec)
+
+    def traced(**values):
+        x, y, _ = _evaluate_spec(spec, values, spec_t(spec, samples()))
+        return x, y
+
+    traced.__name__ = str(spec.get("kind", "parametric"))
+    return traced
+
+
+def spec_labels(spec: Mapping[str, Any], values: Mapping[str, float]) -> List[str]:
+    """One label per point: ``spec["labels"]`` formatted with ``t``, the parameters
+    and the ``where`` names at that point (``"{t:g} ns"``); ``[]`` without labels."""
+    fmt = str(spec.get("labels") or "")
+    if not fmt:
+        return []
+    t = spec_t(spec)
+    try:
+        _x, _y, local = _evaluate_spec(spec, values, t)
+    except Exception:  # noqa: BLE001 - labels of a broken spec: the bare t
+        local = {T_NAME: t}
+    out = []
+    for i in range(t.size):
+        words = {k: (v[i] if isinstance(v, np.ndarray) and v.shape == t.shape else v)
+                 for k, v in local.items() if not callable(v)}
+        try:
+            out.append(fmt.format(**words))
+        except Exception:  # noqa: BLE001 - a bad format: say the value
+            out.append(f"{t[i]:g}")
+    return out
+
+
+def spec_function_source(spec: Mapping[str, Any], defaults: Mapping[str, float] = (),
+                         samples: int = 256) -> str:
+    """A parametric spec as the ``def`` source of an equivalent function curve.
+
+    For a window that only knows equation and function curves (the legacy Qt
+    overlay widget): the same line, as code the user can read and edit there.
+    """
+    defaults = dict(defaults or {})
+    names = spec_parameter_names(spec)
+    args = ", ".join(f"{n}={float(defaults.get(n, 1.0))!r}" for n in names)
+    t = [float(v) for v in (spec.get("t") or [0.0, 1.0])]
+    lines = [f"def parametric({args}{', ' if args else ''}num_points={int(samples)}):",
+             f"    t = np.linspace({t[0]!r}, {t[-1]!r}, int(num_points))"]
+    lines += [f"    {n} = {e}" for n, e in parse_where(spec.get("where"))]
+    lines += [f"    x = {spec.get('x', 't')}", f"    y = {spec.get('y', 't')}",
+              "    return np.broadcast_to(x, t.shape), np.broadcast_to(y, t.shape)"]
+    return "\n".join(lines) + "\n"
 
 
 def predefined_equation_paths() -> List[pathlib.Path]:
@@ -394,7 +540,7 @@ def population_parameter_sets(group) -> List[Tuple[str, "OrderedDict[str, float]
 
 
 class OverlayCurve:
-    """One overlay curve: its text, its parameters, its colour and visibility.
+    """One overlay curve: its definition, its parameters, its colour and visibility.
 
     Parameters
     ----------
@@ -403,18 +549,26 @@ class OverlayCurve:
     text : str
         The equation, or the ``def`` source of a function curve.
     is_function : bool
-        Whether *text* defines a function.
+        Whether *text* defines a function (``kind="function"``).
     color : str
         ``#rrggbb``.
+    kind : str, optional
+        One of :data:`KINDS`; ``"parametric"`` and ``"points"`` take *spec*.
+    spec : mapping, optional
+        A parametric curve or point set: ``x`` and ``y`` (expressions of ``t``
+        and the parameters), ``where`` (definitions evaluated first), ``t``
+        (``[t0, t1]``, or the points' values) and ``labels`` (a format such as
+        ``"{t:g} ns"``).
     """
 
     _SEQ = [0]
 
     def __init__(self, title: str, text: str = "x", is_function: bool = False,
-                 color: str = "#ff0000") -> None:
+                 color: str = "#ff0000", kind: Optional[str] = None,
+                 spec: Optional[Mapping[str, Any]] = None) -> None:
         OverlayCurve._SEQ[0] += 1
         self.title = str(title)
-        self.is_function = bool(is_function)
+        self.kind = str(kind) if kind in KINDS else ("function" if is_function else "equation")
         self.color = str(color)
         self.visible = True
         self.evaluator = CurveEvaluator()
@@ -423,18 +577,30 @@ class OverlayCurve:
         self.group = None
         self.owner_id = f"ndxplorer.overlay.{OverlayCurve._SEQ[0]}"
         self._registered = False
+        #: Samples a parametric curve is traced with (the Overlays tab's points).
+        self.samples = 256
+        #: ``{parameter: constant}``: parameters that follow a constant of the
+        #: Parameters tab when it has one (:meth:`link_to`).
+        self.links: Dict[str, str] = {}
         self.text = ""
-        self.set_text(text)
+        self.spec: Dict[str, Any] = {}
+        if self.kind in ("parametric", "points"):
+            self.set_spec(dict(spec or {}, kind=self.kind))
+        else:
+            self.set_text(text)
+
+    @property
+    def is_function(self) -> bool:
+        """Whether the curve traces its own ``(x, y)`` (a ``def``, parametric, points)."""
+        return self.kind in TRACED_KINDS
 
     # ---------------------------------------------------------- equation
     def set_text(self, text: str) -> None:
         """A new equation: re-derive the parameters (surviving ones keep their state)."""
-        from . import curve_parameters as cp
-
         self.text = str(text)
         self.error = ""
         names: List[str] = []
-        if self.is_function:
+        if self.kind == "function":
             try:
                 self.function = self.evaluator.compile_function(self.text)
                 names = self.evaluator.get_function_parameters(self.function)
@@ -443,7 +609,20 @@ class OverlayCurve:
                 self.error = f"cannot compile the function: {exc}"
         else:
             names = equation_parameter_names(self.text)
-        defaults = signature_defaults(self.function)
+        self._sync(names, signature_defaults(self.function))
+
+    def set_spec(self, spec: Optional[Mapping[str, Any]] = None, **changes: Any) -> None:
+        """A new parametric / points definition (or some of its fields)."""
+        self.spec = dict(spec if spec is not None else self.spec, **changes)
+        self.spec["kind"] = self.kind
+        self.error = ""
+        self.function = compile_spec(self.spec, lambda: self.samples)
+        self.text = f"x = {self.spec.get('x', '')}; y = {self.spec.get('y', '')}"
+        self._sync(spec_parameter_names(self.spec), {})
+
+    def _sync(self, names: Sequence[str], defaults: Mapping[str, float]) -> None:
+        from . import curve_parameters as cp
+
         if self.group is None:
             self.group = cp.build_curve_group(names, values=defaults, name=self.title)
         else:
@@ -459,6 +638,34 @@ class OverlayCurve:
     def get_equation(self):
         """The equation or function (the name the fit builder asks for)."""
         return self.equation
+
+    def labels(self, values: Optional[Mapping[str, float]] = None) -> List[str]:
+        """A point set's labels, one per point (``[]`` for other kinds)."""
+        if self.kind != "points":
+            return []
+        return spec_labels(self.spec, self.get_parameters() if values is None else values)
+
+    def link_to(self, group) -> List[str]:
+        """Pin the parameters named in :attr:`links` to *group*'s (the constants).
+
+        Parameters
+        ----------
+        group : ParameterGroup
+            Where the constants live; a name it lacks leaves the parameter free.
+
+        Returns
+        -------
+        list of str
+            The parameters now linked.
+        """
+        targets = getattr(group, "parameters_all_dict", {}) if group is not None else {}
+        own = {p.name: p for p in self.group.parameters_all}
+        linked = []
+        for name, constant in self.links.items():
+            if name in own and constant in targets:
+                own[name].link = targets[constant]
+                linked.append(name)
+        return linked
 
     @property
     def curve_evaluator(self) -> CurveEvaluator:
@@ -486,11 +693,18 @@ class OverlayCurve:
     @property
     def filled(self) -> str:
         """The curve with the values written in."""
+        if self.kind in ("parametric", "points"):
+            values = self.get_parameters()
+            parts = [f"{n} = {filled_text(e, values)}" for n, e in parse_where(self.spec.get("where"))]
+            parts += [f"{axis} = {filled_text(str(self.spec.get(axis, '')), values)}"
+                      for axis in ("x", "y")]
+            return "; ".join(parts)
         return filled_text(self.text, self.get_parameters(),
-                           self.function if self.is_function else None)
+                           self.function if self.kind == "function" else None)
 
     def points(self, num_points: int, x_edges, y_edges, x_log=False, y_log=False):
         """``(x, y)`` to draw over the displayed histogram; see :func:`curve_points`."""
+        self.samples = int(num_points)
         x, y = curve_points(self.evaluator, self.equation, self.get_parameters(), num_points,
                             x_edges, y_edges, x_log, y_log)
         self.error = self.evaluator.last_error or ("" if not self.is_function or self.function
@@ -514,6 +728,7 @@ class OverlayCurve:
                           y_log=False) -> List[Tuple[str, np.ndarray, np.ndarray]]:
         """``[(population, x, y)]``: one curve per population (see :meth:`points`)."""
         out = []
+        self.samples = int(num_points)
         for label, values in self.population_parameters():
             x, y = curve_points(self.evaluator, self.equation, values, num_points, x_edges,
                                 y_edges, x_log, y_log)
@@ -536,6 +751,34 @@ class OverlayCurve:
         return [(f"{self.title} [{label}]", population_colour(self.color, i, len(curves)), x, y)
                 for i, (label, x, y) in enumerate(curves)]
 
+    def drawn_points(self, x_edges, y_edges
+                     ) -> List[Tuple[str, str, np.ndarray, np.ndarray, List[str]]]:
+        """``[(name, colour, x, y, labels)]``: a point set's markers inside the axes.
+
+        Like :meth:`drawn_curves` (one set per population), with each marker's
+        label kept beside it; ``[]`` for a curve that is not a point set.
+        """
+        if self.kind != "points" or self.function is None:
+            return []
+        sets = self.population_parameters() or [("", self.get_parameters())]
+        x_edges = np.asarray(x_edges, dtype=float)
+        y_edges = np.asarray(y_edges, dtype=float)
+        out = []
+        for i, (label, values) in enumerate(sets):
+            try:
+                x, y = self.function(**values)
+            except Exception as exc:  # noqa: BLE001 - a bad spec draws nothing
+                self.error = str(exc)
+                return []
+            texts = self.labels(values) or [""] * x.size
+            keep = (np.isfinite(x) & np.isfinite(y) & (x >= x_edges[0]) & (x <= x_edges[-1])
+                    & (y >= y_edges[0]) & (y <= y_edges[-1]))
+            name = f"{self.title} [{label}]" if label else self.title
+            colour = population_colour(self.color, i, len(sets)) if label else self.color
+            out.append((name, colour, x[keep], y[keep],
+                        [t for t, k in zip(texts, keep) if k]))
+        return out
+
     # ------------------------------------------------------ crosslinking
     def register(self) -> None:
         """Publish the parameters so another table's link menu can reach them."""
@@ -556,11 +799,22 @@ class OverlayCurve:
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any], title: str) -> "OverlayCurve":
-        """A curve from a predefined-equation entry (``equation`` or ``function``)."""
+        """A curve from a predefined entry: ``equation``, ``function``,
+        ``parametric`` or ``points``; with ``parameters`` and ``ranges``,
+        ``fixed`` (names held fixed), ``links`` (``{parameter: constant}``,
+        see :meth:`link_to`) and ``color``."""
+        colour = str(entry.get("color", "#ff0000"))
         if "function" in entry:
-            curve = cls(title, str(entry["function"]), is_function=True)
+            curve = cls(title, str(entry["function"]), is_function=True, color=colour)
+        elif "parametric" in entry or "points" in entry:
+            kind = "parametric" if "parametric" in entry else "points"
+            curve = cls(title, kind=kind, spec=dict(entry[kind] or {}), color=colour)
         else:
-            curve = cls(title, str(entry.get("equation", "x")))
+            curve = cls(title, str(entry.get("equation", "x")), color=colour)
         if entry.get("parameters"):
             curve.set_parameters(entry["parameters"], entry.get("ranges") or {})
+        for p in curve.group.parameters_all:
+            if p.name in (entry.get("fixed") or ()):
+                p.fixed = True
+        curve.links = {str(k): str(v) for k, v in dict(entry.get("links") or {}).items()}
         return curve
