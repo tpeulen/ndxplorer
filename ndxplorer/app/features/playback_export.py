@@ -644,7 +644,7 @@ class PlaybackExportFeature(Feature):
         replaced = analysis.labels is not None
         source.set_column(found.column, found.labels)
         run = {"method": "islands", "columns": set(names),
-               "parameters": {"view": list(names), "islands": found.count,
+               "parameters": {"view": list(names), "islands": found.count, "mode": found.mode,
                               "column": found.column}}
         analysis.set_clusters(found.labels, found.probabilities, run, found.status(replaced))
         model.show_islands = False
@@ -668,6 +668,48 @@ class PlaybackExportFeature(Feature):
         for panel in self.rankings.values():
             if panel.model is not None and panel.window.open:
                 panel.ensure_model()
+
+    # -- session state (the analysis view kept in the .pto) -----------------
+    RANKING_FIELDS = ("sample_rows", "classes", "method", "photon_mode", "min_photons")
+
+    def session_state(self) -> Optional[dict]:
+        """Playback (column, steps, position, mode, speed) and each ranking
+        window's settings and whether it is open."""
+        playback = self.playback
+        state: dict = {"playback": {"axis": playback.axis_name, "n_steps": playback.n_steps,
+                                    "position": playback.position, "mode": playback.mode,
+                                    "fps": playback.fps}}
+        rankings = {}
+        for pairs, panel in self.rankings.items():
+            if panel.model is None:
+                continue
+            rankings["pairs" if pairs else "z"] = dict(
+                {f: getattr(panel.model, f) for f in self.RANKING_FIELDS
+                 if hasattr(panel.model, f)}, open=bool(panel.window.open))
+        if rankings:
+            state["rankings"] = rankings
+        return state
+
+    def restore_session_state(self, state: dict, context) -> None:
+        playback = dict(state.get("playback") or {})
+        axis = playback.get("axis") or ""
+        if axis and not context.missing("playback column", [axis]):
+            self.playback.axis_name = axis
+        for key in ("n_steps", "mode", "fps", "position"):
+            if key in playback:
+                try:
+                    setattr(self.playback, key, playback[key])
+                except Exception as exc:  # noqa: BLE001 - one setting, noted
+                    context.skip(f"playback {key} ({exc})")
+        for key, settings in dict(state.get("rankings") or {}).items():
+            panel = self.rankings[key == "pairs"]
+            if not panel.ensure_model():
+                continue
+            for field in self.RANKING_FIELDS:
+                if field in settings and hasattr(panel.model, field):
+                    setattr(panel.model, field, settings[field])
+            if settings.get("open"):
+                panel.open()
 
     def animating(self) -> bool:
         from ...analysis.vizrank import RunState

@@ -82,14 +82,19 @@ def island_column(x: str, y: str) -> str:
 class IslandClusters:
     """The islands of one view as cluster labels of every burst in the table.
 
-    ``labels`` is ``0 .. count-1`` clearly inside an island, numbered by the
-    bursts each holds (largest first), and ``-1`` for a burst on a bridge, in
-    a tail, an outlier or missing on either axis
-    (:meth:`~ndxplorer.analysis.separation.Populations.label` with ``core``).
+    ``labels`` is ``0 .. count-1`` inside an island, numbered by the bursts
+    each holds (largest first), and ``-1`` for a burst on a ridge between
+    islands, in a clump too small to be one, an outlier or missing on either
+    axis (*mode* ``"whole"``), or anywhere outside an island's core (*mode*
+    ``"cores"``; :meth:`~ndxplorer.analysis.separation.Populations.assign`).
+    ``membership`` is each burst's probability (its island's share of the
+    smoothed density there, 0 for -1); ``None`` reads as 1/0.
     """
 
     labels: np.ndarray
     names: Tuple[str, str]
+    membership: Optional[np.ndarray] = None
+    mode: str = "whole"
 
     @property
     def count(self) -> int:
@@ -101,15 +106,25 @@ class IslandClusters:
 
     @property
     def probabilities(self) -> np.ndarray:
-        """1 in an island's core, 0 unassigned (the ``Cluster Probability`` column)."""
-        return (self.labels >= 0).astype(np.float64)
+        """Membership per burst, 0 unassigned (the ``Cluster Probability`` column)."""
+        if self.membership is None:
+            return (self.labels >= 0).astype(np.float64)
+        return np.where(self.labels >= 0, self.membership, 0.0).astype(np.float64)
+
+    @property
+    def coverage(self) -> float:
+        """Share of the table's bursts that got an island."""
+        return float(np.mean(self.labels >= 0)) if self.labels.size else 0.0
 
     def status(self, replaced: bool = False) -> str:
-        """The status line: what was written, and that it replaced the clusters."""
+        """The status line: what was written, how much of the table it
+        covers, and that it replaced the clusters."""
         x, y = self.names
         n = self.count
-        text = (f"{n} islands of {x} vs {y} written as clusters 0\u2013{n - 1} "
-                f"(unassigned: \u22121)")
+        labelled = round(100.0 * self.coverage)
+        rest = "on ridges/outliers" if self.mode == "whole" else "outside the cores"
+        text = (f"{n} islands of {x} vs {y} written as clusters 0\u2013{n - 1}; "
+                f"{labelled} % of bursts labelled, {100 - labelled} % {rest} (\u22121)")
         if replaced:
             text += ", replacing the previous clusters"
         return text
@@ -302,6 +317,9 @@ class ProjectionRankModel(VizRankModel):
         #: it sets this and :attr:`on_use_islands` (*Use islands as clusters*).
         self.clusters_available = False
         self.on_use_islands: Optional[Callable[[], None]] = None
+        #: What *Use islands as clusters* labels: "whole" islands (every burst
+        #: of the catchment basin but the ridges) or "cores" only.
+        self.label_mode = "whole"
         self._pick_defaults()
 
     # ---- what the spec's choices offer ---------------------------------------------
@@ -341,6 +359,10 @@ class ProjectionRankModel(VizRankModel):
         """*Use islands as clusters* needs a host that writes them, and Separation."""
         return not (self.clusters_available and self.on_use_islands is not None
                     and self.method == "populations" and self.pairs)
+
+    def label_mode_options(self) -> list:
+        """``(key, label)`` of what *Use islands as clusters* labels."""
+        return [("whole", "Whole islands"), ("cores", "Cores only")]
 
     def use_islands(self) -> None:
         """*Use islands as clusters*: the host labels every burst by the islands
@@ -461,16 +483,25 @@ class ProjectionRankModel(VizRankModel):
             return None
         return ranker.islands(ranked, [column_values(n) for n in ranked], core=core)
 
-    def island_clusters(self, names, column_values) -> Optional[IslandClusters]:
+    def island_clusters(self, names, column_values,
+                        mode: Optional[str] = None) -> Optional[IslandClusters]:
         """The islands of the view *names* (x, y) as cluster labels of every burst.
 
-        ``None`` when the view was not ranked by Separation (or the ranking
-        has not run).
+        *mode* (default :attr:`label_mode`): ``"whole"`` islands or ``"cores"``
+        only. ``None`` when the view was not ranked by Separation (or the
+        ranking has not run).
         """
-        labels = self.islands(names, column_values, core=True)
-        if labels is None:
+        mode = mode or self.label_mode
+        ranker = None if self._run is None else self._run.ranker
+        if ranker is None or not hasattr(ranker, "assign_islands"):
             return None
-        labels = np.asarray(labels, dtype=np.int32)
+        ranked = ranker.ranked_names(names)
+        if ranked is None:
+            return None
+        found = ranker.assign_islands(ranked, [column_values(n) for n in ranked], mode)
+        if found is None:
+            return None
+        labels = np.asarray(found[0], dtype=np.int32)
         # Numbered by the bursts each holds in the table, largest first (ties:
         # the island that was larger in the ranking's sample), so cluster 0 is
         # the biggest population the Cluster spin box can show.
@@ -479,4 +510,5 @@ class ProjectionRankModel(VizRankModel):
                        key=lambda k: (-counts[k], k))
         renumber = np.full(counts.size + 1, -1, dtype=np.int32)
         renumber[order] = np.arange(len(order), dtype=np.int32)
-        return IslandClusters(renumber[labels], (str(names[0]), str(names[1])))
+        return IslandClusters(renumber[labels], (str(names[0]), str(names[1])),
+                              np.asarray(found[1], dtype=np.float64), mode)

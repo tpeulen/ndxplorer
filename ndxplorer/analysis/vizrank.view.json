@@ -93,16 +93,30 @@
           "description": "Colour the map by the islands the Separation score found in the selected view (the view must be on the axes)."
         },
         {
-          "type": "button_row",
+          "type": "row",
+          "n_col": 2,
           "hidden_when": {
             "attr": "use_islands_hidden",
             "equals": true
           },
-          "buttons": [
+          "sections": [
             {
-              "label": "Use islands as clusters",
-              "action": "use_islands",
-              "description": "Label every burst of the table by the island of the view on the axes and write the labels as the clusters (Cluster Label, replacing K-means/HDBSCAN clusters) and as a column 'Island Label (x vs y)'. Islands are numbered by size, largest first; bursts on a bridge, in a tail or outliers are -1. Then the Cluster spin box, colour, gates and Save Burst IDs work on the islands."
+              "type": "button_row",
+              "buttons": [
+                {
+                  "label": "Use islands as clusters",
+                  "action": "use_islands",
+                  "description": "Label every burst of the table by the island of the view on the axes and write the labels as the clusters (Cluster Label and Cluster Probability, replacing K-means/HDBSCAN clusters) and as a column 'Island Label (x vs y)'. Islands are numbered by size, largest first. The probability is the island's share of the smoothed density at the burst: 1 deep inside, falling toward 1/2 at a ridge. Then the Cluster spin box, colour, gates and Save Burst IDs work on the islands."
+                }
+              ]
+            },
+            {
+              "type": "choice",
+              "attr": "label_mode",
+              "label": "Label",
+              "options_source": "label_mode_options",
+              "style": "radio",
+              "description": "Cores only (default): label bursts clearly inside an island, 2 shot-noise sigmas above its valley to the others; the low-photon smear between species stays -1. Whole islands: label every burst in an island's catchment basin -- the watershed of the smoothed density the score uses; -1 stays on ridges between islands, in clumps too small to be islands, and for outliers or missing values."
             }
           ]
         },

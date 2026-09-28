@@ -305,15 +305,17 @@ def _ranked(app, source):
 
 
 def test_islands_become_the_clusters_of_every_burst(app):
-    """Use islands as clusters: every burst labelled 0..2 by size, bridge and
-    outliers -1, written as Find structure writes them, and the Cluster spin
-    box then shows one island."""
+    """Use islands as clusters, Label: Cores only: every burst labelled 0..2
+    by size, bridge and outliers -1, written as Find structure writes them,
+    and the Cluster spin box then shows one island."""
     source, truth = _three_islands()
     f, model = _ranked(app, source)
     assert {app.model.x.name, app.model.y.name} == {"E", "S"}
     assert model.clusters_available and not model.use_islands_hidden
     analysis = next(a for a in app.features if a.name == "analysis")
     model.show_islands = True
+    assert model.label_mode == "whole", "whole islands by default"
+    model.label_mode = "cores"
     model.use_islands()
     labels = np.asarray(app.model.source.column_values("Cluster Label"))
     assert labels.size == truth.size, "every burst of the table, not the sample"
@@ -328,8 +330,8 @@ def test_islands_become_the_clusters_of_every_burst(app):
     kept = np.asarray(app.model.source.column_values(f"Island Label ({x} vs {y})"))
     assert np.array_equal(kept, labels)
     assert np.array_equal(analysis.cluster_labels, labels)
-    assert f"3 islands of {x} vs {y} written as clusters 0\u20132 (unassigned: \u22121)" \
-        in app.status
+    assert f"3 islands of {x} vs {y} written as clusters 0\u20132; " in app.status
+    assert "outside the cores (\u22121)" in app.status
     assert analysis.cluster_colours and not model.show_islands
     draw(app)
     assert f.map_image(app.model.map_values()) is None
@@ -344,6 +346,31 @@ def test_islands_become_the_clusters_of_every_burst(app):
     analysis._set_selected_cluster(-1)
     draw(app)
     assert int(np.sum(app.model._keep_mask())) == shown_all
+
+
+def test_whole_islands_are_the_default_clusters(app):
+    """Label: Whole islands (default): every burst of an island's basin, the
+    ridge, the small clump and outliers -1, a probability that falls toward
+    the ridges, and the coverage in the status line."""
+    source, truth = _three_islands()
+    f, model = _ranked(app, source)
+    analysis = next(a for a in app.features if a.name == "analysis")
+    assert model.label_mode_options() == [("whole", "Whole islands"), ("cores", "Cores only")]
+    model.use_islands()
+    labels = np.asarray(app.model.source.column_values("Cluster Label"))
+    for k in range(3):
+        mine = labels[truth == k]
+        assert np.mean(mine == k) >= 0.95 and np.all((mine == k) | (mine == -1)), k
+    assert np.all(labels[(truth == 4) | (truth == 5)] == -1), "outliers, missing values"
+    assert np.all(labels[truth == 7] == -1), "a clump too small for an island"
+    ends = labels[truth == 6]
+    assert np.mean(ends >= 0) > 0.9, "the bridge belongs to the islands at its ends"
+    p = np.asarray(analysis.probabilities, dtype=float)
+    assert np.all(p[labels == -1] == 0) and np.all(p[labels >= 0] >= 2 / 3 - 1e-9)
+    assert np.median(p[truth <= 2]) > 0.99 and np.min(p[truth == 6][ends >= 0]) < 0.9
+    covered = round(100 * np.mean(labels >= 0))
+    assert f"{covered} % of bursts labelled, {100 - covered} % on ridges/outliers" in app.status
+    assert analysis.label_run["parameters"]["mode"] == "whole"
 
 
 def test_the_z_ranking_sets_the_z_parameter(app):

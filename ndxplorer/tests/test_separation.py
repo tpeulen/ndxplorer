@@ -95,6 +95,88 @@ def test_weights_count_bright_bursts_more():
     assert weighted.score > plain.score
 
 
+def islands_bridge_clump(seed):
+    """Three islands (2500/1500/900 bursts), a bridge from island 0 to 1 that
+    thins toward its middle (``along`` 0..1 on it), a 60-burst clump (1.2 %,
+    under MIN_POPULATION) and 20 far outliers; ``(points, truth, along, axes)``
+    with truth 0-2 islands, 3 bridge, 4 clump, 5 outlier."""
+    rng = np.random.default_rng(seed)
+    parts, truth, along = [], [], []
+    for k, (c, n) in enumerate([((0.2, 0.3), 2500), ((0.8, 0.6), 1500), ((0.5, 0.9), 900)]):
+        parts.append(rng.normal(c, 0.04, (n, 2)))
+        truth.append(np.full(n, k))
+    d = np.where(rng.random(600) < 0.8, 0.5 * np.sqrt(rng.random(600)), 0.5 * rng.random(600))
+    t = 0.5 + np.where(rng.random(600) < 0.5, -d, d)
+    parts.append(np.column_stack([0.2 + 0.6 * t, 0.3 + 0.3 * t]) + rng.normal(0, 0.015, (600, 2)))
+    truth.append(np.full(600, 3))
+    parts.append(rng.normal((0.85, 0.12), 0.02, (60, 2)))
+    truth.append(np.full(60, 4))
+    parts.append(rng.uniform((30, -40), (40, -30), (20, 2)))
+    truth.append(np.full(20, 5))
+    points, truth = np.vstack(parts), np.concatenate(truth)
+    along = np.full(truth.size, np.nan)
+    along[truth == 3] = t
+    axes = [RobustAxis.fit(points[:, j])[0] for j in range(2)]
+    return points, truth, along, axes
+
+
+def _coords(axes, points):
+    return np.column_stack([a.transform(points[:, j]) for j, a in enumerate(axes)])
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_whole_islands_label_every_basin_but_ridges_clumps_and_outliers(seed):
+    points, truth, along, axes = islands_bridge_clump(seed)
+    u = _coords(axes, points)
+    found = find_populations(u)
+    assert found.count == 3
+    labels, probability = found.assign(u)  # "whole" is the default
+    for k in range(3):
+        mine = labels[truth == k]
+        assert np.mean(mine == k) >= 0.95, k
+        assert np.all((mine == k) | (mine == -1)), "never the wrong island"
+    assert np.all(labels[truth == 4] == -1), "a clump under 3 % is -1, not merged"
+    assert np.all(labels[truth == 5] == -1), "outliers"
+    bridge = truth == 3
+    t, lb = along[bridge], labels[bridge]
+    # the bridge's halves go to the islands at their ends; -1 and any switch
+    # between the two islands only in the ridge band around its dip
+    assert np.all(lb[t < 0.4] == 0) and np.all(lb[t > 0.6] == 1)
+    assert np.all(np.abs(t[lb == -1] - 0.5) < 0.1)
+    # along the bridge's midline: island 0, the ridge (-1), island 1
+    tt = np.linspace(0.0, 1.0, 2001)
+    line = _coords(axes, np.column_stack([0.2 + 0.6 * tt, 0.3 + 0.3 * tt]))
+    on_line = found.assign(line)[0]
+    runs = [on_line[0]] + [b for a, b in zip(on_line[:-1], on_line[1:]) if b != a]
+    assert runs == [0, -1, 1]
+    ridge = tt[on_line == -1]
+    assert abs(ridge.mean() - 0.5) < 0.06 and np.ptp(ridge) < 0.06, "a thin band"
+    # probabilities: 1 deep inside, falling toward the ridge, 0 for -1
+    assert np.all(probability[labels == -1] == 0.0)
+    assert np.all(probability[labels >= 0] >= 2.0 / 3.0 - 1e-9)
+    assert np.median(probability[truth == 0]) > 0.99
+    near = bridge & (np.abs(along - 0.5) < 0.1) & (labels >= 0)
+    assert np.min(probability[near]) < 0.8 < np.median(probability[near])
+
+
+def test_cores_only_labels_as_before():
+    """Cores: the labels label(core=True) gives; the bridge's middle is -1."""
+    points, truth, along, axes = islands_bridge_clump(1)
+    u = _coords(axes, points)
+    found = find_populations(u)
+    labels, probability = found.assign(u, "cores")
+    assert np.array_equal(labels, found.label(u, core=True))
+    for k in range(3):
+        mine = labels[truth == k]
+        assert np.mean(mine == k) > 0.9 and np.all((mine == k) | (mine == -1))
+    assert np.mean(labels[(truth == 3) & (np.abs(along - 0.5) < 0.05)] == -1) > 0.9
+    whole = found.assign(u)[0]
+    assert np.mean(whole >= 0) > np.mean(labels >= 0)
+    assert np.all(probability[labels == -1] == 0.0)
+    with pytest.raises(ValueError):
+        found.assign(u, "everything")
+
+
 # ---- the axes ----------------------------------------------------------------------------
 
 
@@ -328,14 +410,30 @@ def test_alex_s_vs_pr_islands_are_four_clusters():
     model = ProjectionRankModel(lambda: build_context(source, axes), True, runner=inline_runner)
     model.start()
     assert not model.error and model.rows
-    found = model.island_clusters(("Stoichiometry (PIE)", "Proximity ratio(PIE)"),
-                                  source.column_values)
-    assert found is not None and found.count == 4
-    labels = found.labels
-    assert labels.size == source.size
-    sizes = [int(np.sum(labels == k)) for k in range(4)]
-    assert sizes == sorted(sizes, reverse=True) and min(sizes) > 0
-    # the low-photon smear between the species is bridge and tail: unassigned
-    assert 0.3 * labels.size < np.sum(labels == -1) < 0.75 * labels.size
-    assert found.status().startswith("4 islands of Stoichiometry (PIE) vs Proximity "
-                                     "ratio(PIE) written as clusters 0\u20133 (unassigned: \u22121)")
+    names = ("Stoichiometry (PIE)", "Proximity ratio(PIE)")
+    assert model.label_mode == "whole"
+    found = model.island_clusters(names, source.column_values)
+    cores = model.island_clusters(names, source.column_values, "cores")
+    for f in (found, cores):
+        assert f is not None and f.count == 4
+        assert f.labels.size == source.size
+        sizes = [int(np.sum(f.labels == k)) for k in range(4)]
+        assert sizes == sorted(sizes, reverse=True) and min(sizes) > 0
+    # whole islands: all but the ridges and the outliers/missing (~6 %)
+    assert found.coverage > 0.9
+    assert found.status() == (
+        "4 islands of Stoichiometry (PIE) vs Proximity ratio(PIE) written as clusters "
+        f"0\u20133; {round(100 * found.coverage)} % of bursts labelled, "
+        f"{100 - round(100 * found.coverage)} % on ridges/outliers (\u22121)")
+    p = found.probabilities
+    assert np.all(p[found.labels < 0] == 0) and np.all(p[found.labels >= 0] >= 2 / 3 - 1e-9)
+    assert np.quantile(p[found.labels >= 0], 0.05) < 0.95, "falls toward the ridges"
+    # cores: the low-photon smear between the species is unassigned; every
+    # core burst keeps its island in the whole labelling (numbered by size in
+    # each, so up to a renumbering)
+    assert 0.3 < cores.coverage < 0.7
+    assert "outside the cores" in cores.status()
+    both = cores.labels >= 0
+    table = np.zeros((4, 4), dtype=int)
+    np.add.at(table, (cores.labels[both], found.labels[both]), 1)
+    assert np.count_nonzero(table) == 4 and np.all(table.max(axis=1) == table.sum(axis=1))
