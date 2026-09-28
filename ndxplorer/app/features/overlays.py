@@ -1550,6 +1550,55 @@ class OverlaysFeature(Feature):
     def on_data_changed(self) -> None:
         self.equations.validate()
 
+    # -- session state ---------------------------------------------------------
+    def session_state(self) -> Optional[dict]:
+        """The overlay curves (equation, colour, parameters with their vectors),
+        the constants (the Parameters tab's group, vectors included) and the
+        equations when they are not the settings' own."""
+        model = self.app.model
+        state: dict = {
+            "curves": [{"title": c.title, "text": c.text, "is_function": bool(c.is_function),
+                        "color": c.color, "visible": bool(c.visible),
+                        "parameters": c.group.get_state()} for c in self.overlays.curves],
+            "num_points": int(self.overlays.num_points),
+            "constants": self.constants.group.get_state(),
+        }
+        equations = list(model.manager.equations or [])
+        if equations != list(model.bundle.equations or []):
+            state["equations"] = equations
+        return state
+
+    def restore_session_state(self, state: dict, context) -> None:
+        from ...core.overlay_curves import OverlayCurve
+
+        model = self.app.model
+        if state.get("equations") is not None and \
+                list(state["equations"]) != list(model.manager.equations or []):
+            model.manager.equations = list(state["equations"])
+            model.manager.compute_columns()
+            model.source = model.manager.data_source
+            self.equations.follow()
+        if state.get("constants"):
+            if context.newer_calibration:
+                context.skip("constants (a calibration stored after the session holds newer "
+                             "ones)")
+            else:
+                self.constants.group.set_state(state["constants"])
+                self.constants.poll()
+        self.overlays.clear()
+        for entry in state.get("curves") or []:
+            curve = OverlayCurve(entry.get("title", "curve"), entry.get("text", "x"),
+                                 is_function=bool(entry.get("is_function")),
+                                 color=str(entry.get("color", "#ff0000")))
+            curve.visible = bool(entry.get("visible", True))
+            if entry.get("parameters"):
+                curve.group.set_state(entry["parameters"])
+            curve.register()
+            self.overlays.panels.append(CurvePanel(self, curve))
+        if "num_points" in state:
+            self.overlays.num_points = int(state["num_points"])
+        model.invalidate()
+
     # -- capture replay ------------------------------------------------------------
     def capture_ops(self) -> Dict[str, Callable]:
         return {"tab": self._op_tab, "set": self._op_set, "click": self._op_click,

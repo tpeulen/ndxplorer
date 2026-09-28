@@ -1056,6 +1056,68 @@ class AnalysisFeature(Feature):
         """
         return self.labels
 
+    # ------------------------------------------------------ session state
+    def session_state(self) -> Optional[dict]:
+        """The clusters (labels per burst, how they were made, the chosen one and
+        the colouring) and the Gaussian Fit (components, parameter states)."""
+        from ..session_state import pack_array
+
+        state: dict = {"selected_cluster": int(self.selected_cluster),
+                       "cluster_colours": bool(self.cluster_colours)}
+        if self.labels is not None:
+            run = dict(self.label_run or {})
+            if isinstance(run.get("columns"), (set, frozenset, tuple)):
+                run["columns"] = sorted(run["columns"])
+            state["clusters"] = {
+                "labels": pack_array(np.asarray(self.labels, dtype=np.int32)),
+                "probabilities": (None if self.probabilities is None else
+                                  pack_array(np.asarray(self.probabilities, dtype=np.float32))),
+                "run": run,
+            }
+        panel = self.gaussians
+        state["gaussians"] = {"records": panel.group.records(),
+                              "group": panel.group.get_state(),
+                              "sigma": float(panel.sigma),
+                              "show_marginals": bool(panel.show_marginals),
+                              "log_gauss": bool(panel.log_gauss)}
+        return state
+
+    def restore_session_state(self, state: dict, context) -> None:
+        from ..session_state import unpack_array
+
+        clusters = state.get("clusters")
+        model = self.app.model
+        if clusters and not context.rows_match:
+            context.skip("cluster labels (the table has another number of rows)")
+        elif clusters:
+            labels = unpack_array(clusters["labels"]).astype(np.int64)
+            probabilities = (np.ones(len(labels)) if clusters.get("probabilities") is None
+                             else unpack_array(clusters["probabilities"]).astype(np.float64))
+            run = dict(clusters.get("run") or {})
+            run["columns"] = set(run.get("columns") or ())
+            # islands keep a column of their own besides Cluster Label
+            column = (run.get("parameters") or {}).get("column")
+            if column and column != "Cluster Label":
+                model.source.set_column(column, labels)
+            self.set_clusters(labels, probabilities, run)
+        self.selected_cluster = max(-1, int(state.get("selected_cluster", -1)))
+        if self.labels is None:
+            self.selected_cluster = -1
+        self.cluster_colours = bool(state.get("cluster_colours")) and self.labels is not None
+        self.app.plots.image_revision += 1
+        gaussians = state.get("gaussians") or {}
+        panel = self.gaussians
+        for key in ("sigma", "show_marginals", "log_gauss"):
+            if key in gaussians:
+                setattr(panel, key, type(getattr(panel, key))(gaussians[key]))
+        if gaussians.get("records") is not None:
+            panel.group.apply_records(gaussians["records"])
+            if gaussians.get("group"):
+                panel.group.set_state(gaussians["group"])
+            panel.selected, panel.gated = None, {}
+            panel._register()
+        model.invalidate()
+
     # ------------------------------------------------------------- fields
     def _set_selected_cluster(self, value) -> None:
         value = int(value)
