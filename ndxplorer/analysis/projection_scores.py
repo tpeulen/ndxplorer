@@ -860,6 +860,24 @@ class _ScoredRanker:
         With *core* only bursts in an island's core are labelled; bridges,
         tails and outliers get -1. Islands are numbered largest first.
         """
+        found = self._found_points(names, values)
+        return None if found is None else found[0].label(found[1], core=core)
+
+    def assign_islands(self, names: Sequence[str], values: Sequence[np.ndarray],
+                       mode: str = "whole") -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """``(labels, probabilities)`` of every row of *values*, or ``None``.
+
+        :meth:`~.separation.Populations.assign`: *mode* ``"whole"`` labels
+        every burst of an island's catchment basin but its ridges, ``"cores"``
+        only its core; the probability is the island's share of the smoothed
+        density at the burst (0 for -1).
+        """
+        found = self._found_points(names, values)
+        return None if found is None else found[0].assign(found[1], mode)
+
+    def _found_points(self, names, values):
+        """The view's populations on the ranking sample and *values* in its
+        coordinates, or ``None``."""
         from .separation import find_populations
 
         if self.method != "populations" or self.columns is None:
@@ -872,7 +890,7 @@ class _ScoredRanker:
             return None
         points = np.column_stack([self.columns.axes[n].transform(v)
                                   for n, v in zip(names, values)])
-        return found.label(points, core=core)
+        return found, points
 
 
 class ProjectionRanker(_ScoredRanker, AttrPairRanker):

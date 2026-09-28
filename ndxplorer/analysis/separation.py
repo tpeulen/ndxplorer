@@ -67,6 +67,8 @@ __all__ = [
     "MIN_POPULATION",
     "Z_MIN",
     "CORE_Z",
+    "RIDGE_P",
+    "LABEL_MODES",
     "SPIKE_SHARE",
     "RobustAxis",
     "Populations",
@@ -78,6 +80,16 @@ __all__ = [
 #: shot noise) above the island's highest valley. A flat bridge between two
 #: islands lies at about the valley's level, so it stays unlabelled.
 CORE_Z = 2.0
+#: Labelling whole islands (:meth:`Populations.assign`, the default): a burst in
+#: an island's catchment basin gets it unless the island holds less than this
+#: share of the smoothed density at the burst (its membership probability). On
+#: the watershed line between two islands each holds about half, so the ridge
+#: stays unassigned in a band of about +-0.4 kernel widths (2:1 odds; the
+#: smoothing does not locate the boundary more finely), 1-2 raster cells.
+RIDGE_P = 2.0 / 3.0
+#: How :meth:`Populations.assign` labels: every burst of an island's basin but
+#: its ridges ("whole"), or only its core ("cores", :data:`CORE_Z`).
+LABEL_MODES = ("whole", "cores")
 #: Raster cells per axis.
 GRID = 64
 #: Smallest share of the sampled bursts the smaller side of a split must hold.
@@ -216,6 +228,12 @@ class Populations:
     #: island per raster cell of its *core* (above its highest valley to any
     #: other island), -1 elsewhere: bridge, tail, noise
     core_cells: Optional[np.ndarray] = None
+    #: island per raster cell of its *whole* catchment basin, -1 on a ridge
+    #: between islands, in a clump too small to be an island or empty space
+    whole_cells: Optional[np.ndarray] = None
+    #: per raster cell, the share of the smoothed density its island (in
+    #: :attr:`cells`) holds there: 1 deep inside, ~1/2 on a ridge
+    membership: Optional[np.ndarray] = None
 
     @property
     def count(self) -> int:
@@ -237,16 +255,46 @@ class Populations:
         -1, as does a row with a missing coordinate (sentinel, outlier, off
         the raster). Islands are numbered as :attr:`shares`: largest first.
         """
-        points = np.asarray(points, dtype=np.float64)
-        points = points[:, None] if points.ndim == 1 else points
-        out = np.full(points.shape[0], -1, dtype=np.int64)
-        cells = self.core_cells if core else self.cells
-        if cells is None:
-            return out
-        ok = np.isfinite(points).all(axis=1)
-        index = _cell_index(points[ok], cells.shape[0])
-        out[ok] = cells[tuple(index.T)]
+        return _lookup(points, self.core_cells if core else self.cells, -1)
+
+    def assign(self, points, mode: str = "whole") -> Tuple[np.ndarray, np.ndarray]:
+        """Island labels and membership probabilities of each row of *points*.
+
+        ``mode="whole"`` (default): every burst in an island's catchment basin
+        -- the watershed of the smoothed density the score segments -- gets
+        the island. ``-1``: a burst on the ridge between two islands (its
+        island holds less than :data:`RIDGE_P` of the density there), in a
+        basin too small to be an island (a clump under ``MIN_POPULATION``,
+        not merged into a neighbour) or cut off by empty space, and missing
+        or outlier coordinates. ``mode="cores"``: only the cores
+        (:meth:`label` with ``core``).
+
+        The probability of a labelled burst is its island's share of the
+        smoothed density at the burst -- a kernel-density soft assignment,
+        1 deep inside an island and falling toward 1/2 at a ridge -- and 0
+        for ``-1``.
+        """
+        if mode not in LABEL_MODES:
+            raise ValueError(f"mode must be one of {LABEL_MODES}, not {mode!r}")
+        labels = _lookup(points, self.whole_cells if mode == "whole" else self.core_cells, -1)
+        if self.membership is None:
+            return labels, (labels >= 0).astype(np.float64)
+        probability = _lookup(points, self.membership, 0.0)
+        return labels, np.where(labels >= 0, probability, 0.0)
+
+
+def _lookup(points, cells: Optional[np.ndarray], fill) -> np.ndarray:
+    """*cells* (a raster) read at each row of *points*, *fill* for a missing row."""
+    points = np.asarray(points, dtype=np.float64)
+    points = points[:, None] if points.ndim == 1 else points
+    dtype = np.int64 if isinstance(fill, int) else np.float64
+    out = np.full(points.shape[0], fill, dtype=dtype)
+    if cells is None:
         return out
+    ok = np.isfinite(points).all(axis=1)
+    index = _cell_index(points[ok], cells.shape[0])
+    out[ok] = cells[tuple(index.T)]
+    return out
 
 
 def _cell_index(points: np.ndarray, grid: int) -> np.ndarray:
@@ -457,6 +505,41 @@ def find_populations(points, n_total: Optional[float] = None, weights=None,
             z_cell = (fc - level) / np.sqrt(np.maximum(vc * (1.0 + level / fc), 1e-300))
         clear = z_cell >= CORE_Z
         core_cells = np.where(above & attached & clear, flat_cells, -1).reshape(f.shape)
+    whole_cells, membership = _whole_islands(h, f, sigma, cells, joined[np.maximum(basin_of, 0)],
+                                             n_islands)
     score = float(core @ separability @ core)  # = sum over i != j of p_i p_j sep_ij
     return Populations(score, shares.tolist(), core.tolist(), separability, n, cells,
-                       core_cells)
+                       core_cells, whole_cells, membership)
+
+
+def _whole_islands(h: np.ndarray, f: np.ndarray, sigma: float, cells: np.ndarray,
+                   joined: np.ndarray, n_islands: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Whole-island labels per raster cell, and each cell's membership.
+
+    *cells* is the island of every cell's basin (the watershed); *joined* the
+    level at which each cell's basin joins its island (``inf`` its own peak,
+    ``0`` across empty space, ``-inf`` behind a significant valley but too
+    small to be an island). The membership of a cell is its island's share of
+    the smoothed density there: the histogram of the island's own cells
+    smoothed by the score's kernel, over the smoothed histogram of all bursts
+    -- a kernel-density soft assignment (1 deep inside, ~1/2 on a ridge, less
+    next to a clump or bridge that is not the island's).
+    """
+    from scipy import ndimage
+
+    flat = cells.ravel()
+    own = np.zeros(flat.size)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for i in range(n_islands):
+            mine = np.where(cells == i, h, 0.0)
+            share = ndimage.gaussian_filter(mine, sigma, mode="constant") / f
+            own = np.where(flat == i, share.ravel(), own)
+    own = np.clip(np.nan_to_num(own), 0.0, 1.0)
+    # A basin that joins its island only across empty space (an outlier
+    # clump) or behind a significant valley (a clump under MIN_POPULATION)
+    # is not part of it; neither is the ridge between two islands.
+    whole = (flat >= 0) & (joined.ravel() > 0) & (own >= RIDGE_P)
+    if n_islands < 2:
+        whole = (flat >= 0) & (joined.ravel() > 0)
+    return (np.where(whole, flat, -1).reshape(cells.shape),
+            np.where(flat >= 0, own, 0.0).reshape(cells.shape))
