@@ -47,10 +47,10 @@ def draw(app, frames=2):
     return painter.frame
 
 
-def open_app(path):
+def open_app(path, autosave=True):
     from ndxplorer.app.frame import NdxApp
 
-    app = NdxApp(layout_store=None)
+    app = NdxApp(layout_store=None, session_autosave=autosave)
     assert app.open_path(str(path)), app.model.error
     draw(app, 3)
     return app
@@ -179,6 +179,15 @@ def test_a_state_from_another_table_applies_what_still_fits(tmp_path):
     assert [g["kind"] for g in model.gate_records()] == ["Interval"]     # 2-D gates need Tau
     assert feature(again, "analysis").labels is None
     again.close()
+
+
+def test_only_the_users_app_writes_unasked(tmp_path):
+    """A test, a capture or a script (the default) leaves the measurement alone."""
+    path = make_pto(tmp_path / "m.pto")
+    app = open_app(path, autosave=False)
+    app.model.set_parameter("x", "Duration (ms)")
+    app.close()
+    assert "ndx_session" not in names_in(path)
 
 
 def test_a_measurement_without_a_state_opens_as_before(tmp_path):

@@ -72,7 +72,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
 
     host = host or available_host()
     size = tuple(size) if size else SIZE
-    app = NdxApp(layout_store=layout_store())
+    app = NdxApp(layout_store=layout_store(), session_autosave=True)
     if chisurf_rpc:
         from ..rpc import connect
 

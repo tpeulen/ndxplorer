@@ -92,16 +92,24 @@ class NdxApp:
         Where the window layout is read from and saved to
         (:func:`.docks.layout_store`, the settings folder). ``None`` keeps it
         for this run only -- what tests want, so they never touch the user's.
+    session_autosave : bool, optional
+        Keep the analysis view in the opened measurement when the window
+        leaves it or closes (:mod:`.features.session`). Only the user's app
+        (:func:`make_app`, :func:`.launch.run`) turns it on: a test, a capture
+        or a script opening a real measurement must never write into it
+        unasked. File > Save session writes either way.
     """
 
     def __init__(self, model: Optional[ExplorerModel] = None, settings_file=None,
                  on_exit: Optional[Callable[[], None]] = None,
-                 features: Optional[list] = None, layout_store=None) -> None:
+                 features: Optional[list] = None, layout_store=None,
+                 session_autosave: bool = False) -> None:
         import emtk
         from emtk.view_form import FormState
 
         self.model = model if model is not None else ExplorerModel(settings_file)
         self.on_exit = on_exit
+        self.session_autosave = bool(session_autosave)
         self.panel = PanelModel(self.model, actions={
             "exit": self.exit,
             "toggle_plot_controls": self.toggle_plot_controls,
@@ -723,4 +731,4 @@ def make_app() -> NdxApp:
     """
     from .docks import layout_store
 
-    return NdxApp(layout_store=layout_store())
+    return NdxApp(layout_store=layout_store(), session_autosave=True)

@@ -8,7 +8,10 @@ The state is collected from the model and every feature
 
 When it is written
     File > Save session (Ctrl+S); on leaving the file (another opens, Clear);
-    on closing the window. Leaving and closing write only when the view
+    on closing the window -- the last two only in the user's app
+    (``NdxApp(session_autosave=True)``: :func:`~ndxplorer.app.frame.make_app`,
+    the launcher), never in a test, a capture or a script. Leaving and closing
+    write only when the view
     changed since it was restored or last saved, so opening and closing a
     file leaves it untouched. There is no timed autosave: every write is a
     new version in the measurement's short history (the last five), and a
@@ -157,6 +160,8 @@ class SessionFeature(Feature):
         return result
 
     def _save_if_changed(self) -> None:
+        if not getattr(self.app, "session_autosave", False):
+            return
         if not self.container or not self.app.model.has_data:
             return
         if self._source_id != id(self.app.model.source):
