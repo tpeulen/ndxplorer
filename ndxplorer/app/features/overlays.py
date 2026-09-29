@@ -8,7 +8,9 @@ What this feature adds to the window:
   edit re-derives only the columns that read the constant, once per frame
   however many edits arrived;
 * the **Overlays** tab -- curves drawn over the 2-D map
-  (:mod:`ndxplorer.core.overlay_curves`), each with its parameter table, a
+  (:mod:`ndxplorer.core.overlay_curves`): equations, functions, parametric
+  curves and point sets (the phasor's universal circle, lifetime points and FRET
+  trajectory are entries of the list), each with its parameter table, a
   colour, *Fit* and *Delete*; *Save CSV* writes the visible ones;
 * **Fit curve to data** -- a curve fitted to the displayed 2-D distribution or
   a marginal (:mod:`ndxplorer.analysis.curve_fit_setup`), with the constants
@@ -573,6 +575,64 @@ class CurvePanel:
     def color(self, value: str) -> None:
         self.curve.color = str(value)
 
+    # a parametric curve or a point set: its spec, field by field
+    @property
+    def where(self) -> str:
+        from ...core.overlay_curves import parse_where
+
+        return "; ".join(f"{n} = {e}" for n, e in parse_where(self.curve.spec.get("where")))
+
+    @where.setter
+    def where(self, value: str) -> None:
+        if str(value) != self.where:
+            self.curve.set_spec(where=str(value))
+
+    def _spec_field(self, key: str) -> str:
+        return str(self.curve.spec.get(key, ""))
+
+    def _set_spec_field(self, key: str, value) -> None:
+        if str(value) != self._spec_field(key):
+            self.curve.set_spec(**{key: str(value)})
+
+    x_expr = property(lambda self: self._spec_field("x"),
+                      lambda self, v: self._set_spec_field("x", v))
+    y_expr = property(lambda self: self._spec_field("y"),
+                      lambda self, v: self._set_spec_field("y", v))
+    label_format = property(lambda self: self._spec_field("labels"),
+                            lambda self, v: self._set_spec_field("labels", v))
+
+    def _t(self) -> List[float]:
+        return [float(v) for v in (self.curve.spec.get("t") or [0.0, 1.0])]
+
+    @property
+    def t0(self) -> float:
+        return self._t()[0]
+
+    @t0.setter
+    def t0(self, value: float) -> None:
+        if float(value) != self.t0:
+            self.curve.set_spec(t=[float(value), self._t()[-1]])
+
+    @property
+    def t1(self) -> float:
+        return self._t()[-1]
+
+    @t1.setter
+    def t1(self, value: float) -> None:
+        if float(value) != self.t1:
+            self.curve.set_spec(t=[self._t()[0], float(value)])
+
+    @property
+    def t_values(self) -> str:
+        return ", ".join(f"{v:g}" for v in self._t())
+
+    @t_values.setter
+    def t_values(self, value: str) -> None:
+        values = [n for n in (_number(v) for v in str(value).replace(";", ",").split(","))
+                  if n is not None]
+        if values and values != self._t():
+            self.curve.set_spec(t=values)
+
     @property
     def has_error(self) -> bool:
         return bool(self.curve.error)
@@ -589,12 +649,13 @@ class CurvePanel:
     def spec(self) -> dict:
         curve = self.curve
         base = load_spec("curve")
-        spec = _fill(base, title=curve.title,
-                     filled_label="Filled Function:" if curve.is_function else "Filled: y =")
-        marker = "function" if curve.is_function else "equation"
-        other = "equation" if curve.is_function else "function"
-        spec["sections"] = [s for s in spec["sections"] if not s.get(other)
-                            or s.get(marker)]
+        from ...core.overlay_curves import KINDS
+
+        filled = {"equation": "Filled: y =", "function": "Filled Function:"}
+        spec = _fill(base, title=curve.title, filled_label=filled.get(curve.kind, "Filled:"))
+        # A section tagged with kinds is for those kinds only.
+        spec["sections"] = [s for s in spec["sections"]
+                            if not any(s.get(k) for k in KINDS) or s.get(curve.kind)]
         return spec
 
 
@@ -638,6 +699,8 @@ class OverlaysPanel:
             curve = OverlayCurve(next_curve_title(CUSTOM_EQUATION, titles), "x")
         else:
             curve = OverlayCurve.from_entry(entry, next_curve_title(entry["name"], titles))
+            # f -> f_rep, harmonic -> harmonic: every phasor curve shares them.
+            curve.link_to(self.feature.constants.group)
         curve.register()
         self.panels.append(CurvePanel(self.feature, curve))
         return curve
@@ -1530,6 +1593,9 @@ class OverlaysFeature(Feature):
             curve = panel.curve
             if not curve.visible:
                 continue
+            if curve.kind == "points":
+                self._draw_markers(i, curve, hist)
+                continue
             # One curve per population when a parameter is population-wise.
             drawn = curve.drawn_curves(self.overlays.num_points, hist.x_edges, hist.y_edges,
                                        model.x.log, model.y.log)
@@ -1547,6 +1613,26 @@ class OverlaysFeature(Feature):
                     finally:
                         implot.pop_style_color()
 
+    def _draw_markers(self, i: int, curve, hist) -> None:
+        """A point set: markers, each with its label beside it."""
+        from emtk import implot
+
+        for k, (_name, colour, x, y, labels) in enumerate(curve.drawn_points(hist.x_edges,
+                                                                             hist.y_edges)):
+            if x.size == 0:
+                continue
+            rgba = _rgba(colour)
+            implot.plot_scatter(f"##overlay-points-{i}-{k}", x, y, spec={
+                "marker_fill_color": rgba, "marker_line_color": rgba, "marker_size": 5.0})
+            implot.push_style_color(implot.COL_INLAY_TEXT, rgba)
+            try:
+                for label, xi, yi in zip(labels, x, y):
+                    if label:
+                        implot.plot_text(str(label), float(xi), float(yi),
+                                         pix_offset=(0.0, -15.0))
+            finally:
+                implot.pop_style_color()
+
     def on_data_changed(self) -> None:
         self.equations.validate()
 
@@ -1557,15 +1643,27 @@ class OverlaysFeature(Feature):
         equations when they are not the settings' own."""
         model = self.app.model
         state: dict = {
-            "curves": [{"title": c.title, "text": c.text, "is_function": bool(c.is_function),
-                        "color": c.color, "visible": bool(c.visible),
-                        "parameters": c.group.get_state()} for c in self.overlays.curves],
+            "curves": [self._curve_state(c) for c in self.overlays.curves],
             "num_points": int(self.overlays.num_points),
             "constants": self.constants.group.get_state(),
         }
         equations = list(model.manager.equations or [])
         if equations != list(model.bundle.equations or []):
             state["equations"] = equations
+        return state
+
+    def _curve_state(self, curve) -> dict:
+        """A curve's session entry; ``links`` names the constants its parameters follow."""
+        constants = {id(p): p.name for p in self.constants.group.parameters_all}
+        state = {"title": curve.title, "kind": curve.kind, "text": curve.text,
+                 "is_function": curve.kind == "function", "color": curve.color,
+                 "visible": bool(curve.visible), "parameters": curve.group.get_state()}
+        if curve.kind in ("parametric", "points"):
+            state["spec"] = dict(curve.spec)
+        links = {p.name: constants[id(p.link)] for p in curve.group.parameters_all
+                 if p.link is not None and id(p.link) in constants}
+        if links:
+            state["links"] = links
         return state
 
     def restore_session_state(self, state: dict, context) -> None:
@@ -1589,10 +1687,13 @@ class OverlaysFeature(Feature):
         for entry in state.get("curves") or []:
             curve = OverlayCurve(entry.get("title", "curve"), entry.get("text", "x"),
                                  is_function=bool(entry.get("is_function")),
-                                 color=str(entry.get("color", "#ff0000")))
+                                 color=str(entry.get("color", "#ff0000")),
+                                 kind=entry.get("kind"), spec=entry.get("spec"))
             curve.visible = bool(entry.get("visible", True))
             if entry.get("parameters"):
                 curve.group.set_state(entry["parameters"])
+            curve.links = dict(entry.get("links") or {})
+            curve.link_to(self.constants.group)
             curve.register()
             self.overlays.panels.append(CurvePanel(self, curve))
         if "num_points" in state:

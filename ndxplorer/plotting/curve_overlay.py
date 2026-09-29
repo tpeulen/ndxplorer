@@ -657,7 +657,9 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
     def load_predefined_equations(self):
         """Fill the Equation combo from ``curve_equations.yaml``."""
-        self.predefined_equations = load_predefined_equations()
+        # A point set needs markers and labels, which this widget cannot draw:
+        # it is offered in the emtk window only.
+        self.predefined_equations = [e for e in load_predefined_equations() if "points" not in e]
         for equation in self.predefined_equations:
             self.predefined_combo.addItem(equation["name"])
 
@@ -676,6 +678,13 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         if 'function' in equation_data:
             function_str = equation_data['function']
             curve_widget = self.add_curve(function_str, use_sliders=True, is_function=True, base_name=base_name)
+        elif 'parametric' in equation_data:
+            # A parametric curve reads here as the equivalent function curve.
+            from ..core.overlay_curves import spec_function_source
+
+            source = spec_function_source(equation_data['parametric'],
+                                          equation_data.get('parameters') or {})
+            curve_widget = self.add_curve(source, use_sliders=True, is_function=True, base_name=base_name)
         else:
             curve_widget = self.add_curve(equation_data['equation'], use_sliders=True, is_function=False, base_name=base_name)
 
