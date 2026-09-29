@@ -69,7 +69,7 @@ CUSTOM_EQUATION = "Custom Equation"
 #: this, a regex that harvests identifiers turns ``exp``/``sqrt``/``pi`` into
 #: spurious parameters and corrupts the "filled" equation display.
 NON_PARAMETER_NAMES = frozenset({
-    "x", "y", "pi", "e", "inf", "nan", "np",
+    "x", "y", "pi", "e", "inf", "nan", "np", "None", "True", "False",
     "exp", "expm1", "log", "log2", "log10", "log1p", "sqrt", "cbrt", "square",
     "abs", "sign", "power", "hypot", "mod", "fmod", "sin", "cos", "tan",
     "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh",
@@ -83,6 +83,9 @@ NON_PARAMETER_NAMES = frozenset({
 _NAMESPACE = {"np": np, "abs": np.abs, "inf": np.inf, "nan": np.nan}
 _NAMESPACE.update({name: getattr(np, name) for name in NON_PARAMETER_NAMES
                    if name not in _NAMESPACE and hasattr(np, name)})
+
+#: A name in an expression; an attribute (``np.linspace``) is not one.
+_IDENTIFIER = re.compile(r"(?<![.\w])([a-zA-Z][a-zA-Z0-9_]*)\b")
 
 #: The kinds of overlay curve: ``y = f(x)`` text, a ``def`` that traces itself,
 #: a parametric line ``(x(t), y(t))`` for ``t`` in ``[t0, t1]``, and a point set
@@ -170,7 +173,7 @@ def equation_parameter_names(text: str) -> List[str]:
     """The free parameters of an equation: its identifiers minus x and the maths names."""
     if "=" in text:
         text = text.split("=", 1)[1]
-    names = set(re.findall(r"\b([a-zA-Z][a-zA-Z0-9_]*)\b", text))
+    names = set(_IDENTIFIER.findall(text))
     return sorted(names - NON_PARAMETER_NAMES)
 
 
@@ -253,7 +256,7 @@ def spec_parameter_names(spec: Mapping[str, Any]) -> List[str]:
     defined = {name for name, _ in where} | {T_NAME}
     names: List[str] = []
     for text in [e for _, e in where] + [str(spec.get("x", "")), str(spec.get("y", ""))]:
-        for name in re.findall(r"\b([a-zA-Z][a-zA-Z0-9_]*)\b", text):
+        for name in _IDENTIFIER.findall(text):
             if name not in NON_PARAMETER_NAMES and name not in defined and name not in names:
                 names.append(name)
     return names
