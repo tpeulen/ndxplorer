@@ -311,16 +311,27 @@ _KINDS = (("constants", "constant", "constants"), ("equations", "equation", "equ
           ("axis", "axis setting", "axis settings"), ("curves", "overlay curve", "overlay curves"))
 
 
-def describe_added(added: Mapping[str, Sequence[str]]) -> str:
-    """One line: "Added 2 new constants from the defaults: f_rep, harmonic"."""
+def describe_added(added: Mapping[str, Sequence[str]], short: bool = False) -> str:
+    """One line: "Added 2 new constants from the defaults: f_rep, harmonic; 6 new equations: ...".
+
+    *short* (the status line) names only the first kind's entries and counts
+    the others; the log gets them all.
+    """
     parts = []
     for key, one, many in _KINDS:
         names = list(added.get(key) or [])
         if not names:
             continue
-        shown = ", ".join(names[:8]) + (f", ... ({len(names) - 8} more)" if len(names) > 8 else "")
-        parts.append(f"{len(names)} new {one if len(names) == 1 else many}: {shown}")
+        kind = f"{len(names)} new {one if len(names) == 1 else many}"
+        if short and parts:
+            parts.append(kind)
+            continue
+        limit = 4 if short else 8
+        shown = ", ".join(names[:limit]) + (f", ... ({len(names) - limit} more)"
+                                            if len(names) > limit else "")
+        parts.append(f"{kind}: {shown}")
     if not parts:
         return ""
     return "Added " + parts[0].replace(": ", " from the defaults: ", 1) + \
-        "".join("; " + p for p in parts[1:])
+        "".join("; " + p for p in parts[1:]) + ("" if not short or len(parts) == 1
+                                                 else " (see the log)")

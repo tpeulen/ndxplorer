@@ -77,6 +77,9 @@ def test_old_folder_gets_new_shipped_entries_without_writing(home):
     assert set(bundle.added["axis"]) == {"re:g( \\(.+\\))?", "re:s( \\(.+\\))?"}
     text = defaults.describe_added(bundle.added)
     assert text.startswith("Added 2 new constants from the defaults: f_rep, harmonic")
+    assert defaults.describe_added(bundle.added, short=True) == (
+        "Added 2 new constants from the defaults: f_rep, harmonic; 6 new equations; "
+        "2 new axis settings (see the log)")
     assert _snapshot(folder) == before  # nothing written on load
 
 

@@ -192,7 +192,7 @@ class NdxApp:
             curves = []
         if curves:
             added["curves"] = curves
-        return describe_added(added)
+        return describe_added(added, short=True)
 
     # ------------------------------------------------------------ features
     def _feature_available(self, action: str):
