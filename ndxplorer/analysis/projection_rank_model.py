@@ -232,8 +232,10 @@ def build_context(source, axis_settings: Optional[Dict[str, dict]] = None,
 
     settings = axis_settings or {}
     views: Dict[str, ColumnView] = {}
+    from ..utils.axis_helpers import axis_entry
+
     for name in columns:
-        entry = settings.get(name)
+        entry = axis_entry(name, settings)
         if entry:
             views[name] = ColumnView(
                 name, str(entry.get("scale", "lin")), entry.get("min"), entry.get("max")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -282,6 +283,38 @@ def compute_axis_max(values, scale: str = "lin") -> float:
     return robust_axis_range(values, scale)[1]
 
 
+#: A key of the axis settings that is a pattern, not a parameter name: the rest
+#: is a regular expression the whole parameter name must match
+#: (``"re:g( \\(.+\\))?"`` covers ``g``, ``g (green)``, ``g (red)``, ...).
+AXIS_PATTERN_PREFIX = "re:"
+
+
+def axis_entry(name: str, axis_settings) -> Optional[dict]:
+    """The axis settings entry for parameter *name*, or ``None``.
+
+    The entry under its own name wins; otherwise the first pattern key
+    (:data:`AXIS_PATTERN_PREFIX`, in the file's order) whose expression
+    matches the whole name. So a column that has been set up ("Set", saved)
+    keeps its own entry, and every other ``g``/``s`` channel column gets the
+    phasor ranges without being listed.
+    """
+    if not axis_settings or not name:
+        return None
+    entry = axis_settings.get(name)
+    if isinstance(entry, dict):
+        return entry
+    for key, entry in axis_settings.items():
+        if not (isinstance(key, str) and key.startswith(AXIS_PATTERN_PREFIX)
+                and isinstance(entry, dict)):
+            continue
+        try:
+            if re.fullmatch(key[len(AXIS_PATTERN_PREFIX):], str(name)):
+                return entry
+        except re.error as exc:
+            logging.debug("Bad axis settings pattern %r: %s", key, exc)
+    return None
+
+
 def settings_for_axis(name: str, axis_settings, with_2d: bool = True) -> Optional[dict]:
     """How an axis showing parameter *name* is set up, from the axis settings.
 
@@ -291,7 +324,7 @@ def settings_for_axis(name: str, axis_settings, with_2d: bool = True) -> Optiona
         The parameter the axis now shows.
     axis_settings : mapping
         Parameter name -> ``{"min", "max", "scale", "n_bins_1d", "n_bins_2d"}``
-        (``mfd.axis.json``).
+        (``mfd.axis.json``); ``re:`` keys are patterns (:func:`axis_entry`).
     with_2d : bool
         Whether the axis has a 2-D bin count (x and y do, z does not).
 
@@ -305,8 +338,8 @@ def settings_for_axis(name: str, axis_settings, with_2d: bool = True) -> Optiona
 
     A pixel axis gets one 2-D bin per pixel -- as many bins as its maximum.
     """
-    d = axis_settings.get(name) if axis_settings else None
-    if not isinstance(d, dict):
+    d = axis_entry(name, axis_settings)
+    if d is None:
         return None
     bins_2d = None
     if with_2d:

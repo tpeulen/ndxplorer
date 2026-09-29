@@ -113,3 +113,31 @@ def test_a_constant_column_reports_that_constant():
     values = np.full(20, 2.5)
     assert compute_axis_min(values) == 2.5
     assert compute_axis_max(values) == 2.5
+
+
+def test_axis_settings_patterns():
+    """``re:`` keys match whole names; a parameter's own entry wins."""
+    from ndxplorer.utils.axis_helpers import axis_entry, settings_for_axis
+
+    settings = {"re:g( \\(.+\\))?": {"min": 0.0, "max": 1.0, "scale": "lin"},
+                "re:s( \\(.+\\))?": {"min": 0.0, "max": 0.6, "scale": "lin"},
+                "s (red)": {"min": -1.0, "max": 1.0, "scale": "lin"},
+                "re:[": {"min": 5.0}}
+    assert settings_for_axis("g", settings)["max"] == 1.0
+    assert settings_for_axis("g (green)", settings)["max"] == 1.0
+    assert settings_for_axis("s (green)", settings)["max"] == 0.6
+    assert settings_for_axis("s (red)", settings)["min"] == -1.0
+    for name in ("S (PIE)", "Sg", "gG", "sigma_E", "g_bg"):
+        assert axis_entry(name, settings) is None
+
+
+def test_shipped_axis_settings_give_phasor_ranges():
+    import json
+
+    from ndxplorer.settings.persist import PACKAGED_AXIS_SETTINGS
+    from ndxplorer.utils.axis_helpers import settings_for_axis
+
+    settings = json.loads(PACKAGED_AXIS_SETTINGS.read_text())
+    for name, hi in (("g", 1.0), ("g (green)", 1.0), ("s", 0.6), ("s (red)", 0.6)):
+        setup = settings_for_axis(name, settings)
+        assert (setup["min"], setup["max"], setup["scale"]) == (0.0, hi, "lin")
