@@ -221,7 +221,7 @@ def test_view_equations_reaches_the_equations_tab(app):
     assert app.run_action("toggle_equations")
     assert app.docks.is_shown("Equations") and app.panel.show_equations
     draw(app)
-    assert f.equations.status_text() == "59 equation(s), all valid"
+    assert f.equations.status_text() == "65 equation(s), all valid"
 
 
 def test_a_bad_equation_is_marked_and_apply_recomputes(app):
