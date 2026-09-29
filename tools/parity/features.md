@@ -520,7 +520,7 @@ from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
 
 - [~] Toolbar "Accurate FRET" (🎯 FRET calibration, 💾 Save calibration, 📂 Load calibration, ⟲ Sync constants) — the **FRET** menu (before Help): FRET calibration…, Save calibration…, Load calibration…, in the app whether or not ChiSurf hosts it; no toolbar button (the toolbar's space was just given to the map)
 - [-] "⟲ Sync constants" (Global View -> window, then back) — not needed: the emtk constants *are* the registered parameter group (`overlays.ConstantsPanel` registers it as owner `ndxplorer`, the slot the Qt window publishes in too), so a Global View edit is the window's value; there is no copy to sync
-- [~] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — View > Phasor / FRET… and View > Clear phasor overlays (see chisurf_phasor)
+- [~] Toolbar "ChiSurf Phasor" (◐ Phasor / FRET…, ✕ Clear) — deliberately unified: phasor geometry is overlay entries and equations, in and outside ChiSurf (see chisurf_phasor)
 - [x] Opening a `.pto` restores its stored calibration — `AccurateFretFeature.restore_stored()` on every opened table; status "Restored 16 constants stored in …" (values follow the container's newest saved calibration, which is newer than the Qt shot's: gG/gR 0.533, PhiA/PhiD 0.32/0.8, gamma 0.739, alpha 0.157, beta 0.0674, r 0.9435, Bg/Br/By 4.24/0.538/2.02)
 - [x] Global View publishing — ChiSurf's window hosts the app in-process (2026-09-28): the constants group is in the slot `ndxplorer` (group "ndX"), withdrawn when the window closes
 
@@ -559,5 +559,14 @@ from `chisurf/plugins/ndxplorer/__init__.py` and `rpc_bridge.py`:
 
 ## chisurf_phasor — ChiSurf Phasor > Phasor / FRET… (ChiSurf-hosted)
 
-- [x] "Phasor / FRET…" shows the ChiSurf Phasor / FRET dock: Phasor overlays (Frequency, Harmonic, Lifetimes, Donor τ0, Show: universal semicircle / iso-lifetime grid / lifetime ticks / polar grid / FRET trajectory, Draw overlays, Clear), FRET line (Model, Sweep param, Min, Max, Points, Draw FRET line), Derived columns (τ φ/M columns) — View > Phasor / FRET… opens the "Phasor / FRET" window (`features/phasor.py`, `phasor/phasor.view.json`), every control there; overlays drawn over the map in data coordinates; off with a reason without a ChiSurf client
-- [x] "✕ Clear" removes the ChiSurf overlays — Clear in the window, and View > Clear phasor overlays
+Deliberate unification (2026-09-29): a phasor plot is a map of the g, s columns, so the Qt panel's controls are overlay entries (Overlays tab, `settings/curve_equations.yaml`), their parameters, constants and equations. No ChiSurf RPC is needed; there is no Phasor window and no View menu entry.
+
+- [~] Frequency (MHz), Harmonic — parameters `f`, `harmonic` of every phasor entry, linked on Add to the constants **f_rep** and **harmonic** (Parameters tab), so one edit moves every curve and the τ columns
+- [~] Show: universal semicircle — entry **Universal circle** (parametric, τ = tan(t)/ω, t in [0, π/2])
+- [~] Lifetimes (ns) + Show: lifetime ticks — entry **Lifetime points** (point set): its *t values* are the lifetimes, labelled "τ ns"
+- [~] Donor τ0 + Show: FRET trajectory — entry **FRET trajectory** (E = t from 0 to 1), `tau0` linked to the constant tauD0; adds `x_DOnly` and a background `bg` at (`g_bg`, `s_bg`)
+- [~] Show: iso-lifetime grid — entries **Iso-phase line** and **Iso-modulation arc**, one per τ (add one per lifetime)
+- [~] Show: polar grid — the existing **Circle** entry (radius, centre); no spokes
+- [~] FRET line (Model, Sweep param, Min, Max, Points, Draw FRET line) — the ChiSurf models drew E vs τf lines, not phasor geometry: the existing **Static FRET Line (Gaussian Distribution)**, **WLC FRET Line**, **Mixture** and **Dynamic** entries, whose parameters are the sweep range and points; on the phasor, **FRET trajectory (distance)** and **FRET trajectory (Gaussian distance)** (Discrete / Gaussian models; WLC not ported)
+- [~] Draw overlays / Draw FRET line — Add Curve (each entry once); Clear / "✕ Clear" — Delete per curve, or untick it
+- [~] Derived columns (τ φ/M columns) — equations `tau_phi`, `tau_m` (and `(green)`, `(red)`) in `mfd.equations.yaml`, computed whenever the table has g, s columns
