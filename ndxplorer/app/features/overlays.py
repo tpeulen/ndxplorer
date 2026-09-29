@@ -1055,6 +1055,10 @@ class EquationsPanel:
             except OSError as exc:
                 self.feature.app.message = ("Equations", f"Could not save:\n{exc}")
                 return
+            from ...settings.defaults import record_seen
+
+            # A shipped equation missing now was deleted: the next load leaves it out.
+            record_seen(path)
             self.feature.status(f"Equations saved to {path}")
 
         self.feature.ask_save("Save equations", [("YAML", ["*.yaml", "*.yml"])],

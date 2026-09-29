@@ -176,8 +176,23 @@ class NdxApp:
         #: client (ChiSurf's ndX window); ``None`` keeps the entry disabled.
         self.mmfdb_opener: Optional[Callable[[], None]] = None
         #: One line of non-modal feedback (Qt's status bar), in the menu bar's
-        #: row; set it with :meth:`show_status`.
-        self.status = ""
+        #: row; set it with :meth:`show_status`. It starts with what the
+        #: shipped defaults added to the user's older settings.
+        self.status = self._defaults_added()
+
+    def _defaults_added(self) -> str:
+        """"Added 2 new constants from the defaults: f_rep, harmonic", or ``""``."""
+        from ..core.overlay_curves import predefined_equations_with_added
+        from ..settings.defaults import describe_added
+
+        added = dict(getattr(self.model.bundle, "added", {}) or {})
+        try:
+            curves = predefined_equations_with_added()[1]
+        except Exception:  # noqa: BLE001 - only the report is lost
+            curves = []
+        if curves:
+            added["curves"] = curves
+        return describe_added(added)
 
     # ------------------------------------------------------------ features
     def _feature_available(self, action: str):

@@ -51,6 +51,7 @@ __all__ = [
     "filled_text",
     "predefined_equation_paths",
     "load_predefined_equations",
+    "predefined_equations_with_added",
     "sample_x",
     "curve_points",
     "write_curves_csv",
@@ -371,7 +372,20 @@ def predefined_equation_paths() -> List[pathlib.Path]:
 
 def load_predefined_equations(paths: Optional[Sequence[pathlib.Path]] = None) -> List[dict]:
     """The predefined curves: ``[{name, equation | function, parameters, ranges}]``."""
+    return predefined_equations_with_added(paths)[0]
+
+
+def predefined_equations_with_added(paths: Optional[Sequence[pathlib.Path]] = None
+                                    ) -> Tuple[List[dict], List[str]]:
+    """The predefined curves, and the names the shipped file added to the user's.
+
+    The first readable file wins; a user's file gets the curves shipped since
+    it was written appended (:func:`ndxplorer.settings.defaults.merge_curves`:
+    a curve the user deleted stays deleted). Nothing is written.
+    """
     import yaml
+
+    from ..settings import defaults
 
     for path in (paths if paths is not None else predefined_equation_paths()):
         path = pathlib.Path(path)
@@ -383,9 +397,13 @@ def load_predefined_equations(paths: Optional[Sequence[pathlib.Path]] = None) ->
         except Exception as exc:  # noqa: BLE001 - a broken file: try the next one
             logging.error("Error loading predefined equations from %s: %s", path, exc)
             continue
-        return [e for e in entries if isinstance(e, dict) and "name" in e]
+        entries = [e for e in entries if isinstance(e, dict) and "name" in e]
+        entries, added = defaults.merge_curves(entries, path)
+        if added:
+            logging.info(defaults.describe_added({"curves": added}))
+        return entries, added
     logging.warning("Curve overlay predefined equations not found")
-    return []
+    return [], []
 
 
 def sample_x(lo: float, hi: float, n: int, log: bool = False) -> np.ndarray:

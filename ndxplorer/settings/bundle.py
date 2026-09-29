@@ -43,6 +43,10 @@ class SettingsBundle:
         The equation file, for an editor that shows it.
     constants : dict
         Constant name -> value.
+    added : dict
+        What the shipped defaults added under the user's files on this load
+        (``{"constants": [...], "equations": [...], "axis": [...]}``, see
+        :mod:`.defaults`); nothing was written.
     """
 
     path: pathlib.Path
@@ -52,6 +56,7 @@ class SettingsBundle:
     equations: List[Dict[str, str]] = field(default_factory=list)
     equations_path: Optional[pathlib.Path] = None
     constants: Dict[str, float] = field(default_factory=dict)
+    added: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def default_settings_file() -> pathlib.Path:
@@ -81,6 +86,8 @@ def read_settings(path: Union[str, pathlib.Path, None] = None) -> SettingsBundle
     """
     import yaml
 
+    from . import defaults
+
     path = pathlib.Path(path) if path else default_settings_file()
     if not path.exists():
         logging.warning("Settings file not found: %s. Falling back to defaults.", path)
@@ -94,7 +101,10 @@ def read_settings(path: Union[str, pathlib.Path, None] = None) -> SettingsBundle
         fn_axis = _named(settings_dir, settings["axis"])
         if fn_axis.exists():
             with open(fn_axis, "r", encoding="utf-8") as handle:
-                bundle.axis_settings.update(json.load(handle))
+                user_axes = json.load(handle)
+            if isinstance(user_axes, dict):
+                bundle.axis_settings.update(
+                    _with_shipped(bundle, "axis", fn_axis, user_axes, defaults))
         else:
             logging.warning("Axis settings file not found: %s", fn_axis)
 
@@ -115,6 +125,9 @@ def read_settings(path: Union[str, pathlib.Path, None] = None) -> SettingsBundle
             with open(fn_equations, "r", encoding="utf-8") as handle:
                 bundle.equations = yaml.load(handle, Loader=yaml.FullLoader) or []
             bundle.equations_path = fn_equations
+            bundle.equations, added = defaults.merge_equations(bundle.equations, fn_equations)
+            if added:
+                bundle.added["equations"] = added
         else:
             logging.warning("Equations file not found: %s", fn_equations)
 
@@ -125,7 +138,34 @@ def read_settings(path: Union[str, pathlib.Path, None] = None) -> SettingsBundle
 
             with open(fn_constants, "r", encoding="utf-8") as handle:
                 # Accept both legacy flat and rich per-parameter state formats.
-                bundle.constants.update(values_from_data(json.load(handle)))
+                user_constants = values_from_data(json.load(handle))
+            bundle.constants.update(
+                _with_shipped(bundle, "constants", fn_constants, user_constants, defaults,
+                              read=lambda data: values_from_data(data)))
         else:
             logging.warning("Constants file not found: %s", fn_constants)
+    if bundle.added:
+        logging.info(defaults.describe_added(bundle.added))
     return bundle
+
+
+def _with_shipped(bundle: SettingsBundle, kind: str, user_path: pathlib.Path,
+                  user: Dict[str, Any], defaults, read=None) -> Dict[str, Any]:
+    """*user* with the keys only the shipped file of the same name has (user wins)."""
+    if defaults.is_shipped(user_path):
+        return dict(user)
+    source = defaults.shipped_file(user_path)
+    if source is None:
+        return dict(user)
+    try:
+        with open(source, "r", encoding="utf-8") as handle:
+            shipped = json.load(handle)
+        if read is not None:
+            shipped = read(shipped)
+    except (OSError, ValueError) as exc:
+        logging.warning("Could not read the shipped %s: %s", source, exc)
+        return dict(user)
+    merged, added = defaults.merge_values(user, shipped if isinstance(shipped, dict) else {})
+    if added:
+        bundle.added[kind] = added
+    return merged

@@ -211,3 +211,7 @@ def write_equations(path: PathLike, equations: List[Mapping[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(equations_bytes(equations))
     logging.info("Equations saved to %s", path)
+    from .defaults import record_seen
+
+    # A shipped equation missing now was deleted: the next load leaves it out.
+    record_seen(path)
