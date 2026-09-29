@@ -169,7 +169,8 @@ class NdxApp:
         #: ``(title, text)`` of a message box on screen, or ``None``.
         self.message = None
         #: The ChiSurf RPC client (``--chisurf-rpc``), or ``None``: what "Send
-        #: selection to" and the phasor features talk to.
+        #: selection to" talks to. (Phasor geometry needs no ChiSurf: it is
+        #: overlay curves and equations.)
         self.chisurf_rpc = None
         #: What File > Import > From MMFDB runs: set by a host that has an MMFDB
         #: client (ChiSurf's ndX window); ``None`` keeps the entry disabled.

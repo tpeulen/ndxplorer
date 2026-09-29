@@ -317,3 +317,148 @@
     t_start: [0.0, 6.28]
     t_end: [0.0, 6.28]
     num_points: [10, 1000]
+
+
+# =====================================================================
+# Phasor geometry: overlays on a (g, s) map. A phasor plot is nothing but
+# a map whose axes are the phasor columns, so its reference geometry is
+# ordinary overlay curves. Every entry has the modulation frequency f (MHz)
+# and the harmonic n as parameters, omega = 2*pi*f*n*1e-3 rad/ns (lifetimes
+# in ns), linked to the constants f_rep and harmonic of the Parameters tab
+# when it has them, so all phasor curves (and the tau_phi / tau_M columns)
+# share one frequency. A single-exponential decay of lifetime tau lies at
+#   g = 1/(1+(omega*tau)^2),  s = omega*tau/(1+(omega*tau)^2).
+# A mixture is the intensity-weighted mean of its species' phasors; a
+# species' intensity is its fraction times its lifetime (same brightness
+# per excited-state lifetime). Uncorrelated background is at (0, 0).
+
+- name: "Universal circle"
+  # tau from 0 to infinity: tau = tan(t)/omega, t in [0, pi/2].
+  parametric:
+    where: "omega = 2*pi*f*harmonic*1e-3; tau = tan(t)/omega"
+    x: "1/(1+(omega*tau)**2)"
+    y: "omega*tau/(1+(omega*tau)**2)"
+    t: [0.0, 1.5707963267948966]
+  parameters: {f: 80.0, harmonic: 1}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic}
+  color: "#ffffff"
+
+- name: "Lifetime points"
+  # Single-exponential lifetimes (ns) on the circle, labelled.
+  points:
+    where: "omega = 2*pi*f*harmonic*1e-3"
+    x: "1/(1+(omega*t)**2)"
+    y: "omega*t/(1+(omega*t)**2)"
+    t: [0.5, 1.0, 2.0, 4.0, 8.0]
+    labels: "{t:g} ns"
+  parameters: {f: 80.0, harmonic: 1}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic}
+  color: "#ffd000"
+
+- name: "FRET trajectory"
+  # The donor quenched by FRET: tau_DA = tau0*(1-E), E = t from 0 to 1, from
+  # the donor-only point on the circle to (1, 0). x_DOnly is the species
+  # fraction of donor-only molecules (the curve then bends inside the circle,
+  # toward tau0); bg the fraction of photons from background at (g_bg, s_bg).
+  parametric:
+    where: >-
+      omega = 2*pi*f*harmonic*1e-3;
+      E = t; tauDA = tau0*(1-E);
+      gD = 1/(1+(omega*tau0)**2); sD = omega*tau0*gD;
+      gDA = 1/(1+(omega*tauDA)**2); sDA = omega*tauDA*gDA;
+      fD = where(x_DOnly > 0, x_DOnly/(x_DOnly + (1-x_DOnly)*(1-E)), 0*E);
+      g = fD*gD + (1-fD)*gDA; s = fD*sD + (1-fD)*sDA
+    x: "(1-bg)*g + bg*g_bg"
+    y: "(1-bg)*s + bg*s_bg"
+    t: [0.0, 1.0]
+  parameters: {f: 80.0, harmonic: 1, tau0: 4.0, x_DOnly: 0.0, bg: 0.0, g_bg: 0.0, s_bg: 0.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau0: [0.01, 100.0], x_DOnly: [0.0, 1.0],
+           bg: [0.0, 1.0], g_bg: [-1.0, 1.0], s_bg: [-1.0, 1.0]}
+  fixed: [f, harmonic, g_bg, s_bg]
+  links: {f: f_rep, harmonic: harmonic, tau0: tauD0}
+  color: "#ff5050"
+
+- name: "FRET trajectory (distance)"
+  # A fixed donor-acceptor distance RDA = t (Angstrom): E = 1/(1+(RDA/R0)^6).
+  parametric:
+    where: >-
+      omega = 2*pi*f*harmonic*1e-3;
+      tauDA = tau0*(1 - 1/(1+(t/R0)**6))
+    x: "1/(1+(omega*tauDA)**2)"
+    y: "omega*tauDA/(1+(omega*tauDA)**2)"
+    t: [10.0, 150.0]
+  parameters: {f: 80.0, harmonic: 1, tau0: 4.0, R0: 52.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau0: [0.01, 100.0], R0: [10.0, 150.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic, tau0: tauD0, R0: forster_radius}
+  color: "#ff9050"
+
+- name: "FRET trajectory (Gaussian distance)"
+  # The mean distance t (Angstrom) of a Gaussian distance distribution of
+  # width sigma (the linker cloud): the donor decay is the mixture over the
+  # distribution, so its phasor lies inside the circle.
+  parametric:
+    where: >-
+      omega = 2*pi*f*harmonic*1e-3;
+      z = np.linspace(-3.0, 3.0, 61); w = np.exp(-z**2/2);
+      R = np.clip(t[:, None] + sigma*z[None, :], 1e-3, None);
+      tauR = tau0*(1 - 1/(1+(R/R0)**6)); a = w*tauR;
+      gR = 1/(1+(omega*tauR)**2)
+    x: "np.sum(a*gR, 1)/np.sum(a, 1)"
+    y: "np.sum(a*omega*tauR*gR, 1)/np.sum(a, 1)"
+    t: [10.0, 150.0]
+  parameters: {f: 80.0, harmonic: 1, tau0: 4.0, R0: 52.0, sigma: 6.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau0: [0.01, 100.0], R0: [10.0, 150.0],
+           sigma: [0.0, 50.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic, tau0: tauD0, R0: forster_radius}
+  color: "#ffa0c0"
+
+- name: "Two-component mixing line"
+  # Mixtures of two single-exponential species: the straight chord between
+  # their points; t is the intensity fraction of tau2.
+  parametric:
+    where: >-
+      omega = 2*pi*f*harmonic*1e-3;
+      g1 = 1/(1+(omega*tau1)**2); s1 = omega*tau1*g1;
+      g2 = 1/(1+(omega*tau2)**2); s2 = omega*tau2*g2
+    x: "(1-t)*g1 + t*g2"
+    y: "(1-t)*s1 + t*s2"
+    t: [0.0, 1.0]
+  parameters: {f: 80.0, harmonic: 1, tau1: 0.5, tau2: 4.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau1: [0.01, 100.0], tau2: [0.01, 100.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic}
+  color: "#50c0ff"
+
+- name: "Iso-phase line"
+  # Every point of apparent phase lifetime tau: the ray from the origin
+  # through tau's point on the circle (t = modulation, 0..1).
+  parametric:
+    where: "omega = 2*pi*f*harmonic*1e-3; phi = arctan(omega*tau)"
+    x: "t*cos(phi)"
+    y: "t*sin(phi)"
+    t: [0.0, 1.0]
+  parameters: {f: 80.0, harmonic: 1, tau: 2.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau: [0.01, 100.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic}
+  color: "#888888"
+
+- name: "Iso-modulation arc"
+  # Every point of apparent modulation lifetime tau: the arc of radius
+  # M = 1/sqrt(1+(omega*tau)^2) from the g axis to tau's point (t = 0..1).
+  parametric:
+    where: "omega = 2*pi*f*harmonic*1e-3; M = 1/sqrt(1+(omega*tau)**2); a = t*arctan(omega*tau)"
+    x: "M*cos(a)"
+    y: "M*sin(a)"
+    t: [0.0, 1.0]
+  parameters: {f: 80.0, harmonic: 1, tau: 2.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau: [0.01, 100.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic}
+  color: "#888888"

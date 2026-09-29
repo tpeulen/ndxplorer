@@ -60,7 +60,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     """Open the app, optionally with *path* loaded, and run until the window closes.
 
     *chisurf_rpc* is ``host:port`` of a ChiSurf RPC server (``--chisurf-rpc``):
-    the connection "Send selection to" and the phasor features use. A desktop
+    the connection "Send selection to" uses. A desktop
     option -- a browser page has no socket to open. *size* is the window's
     logical ``(width, height)`` (``--size``); :data:`SIZE` by default.
     """
