@@ -15,5 +15,16 @@
   "eta_Pa_s": 0.001,
   "KB": 1.380649e-23,
   "f_rep": 80.0,
-  "harmonic": 1.0
+  "harmonic": 1.0,
+  "g_irf": 1.0,
+  "s_irf": 0.0,
+  "g_irf (green)": 1.0,
+  "s_irf (green)": 0.0,
+  "g_irf (red)": 1.0,
+  "s_irf (red)": 0.0,
+  "n_bg": 0.0,
+  "n_bg (green)": 0.0,
+  "n_bg (red)": 0.0,
+  "g_bg": 0.0,
+  "s_bg": 0.0
 }

@@ -193,22 +193,57 @@
     (1. - 'FRET efficiency') * 'FRET efficiency'
 
 # =====================================================================
-# Apparent lifetimes from the phasor coordinates (g, s) of a pixel or a
+# Phasor coordinates referenced to the instrument and cleared of background,
+# in tttrlib's DecayPhasor form (modules/imaging/clsm/src/DecayPhasor.cpp):
+# the background is taken out of the measured phasor as tttrlib takes a
+# background histogram out of the counts before the phasor sums (N_bg of the
+# row's N photons are background: f_bg = n_bg / N), and the result is divided
+# by the instrument response phasor (DecayPhasor::g / DecayPhasor::s):
+#   z = g + i s,  z_bg = g_bg + i s_bg,  z_irf = g_irf + i s_irf,
+#   z_corr = (z - f_bg z_bg) / ((1 - f_bg) z_irf)
+#   g corr = (g_irf (g - f_bg g_bg) + s_irf (s - f_bg s_bg)) / ((1 - f_bg) |z_irf|^2)
+#   s corr = (g_irf (s - f_bg s_bg) - s_irf (g - f_bg g_bg)) / ((1 - f_bg) |z_irf|^2)
+# The defaults (g_irf, s_irf) = (1, 0), n_bg = 0 leave g, s unchanged. g_bg,
+# s_bg are the background's own phasor as measured; uncorrelated background
+# spread evenly over the period is at (0, 0). A burst table can compute its
+# background photons from the rate: 'Bg' * 'Duration (ms)' in f_bg (green).
+- f_bg: >-
+    'n_bg' / 'Number of Photons'
+- g corr: >-
+    ('g_irf' * ('g' - 'f_bg' * 'g_bg') + 's_irf' * ('s' - 'f_bg' * 's_bg')) / ((1. - 'f_bg') * ('g_irf'**2. + 's_irf'**2.))
+- s corr: >-
+    ('g_irf' * ('s' - 'f_bg' * 's_bg') - 's_irf' * ('g' - 'f_bg' * 'g_bg')) / ((1. - 'f_bg') * ('g_irf'**2. + 's_irf'**2.))
+- f_bg (green): >-
+    'n_bg (green)' / 'Number of Photons (green)'
+- g corr (green): >-
+    ('g_irf (green)' * ('g (green)' - 'f_bg (green)' * 'g_bg') + 's_irf (green)' * ('s (green)' - 'f_bg (green)' * 's_bg')) / ((1. - 'f_bg (green)') * ('g_irf (green)'**2. + 's_irf (green)'**2.))
+- s corr (green): >-
+    ('g_irf (green)' * ('s (green)' - 'f_bg (green)' * 's_bg') - 's_irf (green)' * ('g (green)' - 'f_bg (green)' * 'g_bg')) / ((1. - 'f_bg (green)') * ('g_irf (green)'**2. + 's_irf (green)'**2.))
+- f_bg (red): >-
+    'n_bg (red)' / 'Number of Photons (red)'
+- g corr (red): >-
+    ('g_irf (red)' * ('g (red)' - 'f_bg (red)' * 'g_bg') + 's_irf (red)' * ('s (red)' - 'f_bg (red)' * 's_bg')) / ((1. - 'f_bg (red)') * ('g_irf (red)'**2. + 's_irf (red)'**2.))
+- s corr (red): >-
+    ('g_irf (red)' * ('s (red)' - 'f_bg (red)' * 's_bg') - 's_irf (red)' * ('g (red)' - 'f_bg (red)' * 'g_bg')) / ((1. - 'f_bg (red)') * ('g_irf (red)'**2. + 's_irf (red)'**2.))
+
+# Apparent lifetimes from the corrected phasor coordinates of a pixel or a
 # burst, at the modulation frequency 'f_rep' (MHz) and 'harmonic' n:
 #   omega = 2*pi*f_rep*n*1e-3 rad/ns,
 #   tau_phi = s / (omega*g),  tau_M = sqrt(1/(g^2 + s^2) - 1) / omega  (ns).
 # A single-exponential decay has tau_phi = tau_M = tau; a mixture has
-# tau_phi < tau_M. Computed only where the phasor columns exist (a missing
-# input skips the equation), per detection channel.
+# tau_phi < tau_M. They read 'g corr' / 's corr': a phase lifetime of the
+# uncorrected coordinates carries the instrument's phase and means nothing.
+# Computed only where the phasor columns exist (a missing input skips the
+# equation), per detection channel.
 - tau_phi: >-
-    's' / ('g' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    's corr' / ('g corr' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
 - tau_m: >-
-    (1. / ('g'**2. + 's'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    (1. / ('g corr'**2. + 's corr'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
 - tau_phi (green): >-
-    's (green)' / ('g (green)' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    's corr (green)' / ('g corr (green)' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
 - tau_m (green): >-
-    (1. / ('g (green)'**2. + 's (green)'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    (1. / ('g corr (green)'**2. + 's corr (green)'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
 - tau_phi (red): >-
-    's (red)' / ('g (red)' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    's corr (red)' / ('g corr (red)' * 2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
 - tau_m (red): >-
-    (1. / ('g (red)'**2. + 's (red)'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)
+    (1. / ('g corr (red)'**2. + 's corr (red)'**2.) - 1.)**0.5 / (2. * 3.141592653589793 * 'f_rep' * 'harmonic' * 1.0e-3)

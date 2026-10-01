@@ -18,8 +18,15 @@ from ndxplorer.settings.bundle import read_settings
 
 SHIPPED = defaults.SHIPPED_DIR
 OLD = time.mktime((2026, 4, 15, 10, 40, 0, 0, 0, -1))  # before the phasor names shipped
-PHASOR_EQUATIONS = ["tau_phi", "tau_m", "tau_phi (green)", "tau_m (green)",
-                    "tau_phi (red)", "tau_m (red)"]
+CHANNELS = ("", " (green)", " (red)")
+#: The phasor equations in shipped order: the corrected coordinates, then the lifetimes.
+PHASOR_EQUATIONS = ([n for c in CHANNELS for n in (f"f_bg{c}", f"g corr{c}", f"s corr{c}")]
+                    + [n for c in CHANNELS for n in (f"tau_phi{c}", f"tau_m{c}")])
+PHASOR_CONSTANTS = (["f_rep", "harmonic"]
+                    + [n for c in CHANNELS for n in (f"g_irf{c}", f"s_irf{c}")]
+                    + [f"n_bg{c}" for c in CHANNELS] + ["g_bg", "s_bg"])
+PHASOR_AXES = {"re:g( \\(.+\\))?", "re:s( \\(.+\\))?", "re:g corr( \\(.+\\))?",
+               "re:s corr( \\(.+\\))?", "re:f_bg( \\(.+\\))?"}
 
 
 def _old_folder(home: pathlib.Path) -> pathlib.Path:
@@ -29,7 +36,7 @@ def _old_folder(home: pathlib.Path) -> pathlib.Path:
         if f.is_file() and f.suffix in (".json", ".yaml"):
             shutil.copy2(f, folder / f.name)
     constants = json.loads((SHIPPED / "mfd.constants.json").read_text())
-    for name in ("f_rep", "harmonic"):
+    for name in PHASOR_CONSTANTS:
         constants.pop(name)
     constants["alpha"] = 0.5  # a user value
     (folder / "mfd.constants.json").write_text(json.dumps(constants))
@@ -67,19 +74,22 @@ def test_old_folder_gets_new_shipped_entries_without_writing(home):
     folder = _old_folder(home)
     before = _snapshot(folder)
     bundle = read_settings(folder / "mfd.settings.json")
-    assert bundle.added["constants"] == ["f_rep", "harmonic"]
+    assert bundle.added["constants"] == PHASOR_CONSTANTS
     assert bundle.constants["f_rep"] == 80.0 and bundle.constants["alpha"] == 0.5
     names = [next(iter(e)) for e in bundle.equations]
     assert bundle.added["equations"] == PHASOR_EQUATIONS
-    assert names[-6:] == PHASOR_EQUATIONS
+    assert names[-len(PHASOR_EQUATIONS):] == PHASOR_EQUATIONS
     assert "Sapp(PIE,S)" not in names  # shipped long before the file was written: a deletion
     assert bundle.axis_settings["Fd/Fa"]["max"] == 99.0  # the user's value wins
-    assert set(bundle.added["axis"]) == {"re:g( \\(.+\\))?", "re:s( \\(.+\\))?"}
+    assert set(bundle.added["axis"]) == PHASOR_AXES
     text = defaults.describe_added(bundle.added)
-    assert text.startswith("Added 2 new constants from the defaults: f_rep, harmonic")
+    assert text.startswith(f"Added {len(PHASOR_CONSTANTS)} new constants from the defaults: "
+                           "f_rep, harmonic")
     assert defaults.describe_added(bundle.added, short=True) == (
-        "Added 2 new constants from the defaults: f_rep, harmonic; 6 new equations; "
-        "2 new axis settings (see the log)")
+        f"Added {len(PHASOR_CONSTANTS)} new constants from the defaults: f_rep, harmonic, "
+        f"g_irf, s_irf, ... ({len(PHASOR_CONSTANTS) - 4} more); "
+        f"{len(PHASOR_EQUATIONS)} new equations; {len(PHASOR_AXES)} new axis settings "
+        "(see the log)")
     assert _snapshot(folder) == before  # nothing written on load
 
 

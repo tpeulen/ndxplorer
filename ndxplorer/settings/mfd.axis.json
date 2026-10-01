@@ -206,5 +206,26 @@
         "n_bins_2d": 51,
         "scale": "lin",
         "min": 0.0
+    },
+    "re:g corr( \\(.+\\))?": {
+        "n_bins_1d": 101.0,
+        "max": 1.0,
+        "n_bins_2d": 51,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "re:s corr( \\(.+\\))?": {
+        "n_bins_1d": 101.0,
+        "max": 0.6,
+        "n_bins_2d": 51,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "re:f_bg( \\(.+\\))?": {
+        "n_bins_1d": 101.0,
+        "max": 1.0,
+        "n_bins_2d": 51,
+        "scale": "lin",
+        "min": 0.0
     }
 }

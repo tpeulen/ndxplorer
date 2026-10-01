@@ -32,8 +32,12 @@ def app(tmp_path, monkeypatch):
 
     a = NdxApp(features=["overlays"])
     g, s = mono(TAUS)
+    # The photon counts are what the background fraction f_bg = n_bg / N of the
+    # corrected coordinates (g corr, s corr) is taken from; tau_phi / tau_m read those.
+    n = np.full(g.shape, 100.0)
     a.model.set_source(DataSource.from_columns({"g": g, "s": s, "g (green)": g,
-                                                "s (green)": s}))
+                                                "s (green)": s, "Number of Photons": n,
+                                                "Number of Photons (green)": n}))
     a.model.set_parameter("x", "g")
     a.model.set_parameter("y", "s")
     _frame(a)
@@ -194,7 +198,8 @@ def test_works_with_chisurf_blocked(tmp_path):
         "assert a.chisurf_rpc is None\n"
         "w = 2*np.pi*80e-3; tau = np.array([1.0, 2.0, 4.0])\n"
         "g = 1/(1+(w*tau)**2); s = w*tau*g\n"
-        "a.model.set_source(DataSource.from_columns({'g': g, 's': s}))\n"
+        "a.model.set_source(DataSource.from_columns({'g': g, 's': s,\n"
+        "                                            'Number of Photons': 0*g + 50}))\n"
         "assert np.allclose(a.model.source.column_values('tau_m'), tau)\n"
         "o = next(f for f in a.features if f.name == 'overlays').overlays\n"
         "o.equation_choice = 'FRET trajectory'; c = o.add_curve()\n"
