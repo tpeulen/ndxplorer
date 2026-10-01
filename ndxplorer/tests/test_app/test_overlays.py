@@ -221,7 +221,7 @@ def test_view_equations_reaches_the_equations_tab(app):
     assert app.run_action("toggle_equations")
     assert app.docks.is_shown("Equations") and app.panel.show_equations
     draw(app)
-    assert f.equations.status_text() == "65 equation(s), all valid"
+    assert f.equations.status_text() == "74 equation(s), all valid"
 
 
 def test_a_bad_equation_is_marked_and_apply_recomputes(app):
@@ -256,7 +256,7 @@ def test_the_table_editor_stages_edits_and_apply_writes_them(app):
     app.run_action("show_data")
     editor = f.window
     draw(app)
-    assert editor.status_text() == "12,237 rows × 58 columns"
+    assert editor.status_text() == "12,237 rows × 61 columns"
     first = app.model.source.column_values("Number of Photons")[0]
     editor.edit_cell(0, "Number of Photons", first + 1000)
     assert app.model.source.column_values("Number of Photons")[0] == first   # staged

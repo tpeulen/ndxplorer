@@ -154,18 +154,21 @@ def image_rows(columns: Sequence[str], column_values) -> Optional[int]:
     return n
 
 
-def background_per_row(path: str, channels: Sequence[int], n_rows: int) -> Dict[str, float]:
+def background_per_row(path: str, channels: Sequence[int], n_rows: int,
+                       table_photons: float) -> Dict[str, float]:
     """``n_bg``: the flat background photons of a measurement per table row.
 
-    The background of the micro-time histogram of *channels* (its flat level
-    times the channels) spread evenly over *n_rows* pixels x frames -- what a
-    pixel collects in dark counts and uncorrelated background at a constant
-    dwell time. Returns ``{"n_bg", "n_bg_total", "n", "f_bg"}``.
+    The background *fraction* of the micro-time histogram of *channels* (its
+    flat level times the channels, over all photons) applied to the photons
+    the table holds (*table_photons*, the sum of its count column) and spread
+    evenly over its *n_rows* pixels x frames -- what a pixel collects in dark
+    counts and uncorrelated background at a constant dwell time. Taking the
+    fraction rather than the count keeps it right for a table made from some
+    of the frames. Returns ``{"n_bg", "f_bg", "n"}``.
     """
     import tttrlib
 
     counts = microtime_histogram(tttrlib.TTTR(str(path)), channels)
-    total = flat_level(counts) * counts.size
     n = float(counts.sum())
-    return {"n_bg": total / max(int(n_rows), 1), "n_bg_total": total, "n": n,
-            "f_bg": total / n if n else float("nan")}
+    f_bg = flat_level(counts) * counts.size / n if n else float("nan")
+    return {"n_bg": f_bg * float(table_photons) / max(int(n_rows), 1), "f_bg": f_bg, "n": n}

@@ -119,6 +119,7 @@ FEATURES: List[str] = [
     "settings",
     "selection",
     "accurate_fret",
+    "phasor_reference",
     "analysis",
     "overlays",
     "playback_export",

@@ -1,0 +1,26 @@
+{
+ "_comment": "FRET > Phasor reference from IRF...: the constants g_irf/s_irf (and n_bg) the corrected phasor equations read, determined from measurements with tttrlib.",
+ "sections": [
+  {"type": "value", "attr": "irf_file", "label": "IRF / reference:", "kind": "str",
+   "description": "TTTR file (.ptu, .ht3, ...) of the instrument response: scatter, a mirror, or a dye of known lifetime."},
+  {"type": "value", "attr": "measurement_file", "label": "Measurement:", "kind": "str",
+   "description": "Optional: the TTTR file the pixel table was made from; its flat background gives n_bg per pixel and frame."},
+  {"type": "button_row", "buttons": [
+   {"label": "Choose IRF…", "action": "choose_irf"},
+   {"label": "Choose measurement…", "action": "choose_measurement"}]},
+  {"type": "value", "attr": "green_channels", "label": "Green channels:", "kind": "str",
+   "description": "Routing channels of the green detectors (empty: skip green)."},
+  {"type": "value", "attr": "red_channels", "label": "Red channels:", "kind": "str",
+   "description": "Routing channels of the red detectors (empty: skip red)."},
+  {"type": "value", "attr": "plain_channels", "label": "Channels of g, s:", "kind": "str",
+   "description": "Routing channels of the unlabelled g, s columns (empty: skip)."},
+  {"type": "value", "attr": "tau_ref", "label": "Reference lifetime (ns):", "kind": "float",
+   "description": "0 for scatter / a mirror; the lifetime of a reference dye otherwise."},
+  {"type": "toggle", "attr": "subtract_background", "label": "Remove the reference's flat background"},
+  {"type": "info", "source": "result_text"},
+  {"type": "button_row", "buttons": [
+   {"label": "Compute", "action": "compute"},
+   {"label": "Apply", "action": "apply"},
+   {"label": "Close", "action": "cancel"}]}
+ ]
+}
