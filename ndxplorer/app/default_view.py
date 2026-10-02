@@ -17,6 +17,11 @@ Order of choice, per axis:
 3. **The first columns that vary**, skipping index-like ones (photon
    indices, pixel coordinates, frame numbers) that make a useless histogram.
 
+In the app, a pixel table with image geometry is then shown as the image
+itself (``features/io.py`` image mode: x pixel by y pixel, weighted by the
+photons), which replaces x and y and keeps z -- the image plus the lifetime
+to gate on. The phasor view is what a pixel table opens on without that.
+
 x, y and z are always three different parameters when the table has three.
 Presets are matched by exact name, ignoring case -- never by substring,
 because ``s (green)`` is a substring of ``Number of Photons (green)``.
