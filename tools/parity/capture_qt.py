@@ -29,9 +29,15 @@ Output (the contract ``compare.py`` and the emtk capture side rely on, see
     parity/qt/<scenario-id>.log.json       steps run, captures, errors, blank checks
     parity/qt/index.json                   summary of the whole run
 
+The Qt window is no longer in this checkout: run against an export of the
+last commit that has it (``LAST_QT_COMMIT``, see ``tools/parity/README.md``)::
+
+    git archive 990ebe2 ndxplorer | tar -x -C /tmp/ndx_qt
+    python tools/parity/capture_qt.py --app-root /tmp/ndx_qt
+
 Usage::
 
-    python tools/parity/capture_qt.py                 # every scenario
+    python tools/parity/capture_qt.py --app-root /tmp/ndx_qt   # every scenario
     python tools/parity/capture_qt.py -s main_mfd_loaded -s gate_rectangle
     python tools/parity/capture_qt.py --list
 
@@ -59,6 +65,10 @@ SCENARIOS = HERE / "scenarios.json"
 DEFAULT_OUT = REPO / "parity" / "qt"
 
 WINDOW_SIZE = (1400, 900)
+
+#: The last commit with the Qt window (``ndxplorer/core/plot_main.py``). The
+#: Qt GUI is deleted after it; replay the scenarios on an export of this commit.
+LAST_QT_COMMIT = "990ebe2"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -939,6 +949,15 @@ def main(argv=None) -> int:
         return 0
     if args.app_root:
         os.environ["NDX_PARITY_APP_ROOT"] = str(args.app_root.resolve())
+    app_root = Path(os.environ.get("NDX_PARITY_APP_ROOT") or REPO)
+    if not (app_root / "ndxplorer" / "core" / "plot_main.py").exists():
+        print(f"No Qt window under {app_root}: the Qt GUI was deleted from this checkout.\n"
+              f"Export the last commit that has it and pass --app-root (README.md, "
+              f"'Recapturing the Qt baseline'):\n"
+              f"  git archive {LAST_QT_COMMIT} ndxplorer | tar -x -C /tmp/ndx_qt\n"
+              f"  {Path(sys.executable).name} {Path(__file__).name} --app-root /tmp/ndx_qt",
+              file=sys.stderr)
+        return 2
     if args.run_one:
         return run_one(args.run_one, args.out)
     return run_all(args.scenario, args.out, args.timeout, args.python)

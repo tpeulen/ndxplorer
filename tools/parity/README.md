@@ -1,13 +1,15 @@
 # ndXplorer Qt → emtk parity harness
 
-The emtk port of ndXplorer (`ndxplorer/app`) has to show that no feature was lost
-compared with the Qt app (`ndxplorer/core/plot_main.py:NDXplorer`). This
-directory holds the evidence:
+The emtk port of ndXplorer (`ndxplorer/app`) had to show that no feature was lost
+compared with the Qt app (`ndxplorer/core/plot_main.py:NDXplorer`). The port reached
+parity and the Qt GUI was then deleted; the emtk app is the only ndX GUI. This
+directory keeps the evidence, and the recipe to rebuild the Qt side of it from
+history (*Recapturing the Qt baseline*):
 
 | File | Role |
 |---|---|
 | `scenarios.json` | Ordered scenarios: data file, steps, and named captures. Both sides replay the same list. |
-| `capture_qt.py` | Replays each scenario on the real Qt window and writes the baseline PNGs to `parity/qt/`. |
+| `capture_qt.py` | Replays each scenario on the real Qt window and writes the baseline PNGs to `parity/qt/`. Needs `--app-root`: an export of a commit that still has the Qt window. |
 | `features.md` | Checklist of every user-facing control/option/column per scenario. The port ticks these off. |
 | `compare.py` | Builds `parity/report.html`: Qt and emtk images side by side, with the status taken from `features.md`. |
 
@@ -20,8 +22,9 @@ the control.
 
 ```bash
 PY=~/mambaforge/envs/arm64/bin/python   # the arm64 conda env: baseline screenshots must come from it
-$PY tools/parity/capture_qt.py                     # all scenarios -> parity/qt/
-$PY tools/parity/capture_qt.py -s gate_rectangle   # one scenario (repeat -s for more)
+git archive 990ebe2 ndxplorer | tar -x -C /tmp/ndx_qt    # see "Recapturing the Qt baseline"
+$PY tools/parity/capture_qt.py --app-root /tmp/ndx_qt                     # all scenarios -> parity/qt/
+$PY tools/parity/capture_qt.py --app-root /tmp/ndx_qt -s gate_rectangle   # one scenario (repeat -s)
 $PY tools/parity/capture_qt.py --list
 python3 tools/parity/compare.py                    # -> parity/report.html (add --embed for one file)
 ```
@@ -46,6 +49,34 @@ $PY tools/parity/capture_qt.py --app-root /tmp/ndx_qt
 ```
 
 `parity/qt/index.json` records which revision each run used (`app_revision`), and every `<id>.log.json` records the `ndxplorer` package that was actually imported.
+
+## Recapturing the Qt baseline
+
+The Qt GUI (`ndxplorer/core/plot_main.py`, `plotting/plot_main.ui`, `ui/`,
+`widgets/`, the pyqtgraph plotting modules) was deleted after commit
+**`990ebe2`** (`990ebe27cc5a4d6041e814a9bc7fb6dcdb3c10cf`, 2026-10-01): the last
+commit with the Qt window, in its final form, next to the finished emtk app. The
+PNGs under `parity/qt/` are gitignored and so are not in history; rebuild them
+from that commit:
+
+```bash
+PY=~/mambaforge/envs/arm64/bin/python   # needs PyQt5, qtpy and pyqtgraph installed
+rm -rf /tmp/ndx_qt && mkdir -p /tmp/ndx_qt
+git archive 990ebe2 ndxplorer | tar -x -C /tmp/ndx_qt
+echo "990ebe2" > /tmp/ndx_qt/.parity-revision
+cd /tmp && $PY ~/dev/chisurf/modules/ndxplorer/tools/parity/capture_qt.py --app-root /tmp/ndx_qt
+```
+
+`capture_qt.py`, `scenarios.json` and the datasets come from this checkout; only
+the `ndxplorer` package comes from the export (each `<id>.log.json` names the
+package it imported, which must be `/tmp/ndx_qt/ndxplorer`). For the pre-port
+look, export `44da1f2` the same way. Without `--app-root` the script refuses to
+run, because this checkout has no Qt window. The run was checked on
+`open_mfd_folder` against the `990ebe2` export.
+
+The `"host": "chisurf"` scenarios build the window through ChiSurf's ndX plugin,
+which hosts the emtk app now. To recapture those as Qt, ChiSurf has to be at a
+commit whose `chisurf/plugins/ndxplorer` still opened the Qt window, too.
 
 **Where the data comes from.**
 
@@ -124,4 +155,4 @@ scratch home (`~` is the real one).
 - `parity/qt/index.json`: a summary of the run.
 - `parity/report.html`: the side-by-side report.
 
-Nothing under `parity/` is committed; it is all in `.gitignore`. The baseline is about 115 PNGs and 10 MB, over the 5 MB budget for committed images, and it can be regenerated exactly from `44da1f2` (see *Baseline provenance*).
+Nothing under `parity/` is committed; it is all in `.gitignore`. The baseline is about 115 PNGs and 10 MB, over the 5 MB budget for committed images, and it can be regenerated exactly from `44da1f2` or `990ebe2` (see *Baseline provenance* and *Recapturing the Qt baseline*).
