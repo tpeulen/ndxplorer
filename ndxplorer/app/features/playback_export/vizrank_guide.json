@@ -1,5 +1,5 @@
 {
-  "_comment": "Guided tour for the ndX ranking panel (emtk; the steps name the invisible Qt anchors ndxplorer.ui.vizrank_panel keeps over the emtk controls). Steps point at real controls and wait for the user to press them; read by chisurf.gui.widgets.tools.guided_tour.",
+  "_comment": "Guided tour for the ndX ranking panel. Each step names a control by its tour anchor; ndxplorer.app.features.playback_export (ANCHORS) maps it to the control's rect. Steps point at real controls and wait for the user to press them.",
   "steps": [
     {
       "title": "What this panel does",

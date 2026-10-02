@@ -13,9 +13,8 @@ take all kinds alike. Its free parameters are a
 :mod:`ndxplorer.core.curve_parameters`), so they have value / fixed / bounds and
 can be crosslinked to another parameter (with ChiSurf present, to a fit's).
 
-Everything here is toolkit-free: both windows -- the Qt one
-(``ndxplorer/plotting/curve_overlay.py``) and the emtk one
-(``ndxplorer/app/features/overlays.py``) -- parse, evaluate, sample and save
+Everything here is toolkit-free: the app's Overlays tab
+(``ndxplorer/app/features/overlays.py``) parses, evaluates, samples and saves
 curves through this module.
 """
 
