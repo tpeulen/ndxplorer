@@ -5,6 +5,8 @@
 
 ndXplorer is an interactive tool for analyzing and visualizing multidimensional data sets. It provides a user-friendly graphical interface for data exploration, dimensionality reduction, clustering, and visualization.
 
+The GUI is an [emtk](https://github.com/tpeulen/emtk) application (`ndxplorer/app`): one window, drawn the same way in a native window, inside ChiSurf and in a browser tab. There is no Qt GUI.
+
 ## Overview
 
 ndXplorer is designed to handle various types of multidimensional data, including:
@@ -15,7 +17,7 @@ ndXplorer is designed to handle various types of multidimensional data, includin
 
 ![ndxplorer GUI][1]
 
-ndxplorer can be used as a standalone application or integrated into other software as a tool.
+ndxplorer can be used as a standalone application or integrated into other software as a tool (ChiSurf hosts the same app).
 
 ## Features
 
@@ -24,19 +26,19 @@ ndxplorer can be used as a standalone application or integrated into other softw
 * **Clustering Analysis**: Perform clustering using algorithms like HDBSCAN and K-means
 * **Data Import/Export**: Read and write data in various formats
 * **Curve Overlay**: Overlay curves on plots for comparison
-* **Parameter Editing**: Interactive editing of visualization parameters
-* **Code Editing**: Built-in code editor for customization
-* **Customizable UI**: Flexible user interface with theme support
+* **Parameter Editing**: Interactive editing of constants, equations and fit parameters
+* **Dockable layout**: Panels that dock, tab and float; the layout is remembered
 
 ## Dependencies
 
 ndXplorer requires the following dependencies:
 * Python
-* PyQt and QtPy (for GUI)
+* emtk (the GUI: native window via wgpu + glfw, or Tk; a browser tab via Pyodide)
 * tttrlib (the table: reading, writing, gating and histogramming)
 * NumPy, scipy (for computation)
-* matplotlib and PyQtGraph (for plotting)
-* UMAP-learn (for dimensionality reduction)
+* matplotlib (publication figures and the report)
+* Pillow (screenshots and the `image` subcommand)
+* UMAP-learn (optional, for dimensionality reduction)
 * Clustering needs nothing extra: HDBSCAN and K-means are tttrlib's kernels, PCA is NumPy
 
 ## Installation
@@ -66,12 +68,20 @@ pip install -e .
 To start ndXplorer, simply run:
 
 ```bash
-ndxplorer
+ndxplorer                                  # or: python -m ndxplorer
+ndxplorer --folder "path/to/burstwise_All 0.1500#30"
+ndxplorer --file data.bur --size 1400x900
+ndxplorer --chisurf-rpc 127.0.0.1:8765     # "Send selection to" ChiSurf's analyses
 ```
+
+`--host native|tk` picks the window: native (wgpu + glfw, the default when
+installed) or Tk. Without a window, `ndxplorer filter` gates a burst folder and
+writes the kept burst IDs, and `ndxplorer image` renders a parameter map
+(`ndxplorer filter --help`, `ndxplorer image --help`).
 
 ### In a browser
 
-The emtk window (`ndxplorer --emtk`) also runs in a browser tab: Pyodide runs
+The same app (`ndxplorer`) also runs in a browser tab: Pyodide runs
 the Python, the browser's WebGPU draws it. Build and serve it with
 
 ```bash
@@ -108,4 +118,4 @@ Contributions to ndXplorer are welcome! Please feel free to submit a Pull Reques
 
 ndXplorer is licensed under the GPL 2.1 License. See the LICENSE file for details.
 
-[1]: doc/gui.png "ndxplorer GUI"
+[1]: doc/gui.png "ndxplorer GUI (the emtk app)"
