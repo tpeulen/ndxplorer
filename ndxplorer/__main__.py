@@ -1,74 +1,19 @@
-import sys
-import os
+"""``python -m ndxplorer`` (and the ``ndxplorer`` / ``ndxplorer-gui`` scripts).
+
+Without a subcommand this opens ndX: the emtk app (:mod:`ndxplorer.app`) in a
+native window (:func:`ndxplorer.app.launch.run`). No Qt is imported. The
+subcommands ``filter`` and ``image`` are the headless CLI (:mod:`ndxplorer.cli`).
+A browser runs the same app through ``python -m ndxplorer.app.web``.
+"""
+
 import click
-from pathlib import Path
-
-# Set the package name for direct execution
-if __name__ == "__main__" and __package__ is None:
-    __package__ = "ndxplorer"
-
-# Check for subcommand before any PyQt imports to allow setting offscreen platform
-if len(sys.argv) > 1 and sys.argv[1] in ("filter", "image"):
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from .logging_config import logging
 
 
-def open_path_like_drop(ndxplorer, path_str):
-    """
-    Open a file or folder using the same logic as file drops.
-    
-    This mimics the behavior of the dropEvent in working_path_helpers.py
-    """
-    from pathlib import Path
-    
-    path = Path(path_str)
-    
-    if not path.exists():
-        logging.error(f"Path does not exist: {path}")
-        return
-    
-    if path.is_dir():
-        # Handle directory like burst_dir drop
-        logging.info(f"Opening as directory: {path}")
-        try:
-            ndxplorer.lineEditWorkingPath.setText(str(path))
-        except Exception:
-            pass
-        try:
-            ndxplorer.open_files(file_type="burst_dir", file_handles=str(path), append=False)
-        except Exception as exc:
-            logging.error(f"Failed to open directory: {exc}")
-    
-    elif path.is_file():
-        # Handle file based on extension like file drops
-        suffix = path.suffix.lower()
-        logging.info(f"Opening as file ({suffix}): {path}")
-        
-        try:
-            if suffix == ".csv":
-                ndxplorer.onOpenCsv(None, filenames=[str(path)], append=False, merge_mode="columns")
-            elif suffix == ".er4":
-                ndxplorer.onOpenChiSurfSampling(filenames=[str(path)], append=False, merge_mode="columns")
-            elif suffix in (".h5", ".hdf5"):
-                ndxplorer.onOpenMfdHdf5(None, filenames=[str(path)], append=False, merge_mode="columns")
-            elif suffix in (".bur", ".txt"):
-                # Try opening as burst files
-                ndxplorer.open_files(file_type="burst", file_handles=str(path), append=False)
-            else:
-                # Default behavior for other file types
-                logging.info(f"Unknown file type {suffix}, trying default open")
-                ndxplorer.open_files(str(path))
-        except Exception as exc:
-            logging.error(f"Failed to open file: {exc}")
-    
-    else:
-        logging.error(f"Path is neither file nor directory: {path}")
-
-
 class MutuallyExclusiveOption(click.Option):
     """Custom option class to enforce mutual exclusivity"""
-    
+
     def __init__(self, *args, **kwargs):
         self.mutually_exclusive = set(kwargs.pop('mutually_exclusive', []))
         super().__init__(*args, **kwargs)
@@ -82,43 +27,31 @@ class MutuallyExclusiveOption(click.Option):
 
 
 @click.group(invoke_without_command=True)
-@click.option('--file', '-f', type=click.Path(exists=True), cls=MutuallyExclusiveOption, 
-              mutually_exclusive=['folder', 'test_data'], help='Open specific file (.bur, .csv, etc.)')
-@click.option('--folder', '-d', type=click.Path(exists=True, file_okay=False, dir_okay=True), 
-              cls=MutuallyExclusiveOption, mutually_exclusive=['file', 'test_data'], 
+@click.option('--file', '-f', type=click.Path(exists=True), cls=MutuallyExclusiveOption,
+              mutually_exclusive=['folder'], help='Open specific file (.bur, .csv, etc.)')
+@click.option('--folder', '-d', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              cls=MutuallyExclusiveOption, mutually_exclusive=['file'],
               help='Open folder containing data files')
-@click.option('--test-data', '-t', is_flag=True, cls=MutuallyExclusiveOption, 
-              mutually_exclusive=['file', 'folder'], 
-              help='Open with default test data path (E:\\eGFP_bad_background\\pxl_eGFP_bad_background)')
-@click.option('--processed-data-id', type=str, help='Database processed data ID')
-@click.option('--experiment-id', type=str, help='Database experiment ID')
-@click.option('--zmq-port', type=int, default=8765, help='ChiSurf ZMQ port')
 @click.option('--chisurf-rpc', type=str, default=None,
-              help='Connect to a ChiSurf RPC server at host:port for phasor / FRET-line '
-                   'features (e.g. 127.0.0.1:8765).')
+              help='Connect to a ChiSurf RPC server at host:port for the "Send selection to" '
+                   'menu (e.g. 127.0.0.1:8765).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable info logging (default is warnings only)')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
-@click.option('--emtk', 'use_emtk', is_flag=True,
-              help='Open the emtk app (ndxplorer.app) instead of the Qt window. No Qt is loaded.')
 @click.option('--host', type=click.Choice(['native', 'tk']), default=None,
-              help='Window for --emtk: native (wgpu + glfw, the default when available) or tk.')
+              help='Window: native (wgpu + glfw, the default when available) or tk.')
 @click.option('--size', 'size', type=str, default=None, metavar='WxH',
-              help='Window size for --emtk in logical pixels, e.g. 992x593 (default 1120x720).')
+              help='Window size in logical pixels, e.g. 992x593 (default 900x600).')
 @click.pass_context
-def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, chisurf_rpc,
-         verbose, debug, use_emtk, host, size):
-    """NDXplorer - Fluorescence Data Explorer
-    
+def main(ctx, file, folder, chisurf_rpc, verbose, debug, host, size):
+    """ndX - Fluorescence Data Explorer
+
     Examples:
       # Open with specific folder
-      ndxplorer --folder "E:\\eGFP_bad_background\\pxl_eGFP_bad_background"
-      
+      ndxplorer --folder "path/to/burstwise_All 0.1500#30"
+
       # Open with specific file
       ndxplorer --file "data.bur"
-      
-      # Use default test data
-      ndxplorer --test-data
-      
+
       # Open empty application
       ndxplorer
     """
@@ -133,90 +66,23 @@ def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_por
         logging.debug("Debug logging enabled")
     elif verbose:
         logging.getLogger().setLevel(logging.INFO)
-    
-    if use_emtk:
-        from .app.launch import run
 
-        from .app.launch import parse_size
+    from .app.launch import parse_size, run
 
-        try:
-            window_size = parse_size(size)
-        except ValueError as exc:
-            raise click.BadParameter(str(exc), param_hint='--size')
-        raise SystemExit(run(path=file or folder, host=host, chisurf_rpc=chisurf_rpc,
-                             size=window_size))
-
-    logging.info("Starting ndxplorer as standalone module")
-
-    from qtpy.QtWidgets import QApplication
-    from .core.plot_main import NDXplorer
-
-    # Create Qt application
-    app = QApplication(sys.argv)
-    import numpy as np
-    np.random.seed(0)
-    
-    # Optional: connect to a ChiSurf RPC server for phasor / FRET-line features.
-    rpc_client = None
-    if chisurf_rpc:
-        from .rpc import connect
-
-        rpc_client = connect(chisurf_rpc, require=False)
-        if rpc_client is None:
-            logging.warning("No ChiSurf RPC server at %s — phasor features disabled", chisurf_rpc)
-
-    # Create main window
-    win = NDXplorer(
-        zmq_cmd_port=zmq_port if processed_data_id else None,
-        processed_data_id=processed_data_id,
-        experiment_id=experiment_id,
-        chisurf_rpc=rpc_client,
-    )
-    win.show()
-    
-    # Handle file/folder arguments using the same logic as file drops
-    if test_data:
-        # Try multiple possible test data paths
-        test_paths = [
-            r"E:\eGFP_bad_background\pxl_eGFP_bad_background",
-            r"Q:\tttr-data\imaging\zeiss\eGFP_bad_background\pxl_eGFP_bad_background",
-            r"E:\dev\chisurf\test\data\pxl_eGFP_bad_background",
-            r"E:\dev\chisurf\modules\ndxplorer\test\data"
-        ]
-        
-        test_path = None
-        for path in test_paths:
-            if os.path.exists(path):
-                test_path = path
-                break
-        
-        if test_path:
-            logging.info(f"Opening test data: {test_path}")
-            open_path_like_drop(win, test_path)
-        else:
-            logging.warning("No test data path found. Available options tried:")
-            for path in test_paths:
-                logging.warning(f"  - {path}")
-            logging.info("Opening empty application instead")
-    elif file:
-        logging.info(f"Opening file: {file}")
-        open_path_like_drop(win, file)
-    elif folder:
-        logging.info(f"Opening folder: {folder}")
-        open_path_like_drop(win, folder)
-    else:
-        logging.info("Opening empty application")
-    
-    # Start the event loop
-    app.exec_()
+    try:
+        window_size = parse_size(size)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint='--size')
+    raise SystemExit(run(path=file or folder, host=host, chisurf_rpc=chisurf_rpc,
+                         size=window_size))
 
 
 # Register subcommands from cli.py
-from .cli import filter_cmd, image_cmd
+from .cli import filter_cmd, image_cmd  # noqa: E402
+
 main.add_command(filter_cmd, name="filter")
 main.add_command(image_cmd, name="image")
 
 
 if __name__ == "__main__":
     main()
-

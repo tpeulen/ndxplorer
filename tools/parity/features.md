@@ -27,7 +27,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 - [x] Controls are disabled until data is loaded (all actions except Import / Select working path, all panels, Screenshot, Contrast, Data, Save parameters, weight, z)
 - [x] Keyboard shortcuts Ctrl+O (Import Text files) and Ctrl+I (Analysis-Folder) — every MENUS shortcut, Ctrl = Command on macOS
 - [x] Opening a folder or file by dropping it on the Path field (or on the window) works like the CLI `--file` / `--folder` — a drop anywhere on the window (native and web hosts; the Tk host has no drop)
-- [~] CLI: `ndx --file`, `--folder`, `--test-data`, `--chisurf-rpc host:port`, `-v` / `--debug`, plus the subcommands `filter` and `image` — `--emtk` takes `--file` / `--folder`, `-v` / `--debug` and `--host native|tk`; `filter` / `image` are headless and unchanged; `--test-data` (hard-coded Windows paths) and `--chisurf-rpc` are Qt-window only for now
+- [~] CLI: `ndx --file`, `--folder`, `--test-data`, `--chisurf-rpc host:port`, `-v` / `--debug`, plus the subcommands `filter` and `image` — `python -m ndxplorer` opens the emtk app (the only GUI; no `--emtk` switch) and takes `--file` / `--folder`, `--chisurf-rpc host:port`, `-v` / `--debug`, `--host native|tk` and `--size WxH`; `filter` / `image` are headless and unchanged; `--test-data` (hard-coded Windows paths) and the MMFDB `--processed-data-id` / `--experiment-id` / `--zmq-port` switches of the Qt window are dropped
 - [x] Every control keeps its tooltip (see the per-scenario items) — each view.json section carries its Qt tooltip as `description`
 - [x] Qt quirk, do not copy: a fresh window holds a hidden 1000-row placeholder dataset (Tau (green), Proximity ratio, r Experimental (green)), so the first Import already asks the merge question
 
@@ -82,7 +82,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## open_bur_cli — Single .bur file via `ndx --file` (CLI / drop path)
 
-- [x] `ndx --file <x.bur>` (and dropping a .bur/.txt) opens a single burst file (`python -m ndxplorer --emtk --file`, a drop on the window or the page)
+- [x] `ndx --file <x.bur>` (and dropping a .bur/.txt) opens a single burst file (`python -m ndxplorer --file`, a drop on the window or the page)
 - [x] .csv → CSV reader, .er4 → sampling, .h5/.hdf5 → MFD HDF5, directory → burst folder (the same dispatch as a drop) — `io.loading.kind_for_paths`; a folder with parameters.json is a sampling folder, .pto a container
 - [x] Tiny files (11 rows) still plot without errors. Fixed on the way: the .bur's trailing tab read as a parameter named "" (both GUIs); the emtk axis chooser picked it and showed an empty x axis
 

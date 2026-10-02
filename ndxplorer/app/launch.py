@@ -1,4 +1,4 @@
-"""Put the emtk app in a window: ``python -m ndxplorer --emtk [--file PATH]``.
+"""Put the emtk app in a window: ``python -m ndxplorer [--file PATH]``.
 
 The app itself (:class:`~ndxplorer.app.frame.NdxApp`) is a control and knows
 no window. This picks one:
