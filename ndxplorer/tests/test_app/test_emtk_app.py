@@ -107,14 +107,16 @@ def test_no_module_of_the_app_names_qt():
 # ----------------------------------------------------------------------- model ---
 
 
-def test_axes_start_on_the_first_parameter_without_defaults(source):
-    """The settings' default axes (Tau (green) ...) are not in this table: every
-    axis starts on the first parameter, as in the Qt window, auto-ranged."""
+def test_axes_without_matching_defaults_follow_the_columns(source):
+    """The settings' default axes (Tau (green) ...) are not in this table: it
+    opens on the view its columns allow (E vs S, see ``app.default_view``),
+    three different parameters, auto-ranged -- not E against E against E, as
+    the Qt window did."""
     from ndxplorer.app.model import ExplorerModel
 
     m = ExplorerModel()
     m.set_source(source)
-    assert (m.x.name, m.y.name, m.z.name) == ("E", "E", "E")
+    assert (m.x.name, m.y.name, m.z.name) == ("E", "S", "Tau")
     assert m.x.lo < 0.2 and m.x.hi > 0.85
 
 

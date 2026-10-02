@@ -171,6 +171,8 @@ class ExplorerModel:
         self.app = None
 
         self.histograms: Optional[Histograms] = None
+        #: Where the axes a table opened on came from (:mod:`.default_view`).
+        self.default_view = ""
         self._dirty = True
         self._revision = 0
 
@@ -242,24 +244,45 @@ class ExplorerModel:
         self.histograms = None
         self.invalidate()
 
+    @property
+    def data_kind(self) -> str:
+        """``"image"`` (a pixel table) or ``"bursts"`` -- what the default axes are kept per."""
+        from .default_view import data_kind
+
+        return data_kind(self.parameter_names)
+
+    def _column_varies(self, name: str) -> bool:
+        """Whether column *name* takes more than one finite value."""
+        try:
+            values = np.asarray(self.source.column_values(name), dtype=float)
+        except Exception:  # noqa: BLE001 - an unreadable column is not a default
+            return False
+        values = values[np.isfinite(values)]
+        return values.size > 1 and float(values.min()) != float(values.max())
+
     def _apply_default_axes(self) -> None:
-        """Axes from the settings' ``default_axes``, else the first parameters."""
+        """The axes a table opens on (:func:`.default_view.choose_axes`).
+
+        The user's saved default axes for this kind of table when they exist
+        in it, else the first fitting view (phasor for images; lifetime vs
+        FRET, E vs S or E vs FRET-2CDE for bursts), else the first columns
+        that vary.
+        """
+        from .default_view import choose_axes
+
         names = self.parameter_names
-        defaults = self.bundle.settings.get("default_axes") or {}
+        chosen = choose_axes(
+            names, self.bundle.settings, varies=self._column_varies,
+            find_saved=lambda ns, w: find_parameter(ns, w) or find_parameter(ns, w, True))
         for key, axis in (("x", self.x), ("y", self.y), ("z", self.z)):
-            wanted = defaults.get(key)
-            chosen = (find_parameter(names, wanted) or find_parameter(names, wanted, True)
-                      if wanted else None)
-            if chosen is None and axis.name not in names:
-                chosen = names[0] if names else ""
-            if chosen:
-                axis.name = chosen
+            if chosen[key]:
+                axis.name = chosen[key]
+            elif axis.name not in names:
+                axis.name = names[0] if names else ""
             self._setup_axis(axis, with_2d=key != "z")
-        weight = defaults.get("weight")
-        chosen = find_parameter(names, weight) or find_parameter(names, weight, True) \
-            if weight else None
-        self.weight_name = chosen or (self.weight_name if self.weight_name in names else
-                                      (names[0] if names else ""))
+        self.weight_name = chosen["weight"] or (self.weight_name if self.weight_name in names else
+                                                (names[0] if names else ""))
+        self.default_view = chosen["view"]
         self._fit_z_range()
 
     def _setup_axis(self, axis: AxisState, with_2d: bool = True) -> None:

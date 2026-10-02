@@ -960,7 +960,8 @@ class SettingsFeature(Feature):
                             lambda path: write_equations(path, equations))
 
     def set_default_axis(self) -> None:
-        """Settings > Set default axis: x, y, z, weight and colormap into the settings file."""
+        """Settings > Set default axis: x, y, z, weight and colormap into the settings file,
+        for the kind of table open (bursts and images keep separate defaults)."""
         from ...settings.persist import write_default_axes
 
         model = self.app.model
@@ -968,7 +969,8 @@ class SettingsFeature(Feature):
             data = write_default_axes(self.settings_file, model.x.name, model.y.name,
                                       model.z.name, weight=model.weight_name or None,
                                       colormap=model.colormap,
-                                      fallback=model.bundle.settings)
+                                      fallback=model.bundle.settings,
+                                      kind=model.data_kind if model.has_data else "bursts")
         except OSError as exc:
             self.message("Set default axis", f"Failed to save default axis settings:\n{exc}")
             return

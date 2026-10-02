@@ -126,14 +126,22 @@ def write_axis_settings(path: PathLike, axis_settings: Mapping[str, Any],
 # ------------------------------------------------------------- default axes
 def with_default_axes(settings: Mapping[str, Any], x: str, y: str, z: str,
                       weight: Optional[str] = None,
-                      colormap: Optional[str] = None) -> Dict[str, Any]:
-    """*settings* with ``default_axes`` (and ``colormap``) set to these."""
+                      colormap: Optional[str] = None, kind: str = "bursts") -> Dict[str, Any]:
+    """*settings* with the default axes for *kind* (and ``colormap``) set to these.
+
+    Burst tables keep theirs under ``default_axes`` (the key it always was),
+    images under ``default_axes_image``: a lifetime-vs-FRET default saved for
+    bursts does not decide how an image opens (see ``app.default_view``).
+    """
+    from ..app.default_view import saved_axes_key
+
+    key = saved_axes_key(kind)
     data = dict(settings or {})
-    axes = dict(data.get("default_axes") or {})
+    axes = dict(data.get(key) or {})
     axes.update({"x": x, "y": y, "z": z})
     if weight:
         axes["weight"] = weight
-    data["default_axes"] = axes
+    data[key] = axes
     if colormap:
         data["colormap"] = colormap
     return data
@@ -141,7 +149,8 @@ def with_default_axes(settings: Mapping[str, Any], x: str, y: str, z: str,
 
 def write_default_axes(settings_path: PathLike, x: str, y: str, z: str,
                        weight: Optional[str] = None, colormap: Optional[str] = None,
-                       fallback: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+                       fallback: Optional[Mapping[str, Any]] = None,
+                       kind: str = "bursts") -> Dict[str, Any]:
     """Settings > Set default axis: store the axes in the settings file.
 
     The file is read first so nothing else in it changes; an unreadable file
@@ -152,11 +161,13 @@ def write_default_axes(settings_path: PathLike, x: str, y: str, z: str,
     current = read_json(path, None)
     if not isinstance(current, dict):
         current = dict(fallback or {})
-    data = with_default_axes(current, x, y, z, weight, colormap)
+    data = with_default_axes(current, x, y, z, weight, colormap, kind=kind)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=4)
-    logging.info("Updated default_axes in '%s' to %s", path, data.get("default_axes"))
+    from ..app.default_view import saved_axes_key
+
+    logging.info("Updated %s in '%s' to %s", saved_axes_key(kind), path, data.get(saved_axes_key(kind)))
     return data
 
 
