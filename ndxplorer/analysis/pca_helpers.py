@@ -33,19 +33,15 @@ run PCA without scikit-learn.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
 
 import numpy as np
 
 from ..logging_config import logging
 
-if False:  # pragma: no cover
-    from ..core.plot_main import NDXplorer
-
 __all__ = [
     "PcaResult",
-    "add_pca_columns",
     "compute_pca",
     "pca_available",
 ]
@@ -235,65 +231,3 @@ def _principal_axes(centred: np.ndarray, n_components: int):
     return loadings, np.asarray(ratio, dtype=float)
 
 
-def add_pca_columns(
-    ndxplorer: "NDXplorer",
-    columns: Sequence[str],
-    n_components: int = 2,
-    standardize: bool = True,
-) -> Optional[PcaResult]:
-    """Compute PCA over *columns* and add ``PC_n`` columns to the data source.
-
-    Mirrors :func:`~ndxplorer.analysis.umap_helpers.add_umap_columns`, including
-    the single write-back: the ``data`` setter reconverts the whole frame, so
-    every component is assigned before it is touched once.
-
-    Parameters
-    ----------
-    ndxplorer : NDXplorer
-        The explorer whose data source is read and extended.
-    columns : sequence of str
-        Columns to decompose. Names absent from the table are skipped.
-    n_components : int
-        Components to retain and add as columns.
-    standardize : bool
-        See :func:`compute_pca`.
-
-    Returns
-    -------
-    PcaResult or None
-        The decomposition, so the caller can show the loadings — which are the
-        answer PCA was asked for. ``None`` if nothing could be computed.
-    """
-    if ndxplorer.data_source is None or ndxplorer.data_source.empty:
-        logging.error("No data available for PCA.")
-        return None
-
-    source = ndxplorer.data_source
-    used: List[str] = []
-    selected: List[np.ndarray] = []
-    for column in columns:
-        values = source.column_values(column)
-        if values is not None:
-            selected.append(values)
-            used.append(column)
-        else:
-            logging.warning("PCA: column '%s' is not in the table; skipping.", column)
-    if len(selected) < 2:
-        logging.error("PCA needs at least two valid columns, got %d.", len(selected))
-        return None
-
-    result = compute_pca(
-        np.column_stack(selected), used,
-        n_components=n_components, standardize=standardize,
-    )
-    if result is None:
-        return None
-
-    for i in range(result.n_components):
-        source.set_column(f"PC_{i + 1}", result.projections[:, i])
-    try:
-        ndxplorer.refresh_axis_comboboxes_preserving_selection()
-    except Exception:  # pragma: no cover - headless use has no combo boxes
-        logging.debug("PCA: could not refresh axis combo boxes", exc_info=True)
-    logging.info("PCA added %d columns\n%s", result.n_components, result.report())
-    return result

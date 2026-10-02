@@ -30,7 +30,7 @@ Manual cache control:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 import numpy as np
 
 from ..logging_config import logging
@@ -84,36 +84,8 @@ except ImportError:
     enable_balanced = None
     PerformanceConfig = None
 
-if TYPE_CHECKING:
-    from ..core.plot_main import NDXplorer
-
 
 # ---- High-level optimization functions ----
-
-def optimize_ndxplorer(ndxplorer: "NDXplorer", mode: str = "balanced") -> None:
-    """
-    Apply performance optimizations to an NDXplorer instance.
-    
-    Parameters
-    ----------
-    ndxplorer : NDXplorer
-        NDXplorer instance to optimize
-    mode : str
-        Optimization mode: 'balanced', 'high_performance', or 'low_memory'
-    """
-    if mode == "high_performance" and _HAVE_CONFIG and enable_high_performance:
-        enable_high_performance()
-    elif mode == "low_memory" and _HAVE_CONFIG and enable_low_memory:
-        enable_low_memory()
-    elif mode == "balanced" and _HAVE_CONFIG and enable_balanced:
-        enable_balanced()
-    
-    # Mark instance as optimized
-    ndxplorer._performance_optimized = True
-    
-    logging.info(f"[Performance] NDXplorer optimized with mode: {mode}")
-    log_available_features()
-
 
 def log_available_features() -> None:
     """Log which performance features are available."""
@@ -232,57 +204,6 @@ def compute_percentile_range_optimized(
         return vmin, vmax
 
 
-# ---- Memory usage reporting ----
-
-def estimate_memory_usage(ndxplorer: "NDXplorer") -> dict:
-    """
-    Estimate memory usage of ndxplorer components.
-    
-    Returns
-    -------
-    usage : dict
-        Memory usage breakdown in MB
-    """
-    usage = {}
-    
-    # Data source
-    source = getattr(ndxplorer, 'data_source', None)
-    if source is not None:
-        if hasattr(source, 'store'):
-            try:
-                usage['data_values_mb'] = source.store.nbytes() / (1024 * 1024)
-            except Exception:
-                pass
-    
-    # Cached values, now owned by the data manager rather than kept in a second
-    # set of attributes on the window.
-    manager = getattr(ndxplorer, 'data_manager', None)
-    cached = manager.cache.get_cache_value('filtered_values') if manager is not None else None
-    if cached is not None:
-        if isinstance(cached, np.ndarray):
-            usage['cached_values_mb'] = cached.nbytes / (1024 * 1024)
-    
-    # Cache manager
-    cache_stats = get_cache_stats()
-    if cache_stats:
-        for cache_name, stats in cache_stats.items():
-            if 'memory_mb' in stats:
-                usage[f'{cache_name}_cache_mb'] = stats['memory_mb']
-    
-    # Total
-    usage['total_mb'] = sum(v for k, v in usage.items() if k.endswith('_mb'))
-    
-    return usage
-
-
-def log_memory_usage(ndxplorer: "NDXplorer") -> None:
-    """Log memory usage breakdown."""
-    usage = estimate_memory_usage(ndxplorer)
-    logging.info("[Performance] Memory usage:")
-    for key, value in usage.items():
-        logging.info(f"  {key}: {value:.2f} MB")
-
-
 # ---- Performance benchmarking ----
 
 def benchmark_histogram(
@@ -346,7 +267,6 @@ def log_benchmark_results(data_size: int = 1000000) -> None:
 
 __all__ = [
     # Main functions
-    'optimize_ndxplorer',
     'log_available_features',
     'get_cache_stats',
     'clear_caches',
@@ -357,9 +277,7 @@ __all__ = [
     'compute_histogram_2d_optimized',
     'compute_percentile_range_optimized',
     
-    # Memory and benchmarking
-    'estimate_memory_usage',
-    'log_memory_usage',
+    # Benchmarking
     'benchmark_histogram',
     'log_benchmark_results',
     

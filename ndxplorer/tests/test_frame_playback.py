@@ -8,7 +8,7 @@ filters:
   selected a global row number indexed a per-frame weight array --
   ``IndexError: index 89979 is out of bounds for axis 0 with size 45037``, once
   per redraw, for as long as playback ran;
-* ``get_bins`` returned ``n`` edges for ``n`` bins, so a histogram was always
+* the bin edges were ``n`` for ``n`` bins, so a histogram was always
   one bin short and every bin slightly too wide.
 
 Neither is visible without weights and a frame column, which is exactly what an
@@ -20,7 +20,6 @@ import pytest
 
 from ndxplorer.utils.histogram_computation import (
     Axis, HistogramAxes, compute_histograms)
-from ndxplorer.utils.histogram_helpers import get_bins
 
 N_FRAMES, N_ROWS_PER_FRAME = 4, 250
 
@@ -111,24 +110,22 @@ def test_the_marginals_and_the_map_describe_one_population(source):
 
 @pytest.mark.parametrize("n_bins", [1, 2, 8, 256])
 def test_n_bins_means_n_bins(n_bins):
-    """``get_bins`` returns EDGES, and n bins need n + 1 of them.
+    """An axis of n bins has n + 1 EDGES.
 
-    It returned n, so a histogram was one bin short and each bin was n/(n-1) of
-    the width asked for. On a pixel axis that is a bin sliding across the image
-    rather than sitting on a pixel.
+    The old edge helper returned n, so a histogram was one bin short and each
+    bin was n/(n-1) of the width asked for. On a pixel axis that is a bin
+    sliding across the image rather than sitting on a pixel.
     """
-    edges_1d, edges_2d = get_bins(None, (0.0, float(n_bins)), "linear",
-                                  n_bins, n_bins)
-    assert len(edges_1d) == n_bins + 1
-    assert len(edges_2d) == n_bins + 1
+    edges = Axis(index=0, bins=n_bins, lo=0.0, hi=float(n_bins)).edges
+    assert len(edges) == n_bins + 1
     # One unit per bin, so bin k is exactly pixel k.
-    np.testing.assert_allclose(np.diff(edges_2d), 1.0)
+    np.testing.assert_allclose(np.diff(edges), 1.0)
 
 
 def test_log_bins_are_also_n_plus_one():
-    edges_1d, edges_2d = get_bins(None, (1.0, 1000.0), "log", 3, 6)
-    assert len(edges_1d) == 4 and len(edges_2d) == 7
-    np.testing.assert_allclose(edges_1d, [1.0, 10.0, 100.0, 1000.0])
+    edges = Axis(index=0, bins=3, lo=1.0, hi=1000.0, scale="log").edges
+    assert len(edges) == 4
+    np.testing.assert_allclose(edges, [1.0, 10.0, 100.0, 1000.0])
 
 
 def test_weighting_by_column_zero_is_not_the_same_as_not_weighting(source):

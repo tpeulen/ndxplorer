@@ -1,4 +1,4 @@
-"""Axis-related helpers extracted from plot_main."""
+"""Axis helpers: image axes, frame column, robust ranges, saved axis settings."""
 
 from __future__ import annotations
 
@@ -122,106 +122,6 @@ def image_axes(data_source) -> Optional[ImageAxes]:
         ny=_pixels(data_source.column_view(names.index(y))),
         weight=weight, frame=frame_column(names),
     )
-
-
-def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
-    """Show an image table as an image in the Qt window (see :func:`image_axes`)."""
-    logging.debug("check_and_set_image_axes()")
-    try:
-        image = image_axes(ndxplorer.data_source)
-    except Exception as exc:
-        logging.debug(f"Could not get data_source: {exc}")
-        return False
-    if image is None:
-        logging.info("Image detection: no X pixel / Y pixel columns")
-        return False
-    logging.info("Image data detected: %sx%s pixels on %s, %s", image.nx, image.ny,
-                 image.x, image.y)
-
-    # Exact matching, so "X pixel" does not find "T pixel". Even if setting an
-    # axis fails the image setup goes on (and returns True), so the settings'
-    # default axes do not override it.
-    for key, name in (("x", image.x), ("y", image.y)):
-        if not ndxplorer.plot_control.set_axis_by_name(key, name, match_contains=False,
-                                                        block_signals=True):
-            logging.warning("Failed to set %s axis to %s", key.upper(), name)
-
-    if image.weight and ndxplorer.plot_control.set_axis_by_name(
-            "weight", image.weight, match_contains=True, block_signals=True):
-        try:
-            ndxplorer.weight_param = image.weight
-            ndxplorer.weight_enabled = True
-            ndxplorer.checkBoxWeight.setChecked(True)
-            logging.info("Automatically enabled weight checkbox for %s", image.weight)
-        except Exception as exc:  # pragma: no cover - defensive
-            logging.debug("Failed to enable weight parameter: %s", exc)
-
-    pc = ndxplorer.plot_control
-    pc.n_xhist_1d = pc.n_xhist_2d = image.nx
-    pc.n_yhist_1d = pc.n_yhist_2d = image.ny
-    for name, value in (("spinBoxNXHist1D", image.nx), ("spinBoxNYHist1D", image.ny),
-                        ("spinBoxNXHist2D", image.nx), ("spinBoxNYHist2D", image.ny)):
-        if hasattr(pc, name):
-            getattr(pc, name).setValue(value)
-    pc.xmin, pc.xmax = image.x_range
-    pc.ymin, pc.ymax = image.y_range
-    # The frame selector is set up for every load by ``plot_control.setup_playback``.
-    return True
-
-
-def apply_default_axes_from_settings(ndxplorer: "NDXplorer") -> bool:
-    logging.debug("apply_default_axes_from_settings()")
-    try:
-        defaults = ndxplorer.settings.get("default_axes", {}) if hasattr(ndxplorer, "settings") else {}
-    except Exception:
-        defaults = {}
-    if not isinstance(defaults, dict) or not defaults:
-        logging.debug("No default_axes configured in settings; skipping.")
-        return False
-
-    try:
-        param_names = list(ndxplorer.data_source.parameter_names)
-    except Exception:
-        param_names = []
-
-    changed = False
-
-    def _set_axis(ax_key, axis_name):
-        if not axis_name or not isinstance(axis_name, str):
-            return False
-        if axis_name in param_names:
-            ok = ndxplorer.plot_control.set_axis_by_name(ax_key, axis_name, match_contains=False, block_signals=True)
-            return bool(ok)
-        ok = ndxplorer.plot_control.set_axis_by_name(ax_key, axis_name, match_contains=True, block_signals=True)
-        return bool(ok)
-
-    for ax_key in ("x", "y", "z"):
-        name = defaults.get(ax_key)
-        if _set_axis(ax_key, name):
-            changed = True
-
-    wname = defaults.get("weight")
-    if wname and _set_axis("weight", wname):
-        changed = True
-
-    if changed:
-        try:
-            ndxplorer.plot_control.on_x_axis_changed()
-        except Exception:
-            pass
-        try:
-            ndxplorer.plot_control.on_y_axis_changed()
-        except Exception:
-            pass
-        try:
-            ndxplorer.plot_control.on_z_axis_changed()
-        except Exception:
-            pass
-        logging.info("Applied default axes from settings.")
-        return True
-
-    logging.debug("No default axes were applied (names may not match current dataset).")
-    return False
 
 
 def _filtered_values(values, scale: str):

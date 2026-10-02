@@ -1,22 +1,20 @@
-"""Publication-quality Matplotlib re-render of the NDXplorer plot view.
+"""Publication-quality Matplotlib re-render of the ndX plot view.
 
-The interactive plots are pyqtgraph (screen-tuned). For print/publication we
+The interactive plots are emtk (screen-tuned). For print/publication we
 re-draw the *same data* in Matplotlib: a 2D density panel with its X/Y marginal
 histograms and a colorbar, with real axis labels, ticks and fonts, exported as
 vector (PDF/SVG) or high-DPI raster.
 
-The renderer core (:func:`render_publication_figure`) is pure and headless — it
-takes arrays, not a GUI object — so it is unit-testable without Qt. The thin
-:func:`render_current_view` adapter pulls those arrays off a live NDXplorer.
+The renderer (:func:`render_publication_figure`) is pure and headless — it
+takes arrays, not a GUI object — so the app, a script and a test call it alike.
 """
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
-from ..logging_config import logging
 
 # Non-interactive backend; safe to import without a display or running GUI.
 import matplotlib
@@ -189,43 +187,4 @@ def _draw_marginal(ax, marginal: Marginal, *, orientation: str, log_axis: bool) 
             ax.set_yscale("log")
 
 
-def render_current_view(ndxplorer, *, dpi: int = 300, with_marginals: bool = True,
-                        figsize: Tuple[float, float] = (6.0, 6.0)) -> Figure:
-    """Build a publication figure from a live NDXplorer's current view.
-
-    Reads the already-computed histograms off ``ndxplorer._histogram`` (handling
-    both the Histogram-object and the tuple storage forms) plus axis labels,
-    colormap and log-scale settings from the plot control.
-    """
-    from ..plotting.histograms import _as_1d_arrays, _as_2d_arrays
-
-    hist = getattr(ndxplorer, "_histogram", {}) or {}
-    two_d = _as_2d_arrays(hist.get("2d"))
-    if two_d is None:
-        raise ValueError("No 2D histogram is available to export; update the plot first.")
-    H, x_edges, y_edges = two_d
-
-    def _marginal(key):
-        arrs = _as_1d_arrays(hist.get(key))
-        return (arrs[0], arrs[1]) if arrs is not None else None
-
-    pc = getattr(ndxplorer, "plot_control", None)
-    x_label = getattr(pc, "x_label", "") if pc is not None else ""
-    y_label = getattr(pc, "y_label", "") if pc is not None else ""
-    x_log = str(getattr(pc, "scale_x", "linear")) == "log"
-    y_log = str(getattr(pc, "scale_y", "linear")) == "log"
-    cmap = getattr(ndxplorer, "color_map_name", None) or getattr(ndxplorer, "cmap", None) or "viridis"
-
-    logging.info("Rendering publication figure (%s vs %s, dpi=%s)", x_label, y_label, dpi)
-    return render_publication_figure(
-        H, x_edges, y_edges,
-        x_marginal=_marginal("x"),
-        y_marginal=_marginal("y"),
-        x_label=x_label, y_label=y_label,
-        cmap=str(cmap),
-        x_log=x_log, y_log=y_log,
-        dpi=dpi, with_marginals=with_marginals, figsize=figsize,
-    )
-
-
-__all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure", "render_current_view"]
+__all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure"]

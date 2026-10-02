@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 _SUBMODULES = (
-    "axis_helpers", "histogram_helpers", "histogram_export", "lazy_imports",
+    "axis_helpers", "histogram_export", "lazy_imports",
     "performance_optimizations",
 )
 

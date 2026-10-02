@@ -23,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ndxplorer.analysis.pca_helpers import add_pca_columns, compute_pca, pca_available
+from ndxplorer.analysis.pca_helpers import compute_pca, pca_available
 from ndxplorer.core.data_source import DataSource
 from ndxplorer.analysis import structure
 
@@ -256,40 +256,33 @@ def test_pca_reports_rather_than_only_projects():
     json.loads(json.dumps(payload))
 
 
-def test_pca_needs_at_least_two_columns():
-    """One column has no components to find; say so rather than return garbage."""
-
-    class _Explorer:
-        def __init__(self, source):
-            self.data_source = source
-
+def test_columns_missing_from_the_table_are_skipped_and_reported():
+    """A chosen column the table does not have is left out, and the caller is
+    told which columns the matrix holds, so components are never labelled with
+    a column that was not decomposed."""
     source = DataSource.from_columns({"only": np.arange(10.0)})
-    assert add_pca_columns(_Explorer(source), ["only", "missing"]) is None
+    data, used = structure.column_matrix(source, ["only", "missing"])
+    assert used == ["only"]
+    assert data.shape == (10, 1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Integration: does the result reach the table?
 # ──────────────────────────────────────────────────────────────────────────────
 def test_pca_columns_land_in_the_data_source(blob_source):
-    """``PC_1``/``PC_2`` must appear in the frame and be usable as axes."""
-
-    class _Explorer:
-        def __init__(self, source):
-            self.data_source = source
-            self.refreshed = False
-
-        def refresh_axis_comboboxes_preserving_selection(self):
-            self.refreshed = True
-
-    explorer = _Explorer(blob_source)
-    result = add_pca_columns(explorer, ["x", "y", "noise"], n_components=2)
-
+    """``PC_1``/``PC_2`` must appear in the table and be usable as axes: the
+    app's path, :func:`structure.column_matrix` -> :func:`compute_pca` ->
+    :func:`structure.store_projection`."""
+    data, used = structure.column_matrix(blob_source, ["x", "y", "noise"])
+    result = compute_pca(data, used, n_components=2)
     assert result is not None
-    source = explorer.data_source
+
+    names = structure.store_projection(blob_source, "PC", result.projections)
+    assert names == ["PC_1", "PC_2"]
+    source = blob_source
     assert "PC_1" in source.parameter_names and "PC_2" in source.parameter_names
     assert len(source.column_values("PC_1")) == len(source.column_values("x"))
     assert np.isfinite(source.column_values("PC_1")).all()
-    assert explorer.refreshed, "the axis combo boxes were never refreshed"
 
 
 def test_pca_separates_the_blobs_it_was_given(blob_source):
