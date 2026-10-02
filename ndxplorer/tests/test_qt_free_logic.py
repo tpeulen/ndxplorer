@@ -191,13 +191,28 @@ def test_an_unknown_colormap_is_grey():
 
 
 def test_the_luts_match_pyqtgraph():
-    """Same stops, same interpolation: the Qt image and the emtk texture agree."""
+    """The maps copied from pyqtgraph give its colours: same stops, same interpolation."""
     pg = pytest.importorskip("pyqtgraph")
     for name in ("viridis", "inferno", "CET-L9", "PAL-relaxed"):
         ours = colormap_lut.lookup_table(name)
         theirs = (np.clip(pg.colormap.get(name).map(np.linspace(0, 1, 256), mode="float"),
                           0, 1) * 255).astype(np.uint8)
         assert np.array_equal(ours, theirs), name
+
+
+def test_every_pyqtgraph_map_is_offered_without_pyqtgraph():
+    """The copied folder holds the maps pyqtgraph ships; none needs pyqtgraph."""
+    import importlib.util
+    import pathlib
+
+    assert colormap_lut.MAPS_DIR.is_dir()
+    assert {"viridis", "CET-L9", "PAL-relaxed"} <= set(colormap_lut.available_colormaps())
+    spec = importlib.util.find_spec("pyqtgraph")
+    if spec is None:
+        return
+    theirs = pathlib.Path(spec.submodule_search_locations[0]) / "colors" / "maps"
+    names = {p.stem for p in theirs.iterdir() if p.suffix.lower() in (".csv", ".hex")}
+    assert names == set(colormap_lut.available_colormaps())
 
 
 def test_applying_a_colormap_clips_to_the_limits():

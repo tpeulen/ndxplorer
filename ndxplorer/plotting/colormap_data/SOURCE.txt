@@ -1,0 +1,7 @@
+The colormap files in this folder are copied unchanged from pyqtgraph 0.14.0
+(pyqtgraph/colors/maps; pyqtgraph is MIT-licensed), so ndXplorer offers the
+same maps without pyqtgraph installed. The colour data keep their own
+licences, in the two text files beside them: the CET maps (CET-*.csv) are
+CC-BY 4.0 (Peter Kovesi, https://colorcet.com), viridis, magma, plasma,
+inferno and cividis are CC0. ndxplorer/tests/test_qt_free_logic.py compares
+the lookup tables with pyqtgraph's where pyqtgraph is installed.

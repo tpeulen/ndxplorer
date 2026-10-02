@@ -1,21 +1,19 @@
 """Colormaps as lookup tables, without Qt.
 
 The colormaps ndXplorer offers are pyqtgraph's: CSV files of RGB stops
-(viridis, the CET maps, ...) and ``.hex`` palettes shipped in
-``pyqtgraph/colors/maps``. Asking ``pyqtgraph.colormap`` for them imports
-pyqtgraph and therefore Qt. The files themselves are plain text, so they are
-read here directly -- located through the package spec, which does not import
-it -- and interpolated exactly as ``pyqtgraph.ColorMap`` does: stops evenly
-spaced over ``[0, 1]``, linear in between.
+(viridis, the CET maps, ...) and ``.hex`` palettes, copied unchanged into
+``colormap_data/`` beside this module (where they come from and their
+licences: ``colormap_data/SOURCE.txt``). They are plain text, read here and
+interpolated exactly as ``pyqtgraph.ColorMap`` does: stops evenly spaced over
+``[0, 1]``, linear in between. Neither pyqtgraph nor Qt is needed.
 
-Where pyqtgraph is not installed at all (a browser), the maps matplotlib also
+Should the folder be missing (a stripped install), the maps matplotlib also
 ships -- viridis, plasma, inferno, magma, cividis, turbo -- come from there.
 """
 
 from __future__ import annotations
 
 import functools
-import importlib.util
 import pathlib
 from typing import List, Optional
 
@@ -23,24 +21,18 @@ import numpy as np
 
 __all__ = ["available_colormaps", "colormap_stops", "lookup_table", "apply_colormap"]
 
-#: Maps matplotlib provides under the same name, for a process without pyqtgraph.
+#: Maps matplotlib provides under the same name, should the folder be missing.
 _MATPLOTLIB_MAPS = ("cividis", "inferno", "magma", "plasma", "turbo", "viridis")
+
+
+#: The colormap files (copied from pyqtgraph, see ``colormap_data/SOURCE.txt``).
+MAPS_DIR = pathlib.Path(__file__).resolve().with_name("colormap_data")
 
 
 @functools.lru_cache(maxsize=1)
 def _maps_dir() -> Optional[pathlib.Path]:
-    """pyqtgraph's colormap data folder, found without importing pyqtgraph."""
-    try:
-        spec = importlib.util.find_spec("pyqtgraph")
-    except (ImportError, ValueError):
-        return None
-    if spec is None or not spec.submodule_search_locations:
-        return None
-    for location in spec.submodule_search_locations:
-        folder = pathlib.Path(location) / "colors" / "maps"
-        if folder.is_dir():
-            return folder
-    return None
+    """The folder of colormap files, or ``None`` when it is missing."""
+    return MAPS_DIR if MAPS_DIR.is_dir() else None
 
 
 @functools.lru_cache(maxsize=1)

@@ -90,7 +90,7 @@ include = ["ndxplorer*"]
     "*.dll", "*.so", "*.pyd",
     "*.txt"
 ]
-"ndxplorer.plotting" = ["*.json"]
+"ndxplorer.plotting" = ["*.json", "colormap_data/*"]
 "ndxplorer.analysis" = ["*.json"]
 # The emtk app's view specs, those of its feature modules and its resources
 # (plain folders beside the modules, not packages -- so they are named from
