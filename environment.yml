@@ -3,12 +3,8 @@ channels:
   - conda-forge
 dependencies:
   - pip
-  - qt >=5
-  - qtpy
-  - pyqt
   - numpy
   - pyyaml
-  - pyqtgraph
   - pathlib2
   - typing-extensions
   - scipy

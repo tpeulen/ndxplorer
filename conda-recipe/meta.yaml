@@ -33,11 +33,9 @@ requirements:
     - toml
   run:
     - python
-    - pyqt
-    - qtpy
     - numpy
     - pyyaml
-    - pyqtgraph
+    - pillow
     - typing-extensions
     - matplotlib
     - scipy
@@ -45,10 +43,9 @@ requirements:
     # Mask image I/O: TIFF via tttrlib's bundled libtiff.
     - tttrlib >=0.27
     # NOT chisurf, deliberately -- although pyproject.toml names it, and it is a
-    # real requirement for region gates, the parameter tables and the table
-    # editor. There is no chisurf conda package on any channel this recipe
-    # builds against, so listing it here does not document the coupling, it
-    # fails the build. The `test:` block below only imports `ndxplorer` and
+    # real requirement for region gates. There is no chisurf conda package on
+    # any channel this recipe builds against, so listing it here does not
+    # document the coupling, it fails the build. The `test:` block below only imports `ndxplorer` and
     # launches the GUI, neither of which touches chisurf, so the package still
     # builds and verifies. Add it here once chisurf is published.
 

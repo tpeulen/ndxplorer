@@ -30,10 +30,8 @@ classifiers = [
 dependencies = [
     "numpy",
     "scipy",
+    # Publication figures and the report (ndxplorer.export).
     "matplotlib",
-    "qtpy",
-    "PyQt5",
-    "pyqtgraph",
     "PyYAML",
     "click>=8.0.0",
     # Mask images (ndxplorer.utils.mask_helpers) are TIFF, read and written
@@ -46,12 +44,9 @@ dependencies = [
     # is needed; PCA is NumPy.
     "tttrlib>=0.27",
     # ChiSurf. Not an optional integration: region/lasso gates are
-    # `chisurf.core.roi` shapes (ndxplorer.core.region_selection), the parameter
-    # and constants tables are `chisurf.core.fitting.parameter` groups, and the
-    # table editor, curve-fit dialog and glyphs come from `chisurf.gui`.
-    # It was used in all of those places and declared in none, so a clean
-    # install imported fine and then raised ModuleNotFoundError the first time
-    # somebody drew a lasso.
+    # `chisurf.core.roi` shapes (ndxplorer.core.region_selection). It was used
+    # there and declared nowhere, so a clean install imported fine and then
+    # raised ModuleNotFoundError the first time somebody drew a lasso.
     #
     # ChiSurf is on no package index; it and ndXplorer are installed from the
     # same source tree, which is why the documented install is
@@ -60,9 +55,12 @@ dependencies = [
     # install time is the better half of the trade against a silent one at the
     # first drawn gate.
     "chisurf",
-    # emtk draws the ranking panel ("Find informative projections"): its layout
-    # is a view.json that emtk renders, hosted in a Qt window.
+    # emtk is the GUI: `python -m ndxplorer` opens the emtk app
+    # (ndxplorer.app) in a native window, a Tk window or a browser tab. There is
+    # no Qt GUI any more, so no Qt binding and no pyqtgraph.
     "emtk",
+    # The app's splash/screenshots and the CLI's `image` PNGs.
+    "Pillow",
 ]
 
 [project.urls]
