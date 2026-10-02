@@ -134,3 +134,20 @@ def test_model_opens_tables_on_their_view():
     assert model.data_kind == "image"
     # ndX's equations add the IRF-corrected phasor, which is preferred.
     assert (model.x.name, model.y.name, model.z.name) == ("g corr (green)", "s corr (green)", "Tau (green)")
+
+
+def test_an_axis_without_settings_drops_the_previous_bins():
+    """Opening a burst table after an image: S must not keep the image's 256
+    pixel bins (the E-S map turned into stripes), nor its scale."""
+    pytest.importorskip("tttrlib")
+    from ndxplorer.app.model import DEFAULT_BINS_1D, DEFAULT_BINS_2D, ExplorerModel
+    from ndxplorer.core.data_source import DataSource
+
+    rng = np.random.default_rng(1)
+    model = ExplorerModel()
+    model.set_source(DataSource.from_columns({n: rng.random(50) for n in IMAGE}))
+    model.y.bins_1d = model.y.bins_2d = 256
+    model.y.log = True
+    model.set_source(DataSource.from_columns({n: rng.random(50) for n in ALEX}))
+    assert model.y.name == "Stoichiometry"
+    assert (model.y.bins_1d, model.y.bins_2d, model.y.log) == (DEFAULT_BINS_1D, DEFAULT_BINS_2D, False)

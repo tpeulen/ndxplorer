@@ -289,6 +289,13 @@ class ExplorerModel:
         """Bins, range and scale for the axis's parameter: settings, else auto."""
         setup = settings_for_axis(axis.name, self.axis_settings, with_2d=with_2d)
         if setup is None:
+            # No settings for this parameter: defaults, not the previous
+            # parameter's bins and scale (an image's 256 pixel bins left on S
+            # turned an E-S map into stripes).
+            axis.bins_1d = DEFAULT_BINS_1D
+            if with_2d:
+                axis.bins_2d = DEFAULT_BINS_2D
+            axis.log = False
             axis.lo, axis.hi = self._auto_range(axis)
             return
         axis.bins_1d = int(setup["bins_1d"])
