@@ -1,10 +1,9 @@
 """Install a package into the running environment: conda (or mamba), else pip. Qt-free.
 
-Both GUIs offer to install an optional backend (umap-learn, napari)
-when a method needs it; this is the part that does it -- finding the solver,
-running it (elevated on Windows when the environment is not writable), and
-testing the import afterwards. The Qt prompts live in
-:mod:`ndxplorer.deps_installer`; the emtk app runs :func:`install_task` as an
+The app offers to install an optional backend (umap-learn, napari) when a
+method needs it; this is the part that does it -- finding the solver, running
+it (elevated on Windows when the environment is not writable), and testing the
+import afterwards. The emtk app runs :func:`install_task` as an
 :mod:`emtk.tasks` task and shows its log.
 
 Nothing here can work in a browser: there is no process to start.

@@ -7,8 +7,8 @@ ChiSurf exposes several *line* providers that all return the same **LineSet** sh
 - ``fret_line.overlays`` — static/dynamic/WLC/mixture FRET lines for smFRET histograms
 
 :class:`OverlayProvider` is the shared client-side interface; :class:`PhasorLines` and
-:class:`FretLines` are the two providers, so ndXplorer draws phasor lines and FRET
-lines through one uniform path (its ``CurveOverlayWidget``). Chisurf-free: only the
+:class:`FretLines` are the two providers, so a client reads phasor lines and FRET
+lines through one uniform path. Chisurf-free: only the
 :class:`~ndxplorer.rpc.client.RpcClient` contract.
 """
 

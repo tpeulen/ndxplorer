@@ -23,7 +23,7 @@ _SCRIPT = textwrap.dedent('''
         for name in ("sklearn", "hdbscan"):
             sys.modules[name] = None  # ``import`` raises ImportError
     import numpy as np
-    from ndxplorer.analysis import clustering, structure
+    from ndxplorer.analysis import structure
     from ndxplorer.analysis.pca_helpers import compute_pca
 
     rng = np.random.default_rng(0)
@@ -31,8 +31,12 @@ _SCRIPT = textwrap.dedent('''
     for method, params in (("hdbscan", {{"min_samples": 5, "min_cluster_size": 20}}),
                            ("kmeans", {{"n_clusters": 3}})):
         assert structure.METHODS_BY_KEY[method].available(), method
-        labels, _ = clustering.ClusteringManager().perform_clustering(
-            method=method, data=data, **params)
+        work = structure.label_points(None, data, method, params)
+        try:
+            while True:
+                next(work)
+        except StopIteration as done:
+            labels, _ = done.value
         assert labels is not None and len(set(labels[labels >= 0])) == 3, (method, labels)
     assert compute_pca(data, ["a", "b"], n_components=2) is not None
     loaded = sorted(m for m in sys.modules

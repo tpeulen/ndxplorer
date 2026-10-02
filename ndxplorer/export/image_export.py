@@ -21,8 +21,8 @@ def export_image(
     """
     Persist the current selection visualization as an image.
 
-    Supports Matplotlib figures, Qt-compatible QImage/QPixmap, and any object
-    exposing a ``save(path, format=...)`` signature.
+    Supports Matplotlib figures and any image object exposing ``save(path)``
+    (a PIL image, as the emtk app's screenshot is).
     """
 
     source = _resolve_source(payload)
@@ -63,7 +63,8 @@ def _save_via_save_method(obj: Any, path: Path, *, quality: int | None) -> None:
     suffix = path.suffix.lower().lstrip(".")
     if quality is not None and suffix in {"jpg", "jpeg"}:
         kwargs["quality"] = quality
-    if not obj.save(str(path), **kwargs):
+    # PIL returns None; an image type that reports failure returns False.
+    if obj.save(str(path), **kwargs) is False:
         raise RuntimeError(f"Failed to save image to {path}")
 
 

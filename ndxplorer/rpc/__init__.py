@@ -6,9 +6,9 @@ A first-class, chisurf-free RPC client so ndXplorer can borrow ChiSurf's domain 
 
 Two ways to obtain a client:
 
-- **Injected** — the in-process ChiSurf GUI passes any object satisfying
-  :class:`RpcClient` (e.g. ChiSurf's ``InProcessClient``) to
-  ``NDXplorer(chisurf_rpc=...)``; no socket hop.
+- **Injected** — the in-process ChiSurf GUI sets any object satisfying
+  :class:`RpcClient` (e.g. ChiSurf's ``InProcessClient``) as the app's
+  ``chisurf_rpc``; no socket hop.
 - **Own transport** — headless/external callers use :class:`ZmqRpcClient` (or
   :func:`connect` / :func:`client_from_config`), pointing at a loopback ChiSurf server.
 

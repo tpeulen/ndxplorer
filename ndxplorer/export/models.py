@@ -93,9 +93,9 @@ class SelectionExportPayload:
     figure:
         Matplotlib figure handle for image exports.
     image:
-        QImage-like object exposing `.save()` (optional).
+        Image object exposing `.save(path)`, e.g. a PIL image (optional).
     pixmap:
-        QPixmap-like object exposing `.save()` (optional).
+        A second image slot exposing `.save(path)` (optional).
     metadata:
         Extra metadata to persist inside export artifacts.
     name:

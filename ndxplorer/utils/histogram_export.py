@@ -1,17 +1,10 @@
-"""Utilities for exporting histogram data to clipboard."""
+"""Histogram data as text, for the clipboard ("Copy 1D/2D Histograms")."""
 
 from __future__ import annotations
 
 import io
-import json
-from typing import TYPE_CHECKING
 
 import numpy as np
-
-from ..logging_config import logging
-
-if TYPE_CHECKING:  # pragma: no cover
-    from ..core.plot_main import NDXplorer
 
 
 def _fmt_num(v: float) -> str:
@@ -26,17 +19,11 @@ def _fmt_num(v: float) -> str:
         return str(v)
 
 
-def _set_clipboard(text: str) -> None:
-    from qtpy import QtWidgets
-
-    QtWidgets.QApplication.clipboard().setText(text)
-
-
 def histograms_1d_text(x_hist, y_hist) -> str:
     """The X and Y marginals as tab-separated text: histogram, bin centre, count.
 
     Each histogram is ``(bin_edges, counts)``. This is what "Copy 1D Histograms
-    (CSV)" puts on the clipboard, in both GUIs.
+    (CSV)" puts on the clipboard.
     """
     output = io.StringIO()
     output.write("Histogram\tBinCenter\tCount\n")
@@ -68,53 +55,3 @@ def histogram_2d_text(H, x_edges, y_edges):
         cells = [_fmt_num(y)] + [_fmt_num(H[j, i]) for i in range(len(x_centers))]
         output.write("\t".join(cells) + "\n")
     return output.getvalue()
-
-
-def copy_1d_histograms(ndxplorer: "NDXplorer") -> None:
-    """Copy X/Y 1D histogram data as TSV to clipboard."""
-    logging.debug("copy_1d_hists_to_clipboard_csv")
-    try:
-        x_hist = ndxplorer._histogram["x"]
-        y_hist = ndxplorer._histogram["y"]
-    except KeyError as exc:
-        logging.error("Histogram data missing: %s", exc)
-        return
-
-    _set_clipboard(histograms_1d_text(x_hist, y_hist))
-    logging.info("1D histograms copied to clipboard as TSV.")
-
-
-def copy_2d_hist_json(ndxplorer: "NDXplorer") -> None:
-    """Copy 2D histogram data as JSON."""
-    logging.debug("copy_2d_hist_to_clipboard_json")
-    try:
-        H, x_edges, y_edges = ndxplorer._histogram["2d"]
-    except KeyError as exc:
-        logging.error("No 2D histogram data available: %s", exc)
-        return
-
-    data_dict = {
-        "H": H.tolist(),
-        "x_edges": x_edges.tolist(),
-        "y_edges": y_edges.tolist(),
-    }
-    _set_clipboard(json.dumps(data_dict, indent=2))
-    logging.info("2D histogram data copied to clipboard (JSON).")
-
-
-def copy_2d_hist_csv(ndxplorer: "NDXplorer") -> None:
-    """Copy 2D histogram data as TSV."""
-    logging.debug("copy_2d_hist_to_clipboard_csv: %s", ndxplorer._histogram)
-    try:
-        H, x_edges, y_edges = ndxplorer._histogram["2d"]
-    except KeyError as exc:
-        logging.error("No 2D histogram data available: %s", exc)
-        return
-
-    text = histogram_2d_text(H, x_edges, y_edges)
-    if text is None:
-        logging.error("H is not 2D! Shape: %s, Type: %s",
-                      getattr(H, 'shape', 'no shape'), type(H))
-        return
-    _set_clipboard(text)
-    logging.info("2D histogram data copied to clipboard as TSV.")

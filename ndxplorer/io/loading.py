@@ -7,16 +7,15 @@ Both GUIs open files the same way, and this module is that way:
   title of the merge question;
 * :func:`kind_for_paths` -- the dispatch a drop and ``--file`` use;
 * :func:`reader_for` / :func:`read` / :func:`load` -- the reader for a kind,
-  and the load the Qt window runs on its worker thread (read, then compute the
-  equation columns);
+  and the load the app runs on its worker (read, then compute the equation
+  columns);
 * :data:`MERGE_CHOICES` / :func:`merge` -- the merge question and what each
   answer does to the table on screen;
 * :func:`working_path_for` / :func:`window_title` -- what the window shows
   about what was opened.
 
-The Qt window (:mod:`ndxplorer.io.file_operations`) raises its dialogs and
-runs the load on a thread; the emtk app (``ndxplorer.app.features.io``) draws
-its own dialogs. Neither decides anything this module decides.
+The emtk app (``ndxplorer.app.features.io``) draws the dialogs and runs the
+load on a worker; it decides nothing this module decides.
 """
 
 from __future__ import annotations

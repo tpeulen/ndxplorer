@@ -4,7 +4,7 @@ A table with forty columns has 780 scatter plots in it, and ndX used to leave
 the user to find the one that shows something. This module is the Qt-free half
 of the answer: a *ranker* enumerates candidate configurations (a column, a pair
 of columns), scores each one, and says how a scored configuration reads as a
-table row. :class:`ndxplorer.ui.vizrank_panel.VizRankModel` runs a ranker in the
+table row. :class:`ndxplorer.analysis.vizrank_model.VizRankModel` runs a ranker in the
 background and streams its rows into a table declared in a ``view.json`` and
 drawn by emtk; clicking a row applies that configuration to the plot.
 

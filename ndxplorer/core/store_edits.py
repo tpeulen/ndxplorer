@@ -1,7 +1,7 @@
 """Writing an edited copy of a table back into the table it was copied from.
 
-The Table Editor (Qt: ``ndxplorer/ui/store_editor.py``; emtk: the Data button
-of ``ndxplorer/app/features/overlays.py``) edits a copy of a
+The Table Editor (the Data button of ``ndxplorer/app/features/overlays.py``)
+edits a copy of a
 :class:`~ndxplorer.core.data_source.DataSource`; on Apply the copy is written
 back here, column by column, so the source keeps its identity and its column
 order. Toolkit-free.

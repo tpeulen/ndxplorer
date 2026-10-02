@@ -44,11 +44,9 @@ __all__ = ["PlaybackExportFeature", "PublicationExportModel", "frame_runner", "c
 logger = logging.getLogger(__name__)
 
 SPECS = pathlib.Path(__file__).with_name("playback_export")
-_UI = pathlib.Path(__file__).resolve().parents[2] / "ui"
-#: The ranking panel's long help and guided tour, shared with the Qt window
-#: (read as files: importing ``ndxplorer.ui`` builds Qt dialogs).
-VIZRANK_HELP = _UI / "vizrank_help.md"
-VIZRANK_GUIDE = _UI / "vizrank_guide.json"
+#: The ranking panel's long help and guided tour.
+VIZRANK_HELP = SPECS / "vizrank_help.md"
+VIZRANK_GUIDE = SPECS / "vizrank_guide.json"
 
 #: Tour anchors: the guide's target name -> the ``FormState.rects`` name.
 ANCHORS = {

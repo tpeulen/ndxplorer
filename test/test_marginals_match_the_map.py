@@ -5,16 +5,9 @@ defined for a few (a per-state lifetime) used to draw a full-height marginal nex
 to a nearly empty map: each 1D histogram dropped only the NaNs of its own column.
 :func:`~ndxplorer.utils.histogram_helpers.apply_joint_axis_mask` is the one seam
 that keeps every histogram on the same rows.
-
-The percentile test pins the crash this was found with: ``currentIndexChanged``
-delivers the combo box index, and bound straight to ``update_spinbox_limits`` it
-arrived as ``low_pct`` — silently skewing the contrast below index 100 and
-raising ``Percentiles must be in the range [0, 100]`` above it.
 """
 
 from __future__ import annotations
-
-import inspect
 
 import numpy as np
 import pytest
@@ -87,23 +80,6 @@ def test_mismatched_lengths_are_left_alone():
     x = np.array([1.0, np.nan, 3.0])
     y = np.array([1.0, 2.0])
     assert apply_joint_axis_mask(x, y) == (x, y, None, None)
-
-
-def test_percentile_bounds_cannot_be_bound_positionally():
-    """A Qt signal argument must not be able to land in ``low_pct``."""
-    from ndxplorer.core.plot_main import NDXplorer
-    from ndxplorer.plotting import plot_update_helpers
-
-    for func in (NDXplorer.update_spinbox_limits, plot_update_helpers.update_spinbox_limits):
-        params = inspect.signature(func).parameters
-        for name in ("low_pct", "high_pct"):
-            assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, (
-                f"{func.__qualname__}.{name} must be keyword-only"
-            )
-
-    # The slot the combo boxes are connected to takes (and drops) the index.
-    slot = inspect.signature(NDXplorer.on_axis_selection_changed).parameters
-    assert "_index" in slot
 
 
 def test_both_1d_histogram_representations_are_understood():

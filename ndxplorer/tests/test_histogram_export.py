@@ -19,32 +19,11 @@ import numpy as np
 import pytest
 
 from ndxplorer.core.histograms import Histogram1D, Histogram2D
-from ndxplorer.utils.histogram_export import (copy_1d_histograms,
-                                              copy_2d_hist_csv,
-                                              copy_2d_hist_json)
-
-pytest.importorskip("qtpy.QtWidgets")
+from ndxplorer.utils.histogram_export import histogram_2d_text, histograms_1d_text
 
 
-@pytest.fixture(scope="module")
-def app():
-    from qtpy import QtWidgets
-
-    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
-
-@pytest.fixture
-def clipboard(app):
-    from qtpy import QtWidgets
-
-    return QtWidgets.QApplication.clipboard()
-
-
-class _Explorer:
-    """The one attribute the exporters read."""
-
-    def __init__(self, histogram):
-        self._histogram = histogram
+def _tsv_2d(hist):
+    return histogram_2d_text(hist.H, hist.x_edges, hist.y_edges)
 
 
 def _identifiable_map(n_x: int, n_y: int) -> Histogram2D:
@@ -58,11 +37,10 @@ def _identifiable_map(n_x: int, n_y: int) -> Histogram2D:
 
 
 @pytest.mark.parametrize("n_x, n_y", [(4, 3), (3, 4), (5, 5), (1, 6), (6, 1)])
-def test_the_2d_tsv_is_not_transposed(clipboard, n_x, n_y):
-    explorer = _Explorer({"2d": _identifiable_map(n_x, n_y)})
-    copy_2d_hist_csv(explorer)
+def test_the_2d_tsv_is_not_transposed(n_x, n_y):
+    text = _tsv_2d(_identifiable_map(n_x, n_y))
 
-    rows = [line.split("\t") for line in clipboard.text().strip().split("\n")]
+    rows = [line.split("\t") for line in text.strip().split("\n")]
     header, body = rows[0], rows[1:]
 
     assert header[0] == "y/x"
@@ -75,44 +53,28 @@ def test_the_2d_tsv_is_not_transposed(clipboard, n_x, n_y):
                 f"cell (x={i}, y={j}) holds {cell}; the table is transposed")
 
 
-def test_the_2d_tsv_labels_the_bin_centres(clipboard):
-    explorer = _Explorer({"2d": _identifiable_map(3, 2)})
-    copy_2d_hist_csv(explorer)
+def test_the_2d_tsv_labels_the_bin_centres():
+    text = _tsv_2d(_identifiable_map(3, 2))
 
-    rows = [line.split("\t") for line in clipboard.text().strip().split("\n")]
+    rows = [line.split("\t") for line in text.strip().split("\n")]
     assert [float(c) for c in rows[0][1:]] == [0.5, 1.5, 2.5]
     assert [float(r[0]) for r in rows[1:]] == [0.5, 1.5]
 
 
-def test_a_non_square_map_copies_at_all(clipboard):
+def test_a_non_square_map_copies_at_all():
     """An image histogram is one bin per pixel and the two axes differ; the
-    x-first indexing raised IndexError here and the clipboard stayed stale."""
-    clipboard.setText("previous contents")
-    explorer = _Explorer({"2d": _identifiable_map(64, 32)})
-    copy_2d_hist_csv(explorer)
-    assert clipboard.text() != "previous contents"
+    x-first indexing raised IndexError here."""
+    text = _tsv_2d(_identifiable_map(64, 32))
+    assert len(text.strip().split("\n")) == 33
 
 
-def test_the_2d_json_keeps_the_stored_layout(clipboard):
-    import json
+def test_the_1d_tsv_holds_both_marginals_at_their_bin_centres():
+    text = histograms_1d_text(
+        Histogram1D(edges=np.array([0.0, 1.0, 2.0]), counts=np.array([7.0, 8.0])),
+        Histogram1D(edges=np.array([0.0, 2.0, 4.0]), counts=np.array([1.0, 2.0])),
+    )
 
-    hist = _identifiable_map(4, 3)
-    copy_2d_hist_json(_Explorer({"2d": hist}))
-    payload = json.loads(clipboard.text())
-
-    np.testing.assert_array_equal(np.asarray(payload["H"]), hist.H)
-    assert len(payload["x_edges"]) == 5
-    assert len(payload["y_edges"]) == 4
-
-
-def test_the_1d_tsv_holds_both_marginals_at_their_bin_centres(clipboard):
-    explorer = _Explorer({
-        "x": Histogram1D(edges=np.array([0.0, 1.0, 2.0]), counts=np.array([7.0, 8.0])),
-        "y": Histogram1D(edges=np.array([0.0, 2.0, 4.0]), counts=np.array([1.0, 2.0])),
-    })
-    copy_1d_histograms(explorer)
-
-    rows = [line.split("\t") for line in clipboard.text().strip().split("\n")]
+    rows = [line.split("\t") for line in text.strip().split("\n")]
     assert rows[0] == ["Histogram", "BinCenter", "Count"]
     assert rows[1:] == [
         ["X", "0.5", "7"],
@@ -122,10 +84,5 @@ def test_the_1d_tsv_holds_both_marginals_at_their_bin_centres(clipboard):
     ]
 
 
-def test_a_missing_histogram_is_reported_not_raised(clipboard):
-    """These are menu actions; a copy with nothing computed yet must not take
-    the window down."""
-    empty = _Explorer({})
-    copy_1d_histograms(empty)
-    copy_2d_hist_csv(empty)
-    copy_2d_hist_json(empty)
+def test_a_map_that_is_not_2d_gives_no_text():
+    assert histogram_2d_text(np.zeros(3), np.arange(4.0), np.arange(2.0)) is None

@@ -4,9 +4,8 @@
 parameter) by how informative the view is; what "informative" means is chosen
 in the panel (:data:`~ndxplorer.analysis.projection_scores.METHODS`). This
 module says what a ranking may use (:func:`build_context`) and is the model the
-panel binds to (:class:`ProjectionRankModel`). The Qt window wires it in
-through :mod:`ndxplorer.ui.projection_rank`; the emtk app through
-:mod:`ndxplorer.app.features.playback_export`.
+panel binds to (:class:`ProjectionRankModel`). The emtk app wires it in
+through :mod:`ndxplorer.app.features.playback_export`.
 """
 
 from __future__ import annotations
@@ -196,9 +195,8 @@ def build_context(source, axis_settings: Optional[Dict[str, dict]] = None,
     """What a ranking can use: the table's numeric columns, how each is drawn,
     the rows the gates keep and the classes on offer.
 
-    Both GUIs call this with what they hold -- the Qt window through
-    :func:`ndxplorer.ui.projection_rank.collect_context`, the emtk app from its
-    :class:`~ndxplorer.app.model.ExplorerModel`.
+    The emtk app calls this with what its
+    :class:`~ndxplorer.app.model.ExplorerModel` holds.
 
     Parameters
     ----------

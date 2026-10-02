@@ -23,7 +23,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ndxplorer.analysis.clustering import ClusteringManager
 from ndxplorer.analysis.pca_helpers import add_pca_columns, compute_pca, pca_available
 from ndxplorer.core.data_source import DataSource
 from ndxplorer.analysis import structure
@@ -95,6 +94,16 @@ def _labels(method, data, params):
         return done.value
 
 
+def _cluster(method, data, **params):
+    """``(labels, probabilities)``, or ``(None, None)`` when nothing was clustered."""
+    if data is None or len(data) == 0:
+        return None, None
+    result = _labels(method, data, params)
+    if result is None or result[0] is None:
+        return None, None
+    return result
+
+
 def test_hdbscan_recovers_planted_blobs():
     """The backend must find the structure, not merely return arrays."""
     data, truth = three_blobs()
@@ -123,8 +132,7 @@ def test_kmeans_is_reproducible():
 def test_clustering_recovers_three_planted_blobs(method, params):
     """Both algorithms must find the three groups that were put in."""
     data, truth = three_blobs()
-    manager = ClusteringManager()
-    labels, _ = manager.perform_clustering(method=method, data=data, **params)
+    labels, _ = _cluster(method, data, **params)
 
     assert labels is not None, f"{method} returned nothing"
     assert len(labels) == len(data)
@@ -136,7 +144,7 @@ def test_clustering_recovers_three_planted_blobs(method, params):
 def test_labels_align_with_the_input_rows_when_some_are_not_finite():
     """Rows dropped for NaN must come back as noise, not shift the labels.
 
-    The manager fits on the finite subset and scatters the labels back; getting
+    The labelling fits on the finite subset and scatters the labels back; getting
     that wrong would misalign every label after the first bad row, which is the
     kind of error that still produces a plausible-looking picture.
     """
@@ -145,9 +153,7 @@ def test_labels_align_with_the_input_rows_when_some_are_not_finite():
     data[10] = np.nan
     data[150] = np.inf
 
-    labels, _ = ClusteringManager().perform_clustering(
-        method="kmeans", data=data, n_clusters=3
-    )
+    labels, _ = _cluster("kmeans", data, n_clusters=3)
     assert labels is not None and len(labels) == len(data)
     assert labels[10] == -1 and labels[150] == -1
     finite = np.ones(len(data), dtype=bool)
@@ -156,18 +162,15 @@ def test_labels_align_with_the_input_rows_when_some_are_not_finite():
 
 
 def test_too_few_points_is_refused_rather_than_guessed():
-    """Fewer points than clusters cannot be clustered, and must not pretend."""
-    manager = ClusteringManager()
-    labels, _ = manager.perform_clustering(
-        method="kmeans", data=np.zeros((2, 2)), n_clusters=5
-    )
-    assert labels is None
+    """Fewer points than clusters cannot be clustered, and must not pretend:
+    the labelling stops with the reason the app shows."""
+    with pytest.raises(RuntimeError, match="Not enough data points"):
+        _cluster("kmeans", np.zeros((2, 2)), n_clusters=5)
 
 
 def test_no_data_is_refused():
     """An empty request returns nothing rather than raising across the UI."""
-    labels, _ = ClusteringManager().perform_clustering(method="kmeans",
-                                                       data=np.zeros((0, 2)))
+    labels, _ = _cluster("kmeans", np.zeros((0, 2)))
     assert labels is None
 
 
@@ -296,7 +299,5 @@ def test_pca_separates_the_blobs_it_was_given(blob_source):
     truth = blob_source.column_values("truth").astype(int)
 
     # Cluster the projection: the three blobs must survive the transform.
-    labels, _ = ClusteringManager().perform_clustering(
-        method="kmeans", data=result.projections, n_clusters=3
-    )
+    labels, _ = _cluster("kmeans", result.projections, n_clusters=3)
     assert purity(labels, truth) > 0.95

@@ -86,17 +86,17 @@ include = ["ndxplorer*"]
 [tool.setuptools.package-data]
 "ndxplorer" = [
     "*.json", "*.yaml",
-    "*.ui", "*.css", "*.qss",
+    "*.css",
     "*.png", "*.svg",
     "*.csv", "*.npy", "*.dat",
     "*.dll", "*.so", "*.pyd",
     "*.txt"
 ]
-"ndxplorer.plotting" = ["*.ui", "*.json"]
+"ndxplorer.plotting" = ["*.json"]
 "ndxplorer.analysis" = ["*.json"]
-# The emtk app's view specs, and those of its feature modules (plain folders
-# beside the modules, not packages -- so they are named from ndxplorer.app).
-"ndxplorer.app" = ["views/*.json", "features/*/*.json", "features/*/*.md"]
-"ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg", "*.md", "*.json"]
+# The emtk app's view specs, those of its feature modules and its resources
+# (plain folders beside the modules, not packages -- so they are named from
+# ndxplorer.app).
+"ndxplorer.app" = ["views/*.json", "features/*/*.json", "features/*/*.md", "resources/*"]
 "ndxplorer.settings" = ["*.json", "*.yaml"]
 "ndxplorer.settings.templates" = ["*"]

@@ -114,18 +114,14 @@ def test_export_requires_drawable():
             export_api.save_selection(SelectionExportPayload(), path, write_manifest_file=False)
 
 
-def test_export_qimage_png():
-    """A QImage payload is saved via its .save() method when Qt is available."""
-    qtgui = pytest.importorskip("qtpy.QtGui")
-    qtwidgets = pytest.importorskip("qtpy.QtWidgets")
-    app = qtwidgets.QApplication.instance() or qtwidgets.QApplication([])
-    img = qtgui.QImage(64, 48, qtgui.QImage.Format_RGB32)
-    img.fill(0xFF3366)
-
+def test_export_image_with_save_method_png():
+    """An image payload (here a PIL image, as the emtk screenshot is) is saved
+    through its ``.save()`` method."""
     from PIL import Image
 
+    img = Image.new("RGB", (64, 48), (0xFF, 0x33, 0x66))
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "qimg.png"
+        path = Path(tmp) / "img.png"
         export_image(SelectionExportPayload(image=img), path)
         assert path.exists()
         assert Image.open(path).size == (64, 48)

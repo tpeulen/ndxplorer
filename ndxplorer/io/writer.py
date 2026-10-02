@@ -6,16 +6,6 @@ from ..logging_config import logging
 import numpy as np
 import json
 import tttrlib
-try:
-    from qtpy.QtWidgets import QApplication
-    from qtpy.QtCore import QCoreApplication
-    from ..ui.progress_window import ProgressWindow
-    _HAS_QT = True
-except Exception:
-    QApplication = None
-    QCoreApplication = None
-    ProgressWindow = None
-    _HAS_QT = False
 from ..core.data_source import DataSource, DataSelection, float_column
 
 
@@ -41,35 +31,6 @@ def _burst_id_groups(selections: List[DataSelection], data_source: DataSource):
         in_file = rows & (first_codes == code)
         ids = np.vstack([first_photon[in_file], last_photon[in_file]]).astype(int)
         yield str(first_names[code]), ids
-
-
-def save_burst_ids(
-        folder_name: str,
-        selections: List[DataSelection],
-        data_source: DataSource
-):
-    """:func:`save_burst_ids_headless` with the Qt progress window."""
-    if not _HAS_QT or QApplication is None:
-        raise RuntimeError("save_burst_ids requires Qt (not available in headless mode)")
-    QApplication.instance() or QApplication([])
-    progress_window = None
-
-    def progress(done: int, total: int) -> bool:
-        nonlocal progress_window
-        if progress_window is None:
-            progress_window = ProgressWindow(title="Saving Files",
-                                             message="Saving Burst ID files...",
-                                             max_value=total)
-            progress_window.show()
-        progress_window.set_value(done)
-        QCoreApplication.processEvents()
-        return True
-
-    try:
-        return save_burst_ids_headless(folder_name, selections, data_source, progress=progress)
-    finally:
-        if progress_window is not None:
-            progress_window.close()
 
 
 def save_burst_ids_headless(

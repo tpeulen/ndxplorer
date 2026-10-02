@@ -5,9 +5,8 @@ this is what the user works: the settings, *Start* / *Pause*, a status line and
 the table of ranked views, clicking a row to apply it. None of it is widget
 code. The layout is ``vizrank.view.json`` -- AutoForm's dialect, drawn by
 ``emtk.view_form`` with the table as a ``data_table`` section -- and the
-behaviour is :class:`VizRankModel`, the object that spec reads and writes. Both
-ndX GUIs host it: the Qt window through :mod:`ndxplorer.ui.vizrank_panel`, the
-emtk app natively (:mod:`ndxplorer.app.features.playback_export`).
+behaviour is :class:`VizRankModel`, the object that spec reads and writes. The
+emtk app hosts it (:mod:`ndxplorer.app.features.playback_export`).
 
 What :class:`VizRankModel` keeps from Orange3's ``VizRankDialog``
 (``Orange/widgets/visualize/utils/vizrank.py``, GPL-3.0): the run states and

@@ -292,7 +292,7 @@ class PlotArea:
         cached = getattr(self, "_splash_cache", None)
         if cached is not None and cached[0] == key:
             return cached[1]
-        path = pathlib.Path(__file__).resolve().parents[1] / "ui" / "background.png"
+        path = pathlib.Path(__file__).resolve().parent / "resources" / "background.png"
         try:
             from PIL import Image
 

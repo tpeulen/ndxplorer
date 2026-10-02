@@ -1,9 +1,8 @@
 # reader.py — NDXplorer Reader Module
 
 from __future__ import annotations
-from typing import Callable, List, Union, Optional, TextIO, Dict, Tuple
+from typing import List, Union, Optional, TextIO, Dict, Tuple
 import pathlib
-import os
 import tempfile
 import zipfile
 import io
@@ -25,15 +24,9 @@ from . import tables
 
 import tttrlib
 
-# No Qt here. Reading is library work: this module used to raise modal
-# message boxes, build its own QApplication and pump the event loop from
-# inside a read, which wedges any headless run the moment one of those
-# dialogs appears and has nowhere to be clicked. Problems are logged, and
-# the GUI reports progress through ``start_read_burst_analysis_async``,
-# which already hands it ``on_success`` / ``on_error``.
+# No GUI here. Reading is library work: problems are logged, and the app runs
+# a read on its own worker (``ndxplorer.app.features.io_service``).
 
-# Import async loading components
-from .async_loader import DataLoadTask, DataLoadResult, run_task
 from .file_metadata_cache import get_metadata_cache
 
 
@@ -256,54 +249,6 @@ def read_burst_analysis(
     return _process_burst_analysis_dir(
         base_path, skip_nth_row, additional_endings, drop_last_column
     )
-
-
-def start_read_burst_analysis_async(
-    base_path: Union[str, pathlib.Path],
-    skip_nth_row: int = 2,
-    additional_endings: Optional[List[str]] = None,
-    drop_last_column: bool = True,
-    on_success: Callable[["DataSource"], None] = None,
-    on_error: Optional[Callable[[str], None]] = None,
-) -> None:
-    """
-    Start asynchronous loading of burst analysis data.
-    
-    In GUI mode, runs in background thread to prevent UI blocking.
-    In CLI mode, runs synchronously.
-    
-    Parameters
-    ----------
-    base_path : Union[str, pathlib.Path]
-        Path to burst analysis directory or zip.
-    skip_nth_row : int, optional
-        Skip every Nth row, by default 2.
-    additional_endings : Optional[List[str]], optional
-        Extra file endings to process, by default None (uses settings).
-    drop_last_column : bool, optional
-        Trim the trailing placeholder column the writers append to the burst
-        tables (only empty/``Unnamed`` columns are removed, never real data),
-        by default True.
-    on_success : Callable[[DataSource], None], optional
-        Callback when loading succeeds, by default None.
-    on_error : Optional[Callable[[str], None]], optional
-        Callback when loading fails, by default None.
-    """
-    if on_success is None:
-        on_success = lambda ds: None
-    if on_error is None:
-        on_error = lambda msg: logging.error("Async load failed: %s", msg)
-    
-    task = DataLoadTask(
-        description=f"Loading burst analysis from {base_path}",
-        load_callable=lambda: read_burst_analysis(
-            base_path, skip_nth_row, additional_endings, drop_last_column
-        ),
-        on_success=on_success,
-        on_error=on_error,
-    )
-    
-    run_task(task)
 
 
 def _process_burst_analysis_dir(
@@ -927,41 +872,6 @@ def read_csv(filenames: List[str]) -> DataSource:
     combined = tables.numeric_columns_only(combined)
     tables.as_numeric(combined, fill=FILL_MISSING_VALUE)
     return DataSource(combined)
-
-
-def start_read_csv_async(
-    filenames: List[str],
-    on_success: Callable[["DataSource"], None] = None,
-    on_error: Optional[Callable[[str], None]] = None,
-) -> None:
-    """
-    Start asynchronous loading of CSV data.
-    
-    In GUI mode, runs in background thread to prevent UI blocking.
-    In CLI mode, runs synchronously.
-    
-    Parameters
-    ----------
-    filenames : List[str]
-        List of CSV file paths to read.
-    on_success : Callable[[DataSource], None], optional
-        Callback when loading succeeds, by default None.
-    on_error : Optional[Callable[[str], None]], optional
-        Callback when loading fails, by default None.
-    """
-    if on_success is None:
-        on_success = lambda ds: None
-    if on_error is None:
-        on_error = lambda msg: logging.error("Async load failed: %s", msg)
-    
-    task = DataLoadTask(
-        description=f"Loading CSV files: {filenames}",
-        load_callable=lambda: read_csv(filenames),
-        on_success=on_success,
-        on_error=on_error,
-    )
-    
-    run_task(task)
 
 
 # ----------------------------- helpers ---------------------------------------
