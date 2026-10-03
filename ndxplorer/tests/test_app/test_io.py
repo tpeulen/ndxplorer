@@ -196,6 +196,42 @@ def test_burst_ids_are_written_and_what_next_is_asked(app, tmp_path):
     assert titles == ["Plugin Not Available", "Plugin Not Available"]
 
 
+def test_saved_burst_ids_go_to_the_hosts_recorder(app, tmp_path):
+    """A host's ``burst_ids_recorder`` gets the saved selection; its line is the status."""
+    records = []
+
+    def recorder(record):
+        records.append(record)
+        return "Recorded the selection in MMFDB"
+
+    app.burst_ids_recorder = recorder
+    assert app.open_path(str(MFD))
+    draw(app)
+    app.run_action("save_burst_ids")
+    app.io_service.answer(str(tmp_path))
+    finish(app)
+    (record,) = records
+    assert record["folder"] == str(tmp_path) and record["files"]
+    assert record["n_rows"] == app.model.source.size == len(record["mask"])
+    assert record["n_selected"] == sum(record["mask"])
+    assert isinstance(record["gate"], list)
+    assert app.status == "Recorded the selection in MMFDB"
+
+
+def test_a_failing_recorder_keeps_the_files_and_says_so(app, tmp_path):
+    def recorder(_record):
+        raise RuntimeError("store offline")
+
+    app.burst_ids_recorder = recorder
+    assert app.open_path(str(MFD))
+    draw(app)
+    app.run_action("save_burst_ids")
+    app.io_service.answer(str(tmp_path))
+    finish(app)
+    assert list(tmp_path.glob("*.bst"))
+    assert "recording them failed: store offline" in app.status
+
+
 def test_screenshot_saves_the_window_as_png_or_jpeg(app, tmp_path):
     from PIL import Image
 

@@ -192,6 +192,12 @@ class NdxApp:
         #: What File > Import > From MMFDB runs: set by a host that has an MMFDB
         #: client (ChiSurf's ndX window); ``None`` keeps the entry disabled.
         self.mmfdb_opener: Optional[Callable[[], None]] = None
+        #: What Save > Burst IDs reports to once the ``.bst`` files are written:
+        #: set by a host that keeps provenance (ChiSurf's window opened on an
+        #: MMFDB product records the selection there). Called with
+        #: ``{"folder", "files", "gate", "mask", "n_rows", "n_selected"}``;
+        #: returns a status line or ``None``. ``None`` here: nothing is recorded.
+        self.burst_ids_recorder: Optional[Callable[[dict], Optional[str]]] = None
         #: One line of non-modal feedback (Qt's status bar), in the menu bar's
         #: row; set it with :meth:`show_status`. It starts with what the
         #: shipped defaults added to the user's older settings.

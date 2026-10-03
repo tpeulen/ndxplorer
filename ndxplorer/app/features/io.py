@@ -35,6 +35,8 @@ import re
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
+import numpy as np
+
 from . import Feature
 from .io_service import FileService
 
@@ -456,12 +458,40 @@ class IoFeature(Feature):
 
         def finish(written) -> None:
             logger.info("wrote %d burst-ID files to %s", len(written), folder)
+            self._record_burst_ids(folder, written, selections, source)
             self.dialog = BurstIdQuestion(folder, self._process_burst_ids)
 
         def fail(exc: BaseException) -> None:
             self._report("Save Burst IDs", f"Could not save the burst IDs: {exc}")
 
         self._run("Saving Files", "Saving Burst ID files...", work, finish, fail)
+
+    def _record_burst_ids(self, folder: str, written, selections, source) -> None:
+        """Hand the saved selection to the host's recorder (``app.burst_ids_recorder``).
+
+        A failure to record is said in the status line and the log; the files
+        are written either way.
+        """
+        recorder = getattr(self.app, "burst_ids_recorder", None)
+        if recorder is None or source is None:
+            return
+        from ...analysis.burst_bridge import describe_selections
+
+        try:
+            mask = np.asarray(source.selection_mask(selections), dtype=bool)
+            line = recorder({
+                "folder": str(folder),
+                "files": [str(f) for f in (written or ())],
+                "gate": describe_selections(selections),
+                "mask": mask.tolist(),
+                "n_rows": int(mask.size),
+                "n_selected": int(mask.sum()),
+            })
+        except Exception as exc:  # noqa: BLE001 - the files are saved; say what was not
+            logger.exception("recording the burst IDs failed")
+            line = f"Burst IDs saved; recording them failed: {exc}"
+        if line:
+            self.app.show_status(str(line))
 
     def _process_burst_ids(self, question: BurstIdQuestion) -> None:
         """The follow-ups the Qt window offers, with what this app can do about them."""
