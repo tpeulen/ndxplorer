@@ -357,3 +357,73 @@ def test_the_cloud_cannot_be_emptied_to_win():
 
     assert fit.run().ok
     assert scale.value == pytest.approx(1.0, abs=0.05)   # not driven off the plot
+
+
+# -- a vector constant: one value per population ---------------------------------
+LABELS = np.repeat([0, 1], X.size)            # two populations, the same x each
+X2 = np.concatenate([X, X])
+GAMMA_POP = {"A": 2.0, "B": 0.5}
+Y2_RAW = np.concatenate([GAMMA_POP["A"] * (0.5 * X + 0.1), GAMMA_POP["B"] * (0.5 * X + 0.1)])
+
+
+def _vector_gamma(fixed_elements=False, fixed_global=True):
+    from ndxplorer.core.parameters import Parameter
+
+    gamma = Parameter("gamma", 1.0, fixed=fixed_global)
+    gamma.set_vector([1.0, 1.0], ["A", "B"])
+    for element in gamma.elements:
+        element.fixed = fixed_elements
+    return gamma
+
+
+def _vector_data(gamma, seen=None):
+    """y = raw / gamma of the burst's population (the global for none)."""
+
+    def refresh(changed):
+        if seen is not None:
+            seen.append(list(changed))
+        per_burst = np.where(LABELS == 0, gamma.element("A").value, gamma.element("B").value)
+        return X2, Y2_RAW / per_burst, np.full(X2.shape, 0.01)
+
+    return DataParameters(parameters=[gamma], refresh=refresh)
+
+
+def test_a_freed_vector_constant_is_fitted_per_population():
+    """Freeing a vector moves each population's element onto the curve, not the global."""
+    gamma = _vector_gamma()
+    cf = build_curve_fit("m*x + b", X2, Y2_RAW, initial={"m": 0.5, "b": 0.1})
+    for p in cf.parameters:
+        p.fixed = True
+    seen = []
+    cf.attach_data_parameters(_vector_data(gamma, seen))
+
+    result = cf.run()
+
+    assert result.ok, result.message
+    assert gamma.element("A").value == pytest.approx(GAMMA_POP["A"], abs=1e-3)
+    assert gamma.element("B").value == pytest.approx(GAMMA_POP["B"], abs=1e-3)
+    assert gamma.value == 1.0                      # the global was held
+    assert set(result.data_params) == {"gamma[A]", "gamma[B]"}
+    assert seen and all(set(names) == {"gamma[A]", "gamma[B]"} for names in seen)
+
+
+def test_a_held_element_stays_while_the_others_are_fitted():
+    gamma = _vector_gamma()
+    gamma.element("B").fixed = True
+    cf = build_curve_fit("m*x + b", X2, Y2_RAW, initial={"m": 0.5, "b": 0.1})
+    for p in cf.parameters:
+        p.fixed = True
+    cf.attach_data_parameters(_vector_data(gamma))
+
+    result = cf.run()
+
+    assert result.ok, result.message
+    assert set(result.data_params) == {"gamma[A]"}
+    assert gamma.element("B").value == 1.0
+
+
+def test_a_fixed_vector_is_left_alone():
+    gamma = _vector_gamma(fixed_elements=True)
+    cf = build_curve_fit("m*x + b", X2, Y2_RAW, initial={"m": 0.5, "b": 0.1})
+    cf.attach_data_parameters(_vector_data(gamma))
+    assert cf.free_data_parameters() == []

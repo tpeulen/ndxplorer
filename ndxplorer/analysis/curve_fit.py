@@ -609,12 +609,27 @@ class DataParameters:
     refresh: Optional[Callable[[Sequence[str]], Tuple[np.ndarray, np.ndarray, np.ndarray]]] = None
 
     def free(self) -> List[Any]:
-        """The parameters the user has freed for the fit."""
-        return [p for p in self.parameters if not getattr(p, "fixed", True)]
+        """The parameters the user has freed for the fit.
+
+        A **vector** constant (one value per population) is fitted per
+        population: each element the user freed (the vector row's *Fixed*
+        frees them all) moves on its own, and re-deriving the data moves only
+        the bursts of that population -- the per-population fit the joint curve
+        fit does for a curve's own vectors. Its global value (the bursts in no
+        population) moves only when it is freed itself. Linked elements stay.
+        """
+        out = []
+        for p in self.parameters:
+            elements = list(getattr(p, "elements", None) or [])
+            for q in [p] + elements:
+                if not getattr(q, "fixed", True) and not getattr(q, "is_linked", False):
+                    out.append(q)
+        return out
 
     def values(self) -> Dict[str, float]:
-        """Current ``{name: value}`` of every offered parameter."""
-        return {p.name: float(p.value) for p in self.parameters}
+        """Current ``{name: value}`` of every offered parameter (a vector's elements too)."""
+        return {q.name: float(q.value) for p in self.parameters
+                for q in [p] + list(getattr(p, "elements", None) or [])}
 
 
 class _DataParameterHost:
