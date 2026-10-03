@@ -654,9 +654,13 @@ class CurvePanel:
 
         filled = {"equation": "Filled: y =", "function": "Filled Function:", "data": "Data:"}
         spec = _fill(base, title=curve.title, filled_label=filled.get(curve.kind, "Filled:"))
-        # A section tagged with kinds is for those kinds only.
+        # A section tagged with kinds is for those kinds only (a parameter
+        # table's tags end up in its options when the table is expanded).
+        def tags(s):
+            return s if any(s.get(k) for k in KINDS) else (s.get("options") or {})
+
         spec["sections"] = [s for s in spec["sections"]
-                            if not any(s.get(k) for k in KINDS) or s.get(curve.kind)]
+                            if not any(tags(s).get(k) for k in KINDS) or tags(s).get(curve.kind)]
         return spec
 
 

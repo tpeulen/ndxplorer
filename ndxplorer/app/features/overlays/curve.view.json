@@ -41,6 +41,7 @@
   ]},
   {"type": "info", "source": "error_text", "hidden_when": {"attr": "has_error", "equals": false}},
   {"type": "parameter_table", "table": "table", "height": 170,
+   "equation": true, "function": true, "parametric": true, "points": true,
    "hidden_when": {"attr": "visible", "equals": false}}
  ]
 }

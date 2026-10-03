@@ -84,6 +84,12 @@ def test_a_data_line_cannot_be_fitted_and_shows_no_equation(app):
     assert not panel.enabled("fit") and panel.enabled("delete")
     attrs = {s.get("attr") for s in _walk(panel.spec()["sections"])}
     assert "text" not in attrs and "x_expr" not in attrs and "filled" in attrs
+    tables = [s for s in _walk(panel.spec()["sections"]) if s.get("key") == "data_table"]
+    assert tables == []  # no parameters to list
+    feature(app).overlays.equation_choice = "Universal circle"
+    feature(app).overlays.add_curve()
+    circle = feature(app).overlays.panels[-1]
+    assert [s for s in _walk(circle.spec()["sections"]) if s.get("key") == "data_table"]
 
 
 def test_a_data_line_survives_the_session(app):
