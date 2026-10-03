@@ -5,7 +5,9 @@ or a Python function that traces a parametric line and returns ``(x, y)`` (a
 static FRET line from a distance distribution), a **parametric** line
 ``(x(t), y(t))`` for ``t`` in ``[t0, t1]`` (the phasor's universal circle, a
 FRET trajectory), or a **point set**: markers at listed ``t`` values, labelled
-(lifetime points on the circle). Parametric curves and point sets are specs
+(lifetime points on the circle), or a **data** line: tabulated ``x``, ``y``
+arrays another tool computed (ChiSurf's FRET lines), without parameters.
+Parametric curves and point sets are specs
 (``x``, ``y``, ``where``, ``t``, ``labels``) compiled to the same traced-function
 contract a ``def`` has, so drawing, the CSV, population-wise curves and the fit
 take all kinds alike. Its free parameters are a
@@ -37,6 +39,8 @@ __all__ = [
     "CUSTOM_EQUATION",
     "KINDS",
     "TRACED_KINDS",
+    "SPEC_KINDS",
+    "data_spec",
     "CurveEvaluator",
     "parse_where",
     "spec_parameter_names",
@@ -89,10 +93,13 @@ _IDENTIFIER = re.compile(r"(?<![.\w])([a-zA-Z][a-zA-Z0-9_]*)\b")
 
 #: The kinds of overlay curve: ``y = f(x)`` text, a ``def`` that traces itself,
 #: a parametric line ``(x(t), y(t))`` for ``t`` in ``[t0, t1]``, and a point set
-#: (markers, optionally labelled, at listed ``t`` values).
-KINDS = ("equation", "function", "parametric", "points")
+#: (markers, optionally labelled, at listed ``t`` values), and a data line
+#: (tabulated ``x``, ``y`` arrays handed over by another tool).
+KINDS = ("equation", "function", "parametric", "points", "data")
 #: The kinds drawn from ``(x, y)`` a curve computes itself (not sampled over x).
-TRACED_KINDS = ("function", "parametric", "points")
+TRACED_KINDS = ("function", "parametric", "points", "data")
+#: The kinds defined by a spec rather than by text.
+SPEC_KINDS = ("parametric", "points", "data")
 #: The curve variable of a parametric curve or a point set.
 T_NAME = "t"
 
@@ -252,6 +259,8 @@ def spec_parameter_names(spec: Mapping[str, Any]) -> List[str]:
     Every identifier of its ``where``, ``x`` and ``y`` expressions except ``t``,
     the names ``where`` defines and the maths names.
     """
+    if spec.get("kind") == "data":
+        return []
     where = parse_where(spec.get("where"))
     defined = {name for name, _ in where} | {T_NAME}
     names: List[str] = []
@@ -301,6 +310,15 @@ def compile_spec(spec: Mapping[str, Any], samples: Callable[[], int] = lambda: 2
         How many ``t`` a parametric curve is traced with (read on every call).
     """
     spec = dict(spec)
+    if spec.get("kind") == "data":
+        xs = np.asarray(spec.get("x") or [], dtype=float)
+        ys = np.asarray(spec.get("y") or [], dtype=float)
+
+        def tabulated(**_values):
+            return xs.copy(), ys.copy()
+
+        tabulated.__name__ = "data"
+        return tabulated
 
     def traced(**values):
         x, y, _ = _evaluate_spec(spec, values, spec_t(spec, samples()))
@@ -308,6 +326,26 @@ def compile_spec(spec: Mapping[str, Any], samples: Callable[[], int] = lambda: 2
 
     traced.__name__ = str(spec.get("kind", "parametric"))
     return traced
+
+
+def data_spec(x: Iterable[float], y: Iterable[float], source: str = "") -> Dict[str, Any]:
+    """A data line's spec: ``x`` and ``y`` as lists of floats, and where they came from.
+
+    Raises
+    ------
+    ValueError
+        When *x* and *y* differ in length or hold fewer than two points.
+    """
+    xs = [float(v) for v in np.asarray(list(x), dtype=float).ravel()]
+    ys = [float(v) for v in np.asarray(list(y), dtype=float).ravel()]
+    if len(xs) != len(ys):
+        raise ValueError(f"x has {len(xs)} values, y {len(ys)}")
+    if len(xs) < 2:
+        raise ValueError("a line needs at least two points")
+    spec: Dict[str, Any] = {"kind": "data", "x": xs, "y": ys}
+    if source:
+        spec["source"] = str(source)
+    return spec
 
 
 def spec_labels(spec: Mapping[str, Any], values: Mapping[str, float]) -> List[str]:
@@ -604,7 +642,7 @@ class OverlayCurve:
         self.links: Dict[str, str] = {}
         self.text = ""
         self.spec: Dict[str, Any] = {}
-        if self.kind in ("parametric", "points"):
+        if self.kind in SPEC_KINDS:
             self.set_spec(dict(spec or {}, kind=self.kind))
         else:
             self.set_text(text)
@@ -637,7 +675,12 @@ class OverlayCurve:
         self.spec["kind"] = self.kind
         self.error = ""
         self.function = compile_spec(self.spec, lambda: self.samples)
-        self.text = f"x = {self.spec.get('x', '')}; y = {self.spec.get('y', '')}"
+        if self.kind == "data":
+            source = self.spec.get("source")
+            self.text = f"{len(self.spec.get('x') or [])} tabulated points" + (
+                f" from {source}" if source else "")
+        else:
+            self.text = f"x = {self.spec.get('x', '')}; y = {self.spec.get('y', '')}"
         self._sync(spec_parameter_names(self.spec), {})
 
     def _sync(self, names: Sequence[str], defaults: Mapping[str, float]) -> None:
@@ -713,6 +756,8 @@ class OverlayCurve:
     @property
     def filled(self) -> str:
         """The curve with the values written in."""
+        if self.kind == "data":
+            return self.text
         if self.kind in ("parametric", "points"):
             values = self.get_parameters()
             parts = [f"{n} = {filled_text(e, values)}" for n, e in parse_where(self.spec.get("where"))]
@@ -820,14 +865,14 @@ class OverlayCurve:
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any], title: str) -> "OverlayCurve":
         """A curve from a predefined entry: ``equation``, ``function``,
-        ``parametric`` or ``points``; with ``parameters`` and ``ranges``,
+        ``parametric``, ``points`` or ``data``; with ``parameters`` and ``ranges``,
         ``fixed`` (names held fixed), ``links`` (``{parameter: constant}``,
         see :meth:`link_to`) and ``color``."""
         colour = str(entry.get("color", "#ff0000"))
         if "function" in entry:
             curve = cls(title, str(entry["function"]), is_function=True, color=colour)
-        elif "parametric" in entry or "points" in entry:
-            kind = "parametric" if "parametric" in entry else "points"
+        elif any(k in entry for k in SPEC_KINDS):
+            kind = next(k for k in SPEC_KINDS if k in entry)
             curve = cls(title, kind=kind, spec=dict(entry[kind] or {}), color=colour)
         else:
             curve = cls(title, str(entry.get("equation", "x")), color=colour)

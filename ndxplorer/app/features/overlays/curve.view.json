@@ -1,5 +1,5 @@
 {
- "_comment": "One overlay curve. {title} and {filled_label} are filled in per curve. A section tagged with curve kinds (equation, function, parametric, points) shows for those only: a function curve shows its source in a code editor, a parametric curve its x(t), y(t) and t range, a point set its t values and labels.",
+ "_comment": "One overlay curve. {title} and {filled_label} are filled in per curve. A section tagged with curve kinds (equation, function, parametric, points, data) shows for those only: a function curve shows its source in a code editor, a parametric curve its x(t), y(t) and t range, a point set its t values and labels; a data line (tabulated points another tool pushed) has no equation and no parameters.",
  "sections": [
   {"type": "row", "sections": [
    {"type": "toggle", "attr": "visible", "label": "{title}", "description": "Show the curve on the plot."}]},

@@ -240,6 +240,38 @@ class NdxApp:
 
                 logging.getLogger(__name__).exception("%s.%s", feature.name, hook)
 
+    # ---------------------------------------------------- lines from a host
+    def add_overlay_lines(self, lines, source: str = "") -> list:
+        """Draw tabulated lines another tool computed (a host's push).
+
+        Parameters
+        ----------
+        lines : sequence of dict
+            A LineSet, ``{"name", "x", "y", "style": {"color"}}`` per line:
+            what :class:`ndxplorer.rpc.lines.FretLines` /
+            :class:`~ndxplorer.rpc.lines.PhasorLines` return, and what
+            ChiSurf's FRET-line tool pushes. Each becomes a *data* curve of
+            the Overlays tab: named, coloured, removable, kept in the session.
+        source : str
+            Who sent them (shown with the curve and in the status line).
+
+        Returns
+        -------
+        list of str
+            The curve titles; a name already there is updated in place.
+        """
+        return self._feature("overlays").add_lines(lines, source)
+
+    def remove_overlay_line(self, title: str) -> bool:
+        """Remove the overlay curve *title*; whether there was one."""
+        return self._feature("overlays").remove_line(title)
+
+    def _feature(self, name: str):
+        for feature in self.features:
+            if feature.name == name:
+                return feature
+        raise LookupError(f"ndX has no {name!r} feature")
+
     # ------------------------------------------------------------- actions
     def _checked(self, attr: str) -> bool:
         return bool(getattr(self.panel, attr, False))

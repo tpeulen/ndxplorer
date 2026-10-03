@@ -85,3 +85,12 @@ class LinesService:
     def providers(self) -> dict[str, OverlayProvider]:
         """Return provider name → provider, for generic UI enumeration."""
         return {"phasor": self.phasor, "fret_line": self.fret_line}
+
+    def push(self, app: Any, provider: str = "fret_line", **params: Any) -> list[str]:
+        """Fetch *provider*'s LineSet and draw it in *app* (an ``NdxApp``).
+
+        The lines become data curves of the Overlays tab
+        (``NdxApp.add_overlay_lines``); returns their titles.
+        """
+        lines = self.providers()[provider].overlays(**params)
+        return app.add_overlay_lines(lines, source=f"ChiSurf {provider}")

@@ -539,8 +539,9 @@ class CurvePanel:
         self.table = ParameterTable(feature.app, lambda: curve.group.parameters_all,
                                     label=lambda p: p.name)
 
-    def enabled(self, _name: str) -> bool:
-        return True
+    def enabled(self, name: str) -> bool:
+        # a data line has no parameters to fit
+        return not (name == "fit" and self.curve.kind == "data")
 
     # what the spec binds to
     @property
@@ -651,7 +652,7 @@ class CurvePanel:
         base = load_spec("curve")
         from ...core.overlay_curves import KINDS
 
-        filled = {"equation": "Filled: y =", "function": "Filled Function:"}
+        filled = {"equation": "Filled: y =", "function": "Filled Function:", "data": "Data:"}
         spec = _fill(base, title=curve.title, filled_label=filled.get(curve.kind, "Filled:"))
         # A section tagged with kinds is for those kinds only.
         spec["sections"] = [s for s in spec["sections"]
@@ -704,6 +705,53 @@ class OverlaysPanel:
         curve.register()
         self.panels.append(CurvePanel(self.feature, curve))
         return curve
+
+    def add_lines(self, lines: Sequence[Dict[str, Any]], source: str = "") -> List[str]:
+        """Tabulated lines another tool hands over, as data curves.
+
+        Parameters
+        ----------
+        lines : sequence of dict
+            A LineSet: ``{"name", "x", "y", "style": {"color"}}`` per line
+            (the shape ChiSurf's ``fret_line.overlays`` and ``phasor.overlays``
+            return; ``color`` may also sit at the top level).
+        source : str
+            Who sent them, shown under the curve ("ChiSurf FRET lines").
+
+        Returns
+        -------
+        list of str
+            The curves' titles. A line named like a curve that is already
+            there replaces that curve's points (its visibility stays), so
+            pushing again updates rather than duplicates.
+        """
+        from ...core.overlay_curves import OverlayCurve, data_spec
+
+        titles = []
+        for i, line in enumerate(lines or ()):
+            spec = data_spec(line.get("x") or [], line.get("y") or [], source)
+            title = str(line.get("name") or f"Line {i + 1}")
+            colour = str((line.get("style") or {}).get("color") or line.get("color")
+                         or "#50c0ff")
+            existing = next((c for c in self.curves if c.title == title), None)
+            if existing is not None and existing.kind == "data":
+                existing.set_spec(spec)
+                existing.color = colour
+            else:
+                if existing is not None:
+                    self.remove(existing)
+                curve = OverlayCurve(title, kind="data", spec=spec, color=colour)
+                curve.register()
+                self.panels.append(CurvePanel(self.feature, curve))
+            titles.append(title)
+        return titles
+
+    def remove_titled(self, title: str) -> bool:
+        """Remove the curve called *title*; whether there was one."""
+        curve = next((c for c in self.curves if c.title == str(title)), None)
+        if curve is not None:
+            self.remove(curve)
+        return curve is not None
 
     def remove(self, curve) -> None:
         curve.unregister()
@@ -1640,6 +1688,22 @@ class OverlaysFeature(Feature):
     def on_data_changed(self) -> None:
         self.equations.validate()
 
+    # -- lines from other tools --------------------------------------------------
+    def add_lines(self, lines, source: str = "") -> List[str]:
+        """Draw tabulated lines on the map (see :meth:`OverlaysPanel.add_lines`)."""
+        titles = self.overlays.add_lines(lines, source)
+        if titles:
+            self.status(f"Added {len(titles)} line(s) to the Overlays tab"
+                        + (f" from {source}" if source else ""))
+        self.app.model.invalidate()
+        return titles
+
+    def remove_line(self, title: str) -> bool:
+        """Remove the overlay curve *title*; whether there was one."""
+        removed = self.overlays.remove_titled(title)
+        self.app.model.invalidate()
+        return removed
+
     # -- session state ---------------------------------------------------------
     def session_state(self) -> Optional[dict]:
         """The overlay curves (equation, colour, parameters with their vectors),
@@ -1658,11 +1722,13 @@ class OverlaysFeature(Feature):
 
     def _curve_state(self, curve) -> dict:
         """A curve's session entry; ``links`` names the constants its parameters follow."""
+        from ...core.overlay_curves import SPEC_KINDS
+
         constants = {id(p): p.name for p in self.constants.group.parameters_all}
         state = {"title": curve.title, "kind": curve.kind, "text": curve.text,
                  "is_function": curve.kind == "function", "color": curve.color,
                  "visible": bool(curve.visible), "parameters": curve.group.get_state()}
-        if curve.kind in ("parametric", "points"):
+        if curve.kind in SPEC_KINDS:
             state["spec"] = dict(curve.spec)
         links = {p.name: constants[id(p.link)] for p in curve.group.parameters_all
                  if p.link is not None and id(p.link) in constants}
