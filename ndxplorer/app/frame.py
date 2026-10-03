@@ -23,8 +23,10 @@ the menu bar's placement.
 
 from __future__ import annotations
 
+import itertools
 import json
 import pathlib
+import weakref
 from typing import Any, Callable, Dict, Optional
 
 from . import plots, theme
@@ -32,7 +34,21 @@ from .menus import build_menu_bar, refresh as refresh_menus
 from .model import ExplorerModel
 from .view_model import PanelModel
 
-__all__ = ["NdxApp", "make_app", "load_spec"]
+__all__ = ["NdxApp", "make_app", "load_spec", "live_apps"]
+
+#: The apps not yet closed, by creation order (what a host's push reaches).
+_LIVE: "weakref.WeakValueDictionary[int, NdxApp]" = weakref.WeakValueDictionary()
+_LIVE_SEQ = itertools.count()
+
+
+def live_apps() -> list:
+    """The ndX apps of this process that are not closed, oldest first.
+
+    What a host pushes tabulated lines to (:meth:`NdxApp.add_overlay_lines`):
+    ChiSurf's FRET-line tool reaches every open ndX window, however it was
+    opened, through this list.
+    """
+    return [app for _k, app in sorted(_LIVE.items())]
 
 VIEWS = pathlib.Path(__file__).with_name("views")
 
@@ -108,6 +124,7 @@ class NdxApp:
         from emtk.view_form import FormState
 
         self.model = model if model is not None else ExplorerModel(settings_file)
+        _LIVE[next(_LIVE_SEQ)] = self
         self.on_exit = on_exit
         self.session_autosave = bool(session_autosave)
         self.panel = PanelModel(self.model, actions={
@@ -316,6 +333,9 @@ class NdxApp:
         if getattr(self, "_closed", False):
             return
         self._closed = True
+        for key, app in list(_LIVE.items()):
+            if app is self:
+                _LIVE.pop(key, None)
         self._each_feature("on_close")
 
     # ------------------------------------------------------------- drawing

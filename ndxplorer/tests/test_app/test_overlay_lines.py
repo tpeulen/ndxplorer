@@ -97,6 +97,14 @@ def test_a_data_line_survives_the_session(app):
     np.testing.assert_allclose(curve.function()[0], TAU)
 
 
+def test_live_apps_lists_an_app_until_it_closes(app):
+    from ndxplorer.app.frame import live_apps
+
+    assert app in live_apps()
+    app.close()
+    assert app not in live_apps()
+
+
 def test_bad_lines_are_refused():
     from ndxplorer.core.overlay_curves import data_spec
 
