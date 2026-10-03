@@ -469,3 +469,12 @@ def test_the_feature_imports_without_qt():
             "if m in sys.modules]; print(bad); sys.exit(1 if bad else 0)")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_ranking_table_sizes_its_columns_to_the_names():
+    """The x / y names are not cut to the old 520 px window: the table fits its
+    columns to the names (a name still too long shows whole as its tooltip)."""
+    from ndxplorer.analysis.vizrank_model import load_spec
+
+    table = next(s for s in load_spec()["sections"] if s.get("key") == "data_table")
+    assert table["options"]["fit_columns"] is True

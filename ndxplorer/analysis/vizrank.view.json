@@ -141,6 +141,7 @@
         "tooltip_key": "note",
         "row_key": "key",
         "filter": true,
+        "fit_columns": true,
         "expand": true,
         "height": 320
       }

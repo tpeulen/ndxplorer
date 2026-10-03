@@ -236,7 +236,8 @@ class RankingPanel:
         feature.app.forms[f"playback_export.rank.{pairs}"] = self.state
         self.model = None
         title = "Find informative projections" if pairs else "Find informative z parameters"
-        self.window = DialogWindow(title, size=(520.0, 640.0), key=f"rank{int(pairs)}")
+        # Wide enough for two full MFD parameter names ("Number of Photons (fit window) (green)").
+        self.window = DialogWindow(title, size=(760.0, 640.0), key=f"rank{int(pairs)}")
         self.show_help = False
         self._help_window = DialogWindow("Find informative projections - help",
                                          size=(560.0, 520.0), key=f"rankhelp{int(pairs)}")

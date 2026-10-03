@@ -189,7 +189,11 @@ class VizRankModel:
                     "format": fmt, "width": 90,
                     "tooltip": "The score; the bar is its share of the range."}]
         for index, title in enumerate(header[1:]):
-            columns.append({"key": f"name{index}", "title": title})
+            # Sized to the names (the section's fit_columns); a name still cut
+            # shows whole as its cell's tooltip.
+            columns.append({"key": f"name{index}", "title": title,
+                            "tooltip": f"The {title} parameter of the view; hover a "
+                                       "shortened name for the whole of it."})
         return columns
 
     def status_text(self) -> str:
