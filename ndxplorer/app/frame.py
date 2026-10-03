@@ -283,7 +283,31 @@ class NdxApp:
         list of str
             The curve titles; a name already there is updated in place.
         """
-        return self._feature("overlays").add_lines(lines, source)
+        from ..core.overlay_curves import data_spec
+        from .overlay_axes import resolve_axis
+
+        lines = list(lines or ())
+        prepared = []
+        names = {}
+        for line in lines:
+            spec = data_spec(line.get("x", []), line.get("y", []), source)
+            prepared.append(dict(line, x=spec["x"], y=spec["y"]))
+            axes = line.get("axes")
+            if not axes:
+                continue
+            resolved = {key: resolve_axis(self.model.parameter_names, axes.get(key, ""))
+                        for key in ("x", "y")}
+            if not all(resolved.values()) or resolved["x"] == resolved["y"]:
+                raise ValueError(f"Cannot use overlay axes {axes!r}: select explicit, distinct "
+                                 "column names present in the table.")
+            if names and names != resolved:
+                raise ValueError("Cannot mix different overlay axes in one push.")
+            names = resolved
+        for key, name in names.items():
+            assert name is not None
+            self.model.set_parameter(key, name)
+        prepared = [dict(line, axes=dict(names)) if names else line for line in prepared]
+        return self._feature("overlays").add_lines(prepared, source)
 
     def remove_overlay_line(self, title: str) -> bool:
         """Remove the overlay curve *title*; whether there was one."""

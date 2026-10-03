@@ -734,6 +734,8 @@ class OverlaysPanel:
         titles = []
         for i, line in enumerate(lines or ()):
             spec = data_spec(line.get("x") or [], line.get("y") or [], source)
+            if line.get("axes"):
+                spec["axes"] = dict(line["axes"])
             title = str(line.get("name") or f"Line {i + 1}")
             colour = str((line.get("style") or {}).get("color") or line.get("color")
                          or "#50c0ff")
@@ -769,6 +771,14 @@ class OverlaysPanel:
             panel.curve.unregister()
         self.panels = []
 
+    def is_drawn(self, curve) -> bool:
+        """Whether a visible curve belongs to the map's current projection."""
+        if not curve.visible:
+            return False
+        axes = (curve.spec or {}).get("axes") if curve.kind == "data" else None
+        model = self.feature.app.model
+        return not axes or (axes.get("x"), axes.get("y")) == (model.x.name, model.y.name)
+
     def save_csv(self) -> None:
         """Save CSV: the visible curves, as drawn over the displayed axes."""
         from ...core.overlay_curves import write_curves_csv
@@ -779,7 +789,7 @@ class OverlaysPanel:
             self.feature.app.message = ("Save Overlays",
                                         "No overlay data available yet. Create/update overlays first.")
             return
-        visible = [c for c in self.curves if c.visible]
+        visible = [c for c in self.curves if self.is_drawn(c)]
         if not visible:
             self.feature.app.message = ("Save Overlays", "No visible curves to save.")
             return
@@ -1647,7 +1657,7 @@ class OverlaysFeature(Feature):
 
         for i, panel in enumerate(self.overlays.panels):
             curve = panel.curve
-            if not curve.visible:
+            if not self.overlays.is_drawn(curve):
                 continue
             if curve.kind == "points":
                 self._draw_markers(i, curve, hist)

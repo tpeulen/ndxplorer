@@ -448,6 +448,7 @@ class IoFeature(Feature):
         from ...io.writer import save_burst_ids_headless
 
         selections, source = self._selections(), self.app.model.source
+        recorder = getattr(self.app, "burst_ids_recorder", None)
 
         def work(task: Task):
             def progress(done: int, total: int) -> bool:
@@ -458,7 +459,7 @@ class IoFeature(Feature):
 
         def finish(written) -> None:
             logger.info("wrote %d burst-ID files to %s", len(written), folder)
-            self._record_burst_ids(folder, written, selections, source)
+            self._record_burst_ids(folder, written, selections, source, recorder)
             self.dialog = BurstIdQuestion(folder, self._process_burst_ids)
 
         def fail(exc: BaseException) -> None:
@@ -466,13 +467,13 @@ class IoFeature(Feature):
 
         self._run("Saving Files", "Saving Burst ID files...", work, finish, fail)
 
-    def _record_burst_ids(self, folder: str, written, selections, source) -> None:
-        """Hand the saved selection to the host's recorder (``app.burst_ids_recorder``).
+    def _record_burst_ids(self, folder: str, written, selections, source, recorder) -> None:
+        """Hand the saved selection to the recorder captured with its source.
 
         A failure to record is said in the status line and the log; the files
-        are written either way.
+        are written either way. Switching tables during the asynchronous save
+        cannot substitute the new table's recorder.
         """
-        recorder = getattr(self.app, "burst_ids_recorder", None)
         if recorder is None or source is None:
             return
         from ...analysis.burst_bridge import describe_selections

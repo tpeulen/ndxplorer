@@ -11,7 +11,6 @@ import pathlib
 
 import numpy as np
 import pytest
-
 from ndxplorer.core.data_source import DataSource
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
@@ -230,6 +229,37 @@ def test_a_failing_recorder_keeps_the_files_and_says_so(app, tmp_path):
     finish(app)
     assert list(tmp_path.glob("*.bst"))
     assert "recording them failed: store offline" in app.status
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_a_pending_save_keeps_the_source_recorder_when_another_table_is_opened(
+    app, tmp_path, monkeypatch, replacement,
+):
+    from types import SimpleNamespace
+
+    from ndxplorer.core.data_source import DataSource
+
+    assert app.open_path(str(MFD))
+    source = app.model.source
+    original, later, pending = [], [], {}
+    app.burst_ids_recorder = lambda record: original.append(record)
+
+    def run(_title, _detail, work, on_success, on_error):
+        pending.update(work=work, finish=on_success)
+
+    monkeypatch.setattr(io_feature(app), "_run", run)
+    app.run_action("save_burst_ids")
+    app.io_service.answer(str(tmp_path))
+    app.model.set_source(DataSource.from_columns({"x": [1., 2.], "y": [3., 4.]}))
+    app.burst_ids_recorder = (lambda record: later.append(record)) if replacement else None
+
+    written = pending["work"](SimpleNamespace(cancelled=False, detail_text=""))
+    pending["finish"](written)
+
+    assert list(tmp_path.glob("*.bst"))
+    assert later == []
+    assert len(original) == 1
+    assert original[0]["n_rows"] == source.size
 
 
 def test_screenshot_saves_the_window_as_png_or_jpeg(app, tmp_path):

@@ -65,6 +65,150 @@ def test_a_pushed_line_is_a_named_coloured_data_curve_drawn_as_given(app):
     assert "Added 1 line(s)" in app.status
 
 
+def test_axis_hints_select_the_projection_before_drawing(app):
+    app.model.set_parameter("x", "E")
+    app.model.set_parameter("y", "tau")
+    _frame(app)
+
+    app.add_overlay_lines([dict(LINE, axes={"x": "tau", "y": "E"})])
+    _frame(app)
+
+    assert (app.model.x.name, app.model.y.name) == ("tau", "E")
+    assert feature(app).overlays.curves[0].kind == "data"
+
+
+@pytest.mark.parametrize(
+    "columns, expected",
+    [
+        ({"Tau (green)": TAU, "FRET efficiency": E},
+         ("Tau (green)", "FRET efficiency")),
+        ({"tau_f (ns)": TAU, "E": E}, ("tau_f (ns)", "E")),
+        ({"tau_x (ns)": TAU, "FRET efficiency(PIE)": E},
+         ("tau_x (ns)", "FRET efficiency(PIE)")),
+    ],
+)
+def test_provider_quantity_names_resolve_to_table_columns(app, columns, expected):
+    from ndxplorer.core.data_source import DataSource
+
+    app.model.set_source(DataSource.from_columns(columns))
+    app.model.set_parameter("x", expected[1])
+    app.model.set_parameter("y", expected[0])
+    quantity = "tau_x" if expected[0].startswith("tau_x") else "tau_f"
+
+    app.add_overlay_lines([dict(LINE, axes={"x": quantity, "y": "e_fret"})])
+
+    assert (app.model.x.name, app.model.y.name) == expected
+
+
+@pytest.mark.parametrize(
+    "axes, extra",
+    [
+        ({"x": "tau", "y": "missing"}, {}),
+        ({"x": "tau", "y": "tau"}, {}),
+        ({"x": "tau_f", "y": "E"}, {"Tau (green)": TAU, "tau_f (ns)": TAU}),
+        ({"x": "tau", "y": "e_fret"}, {"Proximity ratio": E}),
+        ({"x": "tau"}, {}),
+    ],
+)
+def test_unusable_axis_hints_are_refused_without_changing_the_view(app, axes, extra):
+    from ndxplorer.core.data_source import DataSource
+
+    columns = {"tau": TAU, "E": E}
+    if axes.get("y") == "e_fret":
+        columns.pop("E")
+    columns.update(extra)
+    app.model.set_source(DataSource.from_columns(columns))
+    before = (app.model.x.name, app.model.y.name)
+
+    with pytest.raises(ValueError, match="overlay axes"):
+        app.add_overlay_lines([dict(LINE, axes=axes)])
+
+    assert (app.model.x.name, app.model.y.name) == before
+    assert feature(app).overlays.curves == []
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        dict(LINE, name="other projection", axes={"x": "E", "y": "tau"}),
+        dict(LINE, name="bad data", x=[1, 2], y=[1]),
+    ],
+)
+def test_a_bad_batch_does_not_add_lines_or_switch_axes(app, second):
+    app.model.set_parameter("x", "E")
+    app.model.set_parameter("y", "tau")
+    before = (app.model.x.name, app.model.y.name)
+    first = dict(LINE, axes={"x": "tau", "y": "E"})
+
+    with pytest.raises(ValueError):
+        app.add_overlay_lines([first, second])
+
+    assert (app.model.x.name, app.model.y.name) == before
+    assert feature(app).overlays.curves == []
+
+
+def test_a_hinted_line_keeps_its_projection_in_the_session_and_draws_only_there(app, monkeypatch):
+    from emtk import implot
+
+    app.add_overlay_lines([dict(LINE, axes={"x": "tau", "y": "E"})])
+    state = feature(app).session_state()
+    assert state["curves"][0]["spec"]["axes"] == {"x": "tau", "y": "E"}
+    feature(app).restore_session_state(state, _Context())
+    calls = []
+    monkeypatch.setattr(implot, "plot_line", lambda title, *a, **kw: calls.append(title))
+    _frame(app)
+    assert any(title.startswith("##overlay-curve") for title in calls)
+
+    calls.clear()
+    app.model.set_parameter("x", "E")
+    app.model.set_parameter("y", "tau")
+    _frame(app)
+    assert not any(title.startswith("##overlay-curve") for title in calls)
+    assert feature(app).overlays.curves[0].visible
+
+    calls.clear()
+    app.model.set_parameter("x", "tau")
+    app.model.set_parameter("y", "E")
+    _frame(app)
+    assert any(title.startswith("##overlay-curve") for title in calls)
+
+
+def test_overlay_export_omits_lines_from_another_projection(app, monkeypatch, tmp_path):
+    app.add_overlay_lines([dict(LINE, axes={"x": "tau", "y": "E"})])
+    app.model.set_parameter("x", "E")
+    app.model.set_parameter("y", "tau")
+    _frame(app)
+    output = tmp_path / "wrong_projection.csv"
+    monkeypatch.setattr(feature(app), "ask_save", lambda *a: a[-1](str(output)))
+
+    feature(app).overlays.save_csv()
+
+    assert not output.exists()
+    assert app.message == ("Save Overlays", "No visible curves to save.")
+
+
+@pytest.mark.parametrize("factory", [np.asarray, iter])
+def test_coordinate_arrays_and_iterators_are_materialized_before_switching_axes(app, factory):
+    app.model.set_parameter("x", "E")
+    app.model.set_parameter("y", "tau")
+    line = dict(LINE, x=factory(TAU), y=factory(E), axes={"x": "tau", "y": "E"})
+
+    assert app.add_overlay_lines([line]) == [LINE["name"]]
+
+    np.testing.assert_allclose(feature(app).overlays.curves[0].function()[0], TAU)
+    assert (app.model.x.name, app.model.y.name) == ("tau", "E")
+
+
+@pytest.mark.parametrize(
+    "names, quantity, expected",
+    [(["E", "e"], "e", "e"), (["Tau", "tau"], "TAU", None)],
+)
+def test_literal_names_take_precedence_and_casefolded_ambiguity_is_refused(names, quantity, expected):
+    from ndxplorer.app.overlay_axes import resolve_axis
+
+    assert resolve_axis(names, quantity) == expected
+
+
 def test_pushing_again_updates_the_line_and_remove_deletes_it(app):
     app.add_overlay_lines([LINE])
     feature(app).overlays.curves[0].visible = False
