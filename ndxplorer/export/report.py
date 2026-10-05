@@ -8,7 +8,7 @@ reader, equation columns, per-parameter axis settings and binning (through
 written into ``<folder>/report/``: a PNG and a CSV per plot, an
 ``axes_info.yaml`` describing the axes, and a DOCX when python-docx is there.
 
-The figures are drawn by matplotlib into bytes (Agg, no pyplot), so the same
+The figures are drawn by emtk.figure into bytes (no window, no toolkit), so the same
 code runs in a browser: :func:`build_folder_report` returns the files as
 ``{name: bytes}``, and :func:`write_folder_report` is the one step that
 touches the disk.
@@ -328,20 +328,14 @@ def hist_2d_csv(H, x_edges, y_edges, xlabel: str = "X", ylabel: str = "Y") -> by
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def _figure(figsize, dpi):
-    from matplotlib.figure import Figure
+def _figure(figsize, dpi, default, rows=1, cols=1, **ratios):
+    """An :mod:`emtk.figure` of *figsize* inches at *dpi* (150 by default)."""
+    from emtk.figure import Figure
 
-    size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else None
-    return Figure(figsize=size, dpi=int(dpi) if dpi else 150)
-
-
-def _png(fig) -> bytes:
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-    FigureCanvasAgg(fig)
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight", facecolor="white")
-    return buffer.getvalue()
+    width, height = (tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2
+                     else default)
+    scale = int(dpi) if dpi else 150
+    return Figure(rows, cols, size=(int(width * scale), int(height * scale)), **ratios)
 
 
 def _widths(edges: np.ndarray) -> np.ndarray:
@@ -355,74 +349,79 @@ def _widths(edges: np.ndarray) -> np.ndarray:
 def render_1d_png(edges, counts, title: str, xlabel: str, ylabel: str = "Count",
                   color: Optional[str] = None, edgecolor: Optional[str] = None,
                   linewidth: Optional[float] = None, figsize=None, dpi=None) -> bytes:
-    """A 1-D histogram as bars, as PNG bytes (the ``1d_basic`` renderer)."""
+    """A 1-D histogram as bars, as PNG bytes (the ``1d_basic`` renderer).
+
+    ``linewidth`` is accepted for the report templates that set it; the bar
+    outline is always one pixel.
+    """
     edges, counts = _clean(edges), _clean(counts)
-    fig = _figure(figsize or (6, 4), dpi)
-    ax = fig.add_subplot(111)
-    ax.bar((edges[:-1] + edges[1:]) / 2.0, counts, width=_widths(edges), align="center",
-           edgecolor=edgecolor or "black", linewidth=float(linewidth if linewidth is not None
-                                                            else 0.2),
-           color=color or "#4477aa")
+    fig = _figure(figsize, dpi, (6, 4))
+    ax = fig.ax()
+    ax.bars((edges[:-1] + edges[1:]) / 2.0, counts, width=_widths(edges),
+            edgecolor=edgecolor or "black", color=color or "#4477aa")
     ax.set_title(title)
-    ax.set_xlabel(xlabel or "")
-    ax.set_ylabel(ylabel)
-    ax.grid(True, linestyle=":", alpha=0.5)
-    fig.tight_layout()
-    return _png(fig)
+    ax.set_labels(x=xlabel or "", y=ylabel)
+    return fig.png_bytes()
 
 
-def _extent(x_edges, y_edges) -> list:
+def _extent(x_edges, y_edges) -> tuple:
+    """``(left, right, bottom, top)``: row 0 of the map at the bottom (``origin="lower"``)."""
     if x_edges.size and y_edges.size:
-        return [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]]
-    return [0, 1, 0, 1]
+        return (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1])
+    return (0.0, 1.0, 0.0, 1.0)
+
+
+def _map(ax, H, x_edges, y_edges, cmap: str, colorbar: Optional[str]):
+    """Draw ``H`` (``(n_x, n_y)``) as a map with y upwards; returns its level range."""
+    image = np.asarray(H, dtype=float).T[::-1] if np.size(H) else np.zeros((1, 1))
+    finite = image[np.isfinite(image)]
+    levels = ((float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0))
+    # The heatmap's first row is drawn at the top of its extent, so the
+    # transposed H is flipped: the highest y bin first, y running upwards.
+    ax.heatmap(image, colormap=cmap, extent=_extent(x_edges, y_edges), levels=levels,
+               colorbar=colorbar)
+    return levels
 
 
 def render_2d_png(H, x_edges, y_edges, title: str, xlabel: str, ylabel: str,
                   cmap: str = "viridis", figsize=None, dpi=None) -> bytes:
     """A 2-D histogram (``H`` is ``(n_x, n_y)``) with a colour bar, as PNG bytes."""
     H, x_edges, y_edges = _clean(H), _clean(x_edges), _clean(y_edges)
-    fig = _figure(figsize or (6, 5), dpi)
-    ax = fig.add_subplot(111)
-    image = ax.imshow(H.T, origin="lower", aspect="auto", extent=_extent(x_edges, y_edges),
-                      cmap=cmap)
-    fig.colorbar(image, ax=ax).set_label("Density")
+    fig = _figure(figsize, dpi, (6, 5))
+    ax = fig.ax()
+    _map(ax, H, x_edges, y_edges, cmap, "Density")
     ax.set_title(title)
-    ax.set_xlabel(xlabel or "")
-    ax.set_ylabel(ylabel or "")
-    fig.tight_layout()
-    return _png(fig)
+    ax.set_labels(x=xlabel or "", y=ylabel or "")
+    return fig.png_bytes()
 
 
 def render_2d_marginals_png(H, x_edges, y_edges, title: str, xlabel: str, ylabel: str,
                             cmap_2d: str = "Greys", color_x: str = "dimgrey",
                             color_y: str = "darkorange", figsize=None, dpi=None) -> bytes:
     """A 2-D histogram with its x marginal on top and y marginal on the right, as PNG bytes."""
-    from matplotlib.gridspec import GridSpec
-
     H, x_edges, y_edges = _clean(H), _clean(x_edges), _clean(y_edges)
     x_centres = (x_edges[:-1] + x_edges[1:]) / 2.0 if x_edges.size > 1 else np.array([0.5])
     y_centres = (y_edges[:-1] + y_edges[1:]) / 2.0 if y_edges.size > 1 else np.array([0.5])
-    fig = _figure(figsize or (8, 8), dpi)
-    grid = GridSpec(2, 2, figure=fig, width_ratios=[4, 1.2], height_ratios=[1.2, 4],
-                    hspace=0.05, wspace=0.05)
-    ax_map = fig.add_subplot(grid[1, 0])
-    ax_x = fig.add_subplot(grid[0, 0], sharex=ax_map)
-    ax_y = fig.add_subplot(grid[1, 1], sharey=ax_map)
-    image = ax_map.imshow(H.T, origin="lower", aspect="auto", extent=_extent(x_edges, y_edges),
-                          cmap=cmap_2d)
-    ax_x.bar(x_centres, H.sum(axis=1) if H.size else [0.0], width=_widths(x_edges),
-             color=color_x, edgecolor="black", linewidth=0.2)
-    ax_y.barh(y_centres, H.sum(axis=0) if H.size else [0.0], height=_widths(y_edges),
-              color=color_y, edgecolor="black", linewidth=0.2)
-    ax_map.set_xlabel(xlabel or "")
-    ax_map.set_ylabel(ylabel or "")
-    ax_x.tick_params(axis="x", labelbottom=False)
-    ax_y.tick_params(axis="y", labelleft=False)
-    colour_bar = fig.add_axes([0.92, 0.1, 0.02, 0.55])
-    fig.colorbar(image, cax=colour_bar).set_label("Counts")
-    fig.suptitle(title, y=0.98)
-    fig.subplots_adjust(left=0.10, bottom=0.08, right=0.88, top=0.94)
-    return _png(fig)
+    fig = _figure(figsize, dpi, (8, 8), 2, 2, width_ratios=(4, 1.2), height_ratios=(1.2, 4))
+    fig.title = title
+    ax_x, corner, ax_map, ax_y = fig.ax(0, 0), fig.ax(0, 1), fig.ax(1, 0), fig.ax(1, 1)
+    corner.hide()
+    levels = _map(ax_map, H, x_edges, y_edges, cmap_2d, None)
+    ax_x.bars(x_centres, H.sum(axis=1) if H.size else [0.0], width=_widths(x_edges),
+              color=color_x, edgecolor="black")
+    ax_y.bars(y_centres, H.sum(axis=0) if H.size else [0.0], width=_widths(y_edges),
+              color=color_y, edgecolor="black", horizontal=True)
+    ax_map.set_labels(x=xlabel or "", y=ylabel or "")
+    # Shared axes: the marginals span exactly the map's ranges, without labels.
+    left, right, bottom, top = _extent(x_edges, y_edges)
+    for ax in (ax_map, ax_x):
+        ax.set_xlim(left, right)
+    for ax in (ax_map, ax_y):
+        ax.set_ylim(bottom, top)
+    ax_x.hide_tick_labels(x=True)
+    ax_y.hide_tick_labels(y=True)
+    ax_y.add_colorbar("Counts", levels[0], levels[1], cmap_2d)
+    return fig.png_bytes()
 
 
 def docx_available() -> bool:
