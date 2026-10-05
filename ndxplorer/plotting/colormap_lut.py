@@ -1,79 +1,29 @@
 """Colormaps as lookup tables, without Qt.
 
-The colormaps ndXplorer offers are pyqtgraph's: CSV files of RGB stops
-(viridis, the CET maps, ...) and ``.hex`` palettes, copied unchanged into
-``colormap_data/`` beside this module (where they come from and their
-licences: ``colormap_data/SOURCE.txt``). They are plain text, read here and
-interpolated exactly as ``pyqtgraph.ColorMap`` does: stops evenly spaced over
-``[0, 1]``, linear in between. Neither pyqtgraph nor Qt is needed.
-
-Should the folder be missing (a stripped install), the maps matplotlib also
-ships -- viridis, plasma, inferno, magma, cividis, turbo -- come from there.
+The colour tables are emtk's (:mod:`emtk.colormaps`, the one home for them in
+the stack): pyqtgraph's maps -- viridis and friends, the CET maps, the
+``PAL-*`` palettes -- and the classic ones (gray, hot, RdBu, ...). Licences
+and sources travel with emtk (``licenses/colormaps.txt``). This module keeps
+ndXplorer's lookup: stops evenly spaced over ``[0, 1]`` and linear in between,
+exactly as ``pyqtgraph.ColorMap`` maps them, so a plot looks the same with or
+without pyqtgraph installed. Neither pyqtgraph, matplotlib nor Qt is needed.
 """
 
 from __future__ import annotations
 
 import functools
-import pathlib
 from typing import List, Optional
 
 import numpy as np
+from emtk import colormaps as _tables
 
 __all__ = ["available_colormaps", "colormap_stops", "lookup_table", "apply_colormap"]
-
-#: Maps matplotlib provides under the same name, should the folder be missing.
-_MATPLOTLIB_MAPS = ("cividis", "inferno", "magma", "plasma", "turbo", "viridis")
-
-
-#: The colormap files (copied from pyqtgraph, see ``colormap_data/SOURCE.txt``).
-MAPS_DIR = pathlib.Path(__file__).resolve().with_name("colormap_data")
-
-
-@functools.lru_cache(maxsize=1)
-def _maps_dir() -> Optional[pathlib.Path]:
-    """The folder of colormap files, or ``None`` when it is missing."""
-    return MAPS_DIR if MAPS_DIR.is_dir() else None
 
 
 @functools.lru_cache(maxsize=1)
 def available_colormaps() -> List[str]:
     """The colormap names, sorted."""
-    folder = _maps_dir()
-    if folder is not None:
-        names = {p.stem for p in folder.iterdir() if p.suffix.lower() in (".csv", ".hex")}
-        if names:
-            return sorted(names)
-    try:
-        import matplotlib
-
-        return sorted(n for n in _MATPLOTLIB_MAPS if n in matplotlib.colormaps)
-    except ImportError:
-        return ["viridis"]
-
-
-def _parse(path: pathlib.Path) -> np.ndarray:
-    """RGB stops of one pyqtgraph map file, 0..1, as ``pyqtgraph.colormap`` reads it."""
-    csv = path.suffix.lower() != ".hex"
-    stops = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(";"):
-            continue
-        colour = line.split(";", 1)[0].strip()
-        if not colour:
-            continue
-        if csv:
-            parts = colour.split(",")
-            if len(parts) < 3:
-                continue
-            stops.append([int(255 * float(c) + 0.5) for c in parts[:3]])
-        else:
-            text = colour.lstrip("#")
-            if len(text) == 3:
-                text = "".join(2 * c for c in text)
-            if len(text) < 6:
-                continue
-            stops.append([int(text[i:i + 2], 16) for i in (0, 2, 4)])
-    return np.asarray(stops, dtype=np.float64) / 255.0
+    return sorted(_tables.names())
 
 
 @functools.lru_cache(maxsize=64)
@@ -85,20 +35,7 @@ def colormap_stops(name: str) -> np.ndarray:
     KeyError
         When no such colormap exists.
     """
-    folder = _maps_dir()
-    if folder is not None:
-        for suffix in (".csv", ".hex"):
-            path = folder / f"{name}{suffix}"
-            if path.exists():
-                return _parse(path)
-    try:
-        import matplotlib
-
-        if name in matplotlib.colormaps:
-            return np.asarray(matplotlib.colormaps[name](np.linspace(0.0, 1.0, 256)))[:, :3]
-    except ImportError:
-        pass
-    raise KeyError(f"no colormap named {name!r}")
+    return np.asarray(_tables.stops(name), dtype=np.float64)
 
 
 def lookup_table(name: str, n_colors: int = 256, gamma: float = 1.0) -> np.ndarray:

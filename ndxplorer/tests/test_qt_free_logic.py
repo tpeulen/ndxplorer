@@ -201,18 +201,17 @@ def test_the_luts_match_pyqtgraph():
 
 
 def test_every_pyqtgraph_map_is_offered_without_pyqtgraph():
-    """The copied folder holds the maps pyqtgraph ships; none needs pyqtgraph."""
+    """Every map pyqtgraph ships is offered, from emtk's tables; none needs pyqtgraph."""
     import importlib.util
     import pathlib
 
-    assert colormap_lut.MAPS_DIR.is_dir()
-    assert {"viridis", "CET-L9", "PAL-relaxed"} <= set(colormap_lut.available_colormaps())
+    assert {"viridis", "CET-L9", "PAL-relaxed", "gray"} <= set(colormap_lut.available_colormaps())
     spec = importlib.util.find_spec("pyqtgraph")
     if spec is None:
         return
     theirs = pathlib.Path(spec.submodule_search_locations[0]) / "colors" / "maps"
     names = {p.stem for p in theirs.iterdir() if p.suffix.lower() in (".csv", ".hex")}
-    assert names == set(colormap_lut.available_colormaps())
+    assert names <= set(colormap_lut.available_colormaps())
 
 
 def test_applying_a_colormap_clips_to_the_limits():
