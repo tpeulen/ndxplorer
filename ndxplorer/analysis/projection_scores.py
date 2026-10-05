@@ -355,13 +355,13 @@ def nearest_neighbours(points: np.ndarray, k: int) -> np.ndarray:
     (integer photon counts). That matches ``NearestNeighbors.kneighbors()``
     called without query points, which is what Orange uses.
     """
-    from scipy.spatial import cKDTree
+    from tttrlib import KDTree
 
     points = np.asarray(points, dtype=np.float64)
     if points.ndim == 1:
         points = points[:, None]
     n = points.shape[0]
-    _, ind = cKDTree(points).query(points, k=k + 1)
+    _, ind = KDTree(points).query(points, k=k + 1)
     ind = np.asarray(ind).reshape(n, k + 1)
     is_self = ind == np.arange(n)[:, None]
     # Stable sort on "is it me" moves the self hit (if present) to the end and

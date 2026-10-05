@@ -335,7 +335,7 @@ def find_populations(points, n_total: Optional[float] = None, weights=None,
     Populations or None
         ``None`` with fewer than 50 usable rows.
     """
-    from scipy import ndimage
+    from tttrlib import ndimage
 
     p = np.asarray(points, dtype=np.float64)
     p = p[:, None] if p.ndim == 1 else p
@@ -525,7 +525,7 @@ def _whole_islands(h: np.ndarray, f: np.ndarray, sigma: float, cells: np.ndarray
     -- a kernel-density soft assignment (1 deep inside, ~1/2 on a ridge, less
     next to a clump or bridge that is not the island's).
     """
-    from scipy import ndimage
+    from tttrlib import ndimage
 
     flat = cells.ravel()
     own = np.zeros(flat.size)
