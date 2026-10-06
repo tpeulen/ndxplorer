@@ -13,7 +13,7 @@ lets that curve be **fitted**, against either of the two things on screen:
     are a *distribution* of one axis, such as a Gaussian on E.
 
 Either way the equation is evaluated exactly as the overlay draws it and
-optimised by ``scipy.optimize.least_squares``, so the same safe formula that
+optimised by ``chisurf.core.math.numerics.least_squares``, so the same safe formula that
 draws the overlay also drives the fit.
 
 The fit's parameters are seeded from the curve's own
@@ -35,7 +35,8 @@ edit fix/free, ``run`` repeatedly). :func:`fit_equation_to_marginal` and
 :func:`fit_equation_to_histogram` are the one-shot conveniences used by the
 no-dialog path and the tests.
 
-Qt-free, chisurf-free and headless-testable (numpy and scipy).
+Qt-free and headless-testable: numpy, and chisurf's least squares
+(``chisurf.core.math.numerics``, solved by IMP.bff) for the fit itself.
 """
 
 from __future__ import annotations
@@ -562,8 +563,8 @@ def _least_squares(
     residuals: Callable[[np.ndarray], np.ndarray],
     diff_step: Optional[float] = None,
 ):
-    """Run ``scipy.optimize.least_squares`` over parameters with armed bounds."""
-    from scipy.optimize import least_squares
+    """Run a bounded least-squares fit over parameters with armed bounds."""
+    from chisurf.core.math.numerics import least_squares
 
     start = np.array([float(p.value) for p in variables], dtype=float)
     lower, upper = _bounds_of(variables)
@@ -719,7 +720,7 @@ class CurveFit(_DataParameterHost):
     :meth:`seed_from_group` -- then call :meth:`run` as often as you like. The
     equation is evaluated exactly as the overlay draws it
     (:class:`~ndxplorer.core.overlay_curves.CurveEvaluator`) and optimised by
-    ``scipy.optimize.least_squares`` within the armed bounds.
+    ``chisurf.core.math.numerics.least_squares`` within the armed bounds.
     """
 
     def __init__(self, equation: str, x: np.ndarray, y: np.ndarray,
