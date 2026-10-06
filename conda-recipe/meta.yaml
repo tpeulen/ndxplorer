@@ -37,8 +37,6 @@ requirements:
     - pyyaml
     - pillow
     - typing-extensions
-    - matplotlib
-    - scipy
     - umap-learn
     # Mask image I/O: TIFF via tttrlib's bundled libtiff.
     - tttrlib >=0.27
