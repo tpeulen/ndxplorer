@@ -79,6 +79,17 @@ def _template() -> dict:
 _NAMES = ("source", "columns_source", "edited_call", "editable_call", "context_call",
           "selected_call", "delete_call", "expanded_attr")
 
+#: Keys owned by the parameter-table preprocessor and curve-form filtering.
+#: The shared table's option vocabulary remains in its toolkit reader.
+from emtk.view_form import COMMON_KEYS, TABLE_KEYS
+from ..core.overlay_curves import KINDS
+
+PARAMETER_TABLE_KEYS = COMMON_KEYS | TABLE_KEYS | frozenset({
+    "table", "hidden_when", "visible_when", "title", *KINDS,
+})
+CURVE_SECTION_KEYS = frozenset(KINDS)
+__all__ += ["PARAMETER_TABLE_KEYS", "CURVE_SECTION_KEYS"]
+
 
 def section(table: str, **overrides: Any) -> dict:
     """The data_table section for the :class:`ParameterTable` at attribute *table*."""
