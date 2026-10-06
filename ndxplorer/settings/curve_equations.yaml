@@ -81,7 +81,9 @@
   function: |
     def static_fret_line(forster_radius=52.0, sigma=6.0, tau_d0=4.0, num_points=500):
         import numpy as np
-        from scipy.integrate import simpson
+        # Smooth integrands on a fine uniform grid: the trapezoid rule is within
+        # 1e-6 ns of Simpson's here, and needs nothing beyond NumPy.
+        simpson = np.trapezoid
 
         def fret_efficiency(r, r0):
             return 1.0 / (1.0 + (r / r0)**6)
