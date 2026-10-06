@@ -22,9 +22,9 @@ rows into the table as the Qt window's worker does.
 
 **Export…** -- the publication figure: a small form
 (``playback_export/publication_export.view.json``), the figure composed by
-:mod:`ndxplorer.export.publication_figure` (Matplotlib, Agg -- there is a
-Pyodide build) and its bytes handed to ``app.io_service.save_bytes``: a path on
-a desktop, a download in a browser.
+:mod:`ndxplorer.export.publication_figure` (:mod:`emtk.figure`, which writes
+PNG, SVG and PDF itself and runs under Pyodide) and its bytes handed to
+``app.io_service.save_bytes``: a path on a desktop, a download in a browser.
 """
 
 from __future__ import annotations

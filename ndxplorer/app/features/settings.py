@@ -88,7 +88,7 @@ def _versions() -> List[tuple]:
     from importlib import metadata
 
     rows = []
-    for name in ("ndxplorer", "tttrlib", "emtk", "numpy", "matplotlib"):
+    for name in ("ndxplorer", "tttrlib", "emtk", "numpy"):
         try:
             rows.append((name, metadata.version(name)))
         except metadata.PackageNotFoundError:

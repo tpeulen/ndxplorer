@@ -20,7 +20,7 @@ What the page carries
   its atom dtype from ``chimol.io.atoms``. The GUI, the plugins, the server and
   chimol's viewer stay behind (:data:`CHISURF_KEEP`, :data:`MMFDB_KEEP`,
   :data:`CHIMOL_KEEP`);
-* from the Pyodide distribution: numpy, scipy, PyYAML, matplotlib, Pillow,
+* from the Pyodide distribution: numpy, scipy, PyYAML, Pillow,
   and ``lzma`` (a stdlib module Pyodide ships apart; ``chisurf.core.fio``
   imports it). No scikit-learn: Find structure's PCA is NumPy;
 * **tttrlib**'s Pyodide wheel -- every data source is a ``tttrlib.DataStore``,
@@ -68,7 +68,7 @@ APP = "ndxplorer.app.frame:make_app"
 DEFAULT_PORT = 8795
 
 #: Loaded from the Pyodide distribution.
-PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "matplotlib", "Pillow", "lzma")
+PYODIDE_PACKAGES = ("numpy", "scipy", "pyyaml", "Pillow", "lzma")
 
 #: The parts of the ``chisurf`` package the page ships: what the Qt-free core
 #: imports (``chisurf/__init__`` reaches ``_bundled_packages``, ``core`` and

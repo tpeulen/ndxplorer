@@ -30,17 +30,20 @@ def test_render_returns_figure_with_expected_axes(hist_2d):
         H, xe, ye, x_marginal=xm, y_marginal=ym,
         x_label="Tau (green)", y_label="Proximity ratio",
     )
-    # density + top marginal + right marginal + colorbar = 4 axes.
-    assert len(fig.axes) == 4
-    import matplotlib.figure
-    assert isinstance(fig, matplotlib.figure.Figure)
+    # top marginal, (empty corner), density, right marginal -- the colour bar
+    # sits beside the right marginal, in its cell.
+    from emtk.figure import Figure
+
+    assert isinstance(fig, Figure)
+    assert (fig.rows, fig.cols) == (2, 2)
+    assert fig.ax(0, 1).hidden and fig.ax(1, 1).colorbar["label"] == "counts"
 
 
 def test_render_without_marginals(hist_2d):
     H, xe, ye, _, _ = hist_2d
     fig = render_publication_figure(H, xe, ye, with_marginals=False)
-    # density + colorbar only.
-    assert len(fig.axes) == 2
+    # density only, its colour bar beside it.
+    assert len(fig.axes) == 1 and fig.ax().colorbar is not None
 
 
 def test_render_exports_vector_pdf_and_svg(hist_2d):
@@ -73,7 +76,8 @@ def test_render_log_scales_do_not_crash(hist_2d):
     fig = render_publication_figure(
         H, xe, ye, x_marginal=xm, y_marginal=ym, z_log=True,
     )
-    assert len(fig.axes) == 4
+    assert fig.ax(1, 1).colorbar["log"]
+    assert fig.png_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 if __name__ == "__main__":  # pragma: no cover

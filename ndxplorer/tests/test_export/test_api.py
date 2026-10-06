@@ -40,7 +40,7 @@ class TestExportAPI:
     
     def test_png_export_via_api(self, sample_payload):
         """Test PNG export through API."""
-        fig = _build_matplotlib_figure()
+        fig = _build_figure()
         payload = SelectionExportPayload(
             table=sample_payload.table,
             figure=fig,
@@ -73,7 +73,7 @@ class TestExportAPI:
             png_path = Path(tmpdir) / "test.png"
             payload = SelectionExportPayload(
                 table=sample_payload.table,
-                figure=_build_matplotlib_figure(),
+                figure=_build_figure(),
                 name="figure-selection"
             )
             save_selection(payload, png_path)
@@ -204,10 +204,10 @@ class TestExportAPI:
                 save_selection(payload, filepath, format='csv')
 
 
-def _build_matplotlib_figure():
-    import matplotlib.pyplot as plt
+def _build_figure():
+    from emtk.figure import Figure
 
-    fig, ax = plt.subplots()
-    ax.plot([0, 1], [0, 1])
-    ax.set_title("Test Figure")
+    fig = Figure(size=(320, 240))
+    fig.ax().line([0, 1], [0, 1])
+    fig.ax().set_title("Test Figure")
     return fig

@@ -1,12 +1,13 @@
-"""Publication-quality Matplotlib re-render of the ndX plot view.
+"""Publication-quality re-render of the ndX plot view.
 
-The interactive plots are emtk (screen-tuned). For print/publication we
-re-draw the *same data* in Matplotlib: a 2D density panel with its X/Y marginal
-histograms and a colorbar, with real axis labels, ticks and fonts, exported as
-vector (PDF/SVG) or high-DPI raster.
+The interactive plots are emtk (screen-tuned). For print/publication the
+*same data* is re-drawn with :mod:`emtk.figure`: a 2D density panel with its
+X/Y marginal histograms and a colour bar, with real axis labels and ticks,
+exported as vector (PDF/SVG) or high-DPI raster. No plotting library is
+involved -- emtk's own painters write the PNG, the SVG and the PDF.
 
-The renderer (:func:`render_publication_figure`) is pure and headless — it
-takes arrays, not a GUI object — so the app, a script and a test call it alike.
+The renderer (:func:`render_publication_figure`) is pure and headless -- it
+takes arrays, not a GUI object -- so the app, a script and a test call it alike.
 """
 
 from __future__ import annotations
@@ -14,15 +15,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import numpy as np
-
-
-# Non-interactive backend; safe to import without a display or running GUI.
-import matplotlib
-matplotlib.use("Agg", force=False)
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import LogNorm, Normalize
-
+from emtk.figure import Figure, colorbar_space
 
 Marginal = Optional[Tuple[np.ndarray, np.ndarray]]  # (edges, counts)
 
@@ -34,19 +27,21 @@ EXPORT_FORMATS = {
     "PNG (raster)": (".png", False, "image/png"),
 }
 
+#: Logical pixels per inch of ``figsize`` (the CSS pixel; emtk's vector files
+#: use the same, so a 6-inch figure is 6 inches in the PDF).
+_PX_PER_INCH = 96.0
+
 
 def figure_bytes(fig: Figure, suffix: str, *, dpi: int = 300, transparent: bool = False) -> bytes:
     """The figure as the bytes of a file of type *suffix* (``".pdf"``, ``".svg"``, ``".png"``).
 
     In memory, so a browser (where a save is a download) gets the same file a
-    desktop writes; ``bbox_inches="tight"`` as the file export does.
+    desktop writes. ``dpi`` sets the PNG resolution (vector files are sized in
+    inches). ``transparent`` is accepted for the export dialog and has no
+    effect: the figure is drawn on white paper.
     """
-    import io
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format=suffix.lstrip(".").lower(), dpi=dpi, transparent=transparent,
-                bbox_inches="tight")
-    return buffer.getvalue()
+    del transparent
+    return fig.to_bytes(suffix, dpi=dpi)
 
 
 def render_publication_figure(
@@ -81,7 +76,7 @@ def render_publication_figure(
     x_label, y_label, colorbar_label : str
         Axis and colorbar labels.
     cmap : str
-        Matplotlib colormap name for the density panel.
+        Colormap name for the density panel (:mod:`emtk.colormaps`).
     x_log, y_log : bool
         Log-scale the corresponding axes.
     z_log : bool
@@ -91,100 +86,83 @@ def render_publication_figure(
     figsize : (float, float)
         Figure size in inches.
     dpi : int
-        Raster resolution (ignored for vector formats but stored on the figure).
+        Kept for callers; the raster resolution is chosen when the figure is
+        written (:func:`figure_bytes`).
     with_marginals : bool
         When False, draw only the 2D density panel + colorbar.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        A figure with an Agg canvas attached; call ``fig.savefig(path)`` for
-        PNG/PDF/SVG, then close it.
+    emtk.figure.Figure
+        Write it with :func:`figure_bytes` or ``fig.save(path, dpi=...)``
+        (``.png``, ``.svg``, ``.pdf``).
     """
     H = np.asarray(H, dtype=float)
     x_edges = np.asarray(x_edges, dtype=float)
     y_edges = np.asarray(y_edges, dtype=float)
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
+    size = (int(round(figsize[0] * _PX_PER_INCH)), int(round(figsize[1] * _PX_PER_INCH)))
+    del dpi  # a raster export's resolution, chosen when the figure is written
 
     draw_marginals = bool(
         with_marginals and x_marginal is not None and y_marginal is not None
     )
-
     if draw_marginals:
-        # 3x3 grid: [top marginal][.] , [density][right marginal][colorbar]
-        gs = fig.add_gridspec(
-            2, 3,
-            width_ratios=[4.0, 1.0, 0.25],
-            height_ratios=[1.0, 4.0],
-            wspace=0.05, hspace=0.05,
-        )
-        ax_density = fig.add_subplot(gs[1, 0])
-        ax_top = fig.add_subplot(gs[0, 0], sharex=ax_density)
-        ax_right = fig.add_subplot(gs[1, 1], sharey=ax_density)
-        ax_cbar = fig.add_subplot(gs[1, 2])
+        # [top marginal][ -- ]
+        # [density     ][right marginal | colour bar]
+        side = size[0] * 1.0 / 5.0 + colorbar_space(z_log)
+        fig = Figure(rows=2, cols=2, size=size, title=title or "",
+                     width_ratios=[size[0] - side, side], height_ratios=[1.0, 4.0])
+        density, top, right = fig.ax(1, 0), fig.ax(0, 0), fig.ax(1, 1)
+        fig.ax(0, 1).hide()
     else:
-        gs = fig.add_gridspec(1, 2, width_ratios=[20.0, 1.0], wspace=0.05)
-        ax_density = fig.add_subplot(gs[0, 0])
-        ax_top = ax_right = None
-        ax_cbar = fig.add_subplot(gs[0, 1])
+        fig = Figure(rows=1, cols=1, size=size, title=title or "")
+        density, top, right = fig.ax(), None, None
 
-    norm = _density_norm(H, z_log)
-    mesh = ax_density.pcolormesh(x_edges, y_edges, H, cmap=cmap, norm=norm, shading="auto")
-    ax_density.set_xlabel(x_label)
-    ax_density.set_ylabel(y_label)
-    if x_log:
-        ax_density.set_xscale("log")
-    if y_log:
-        ax_density.set_yscale("log")
-    ax_density.set_xlim(x_edges[0], x_edges[-1])
-    ax_density.set_ylim(y_edges[0], y_edges[-1])
-
-    cbar = fig.colorbar(mesh, cax=ax_cbar)
-    cbar.set_label(colorbar_label)
+    xlim = (float(x_edges[0]), float(x_edges[-1]))
+    ylim = (float(y_edges[0]), float(y_edges[-1]))
+    low, high = _density_levels(H, z_log)
+    density.mesh(x_edges, y_edges, H, colormap=cmap, levels=(low, high), log=z_log)
+    density.set_labels(x=x_label, y=y_label)
+    density.set_log(x=x_log, y=y_log)
+    density.set_xlim(*xlim)
+    density.set_ylim(*ylim)
+    # The colour bar goes beside the right-most panel of the density's row.
+    (right or density).add_colorbar(colorbar_label, low, high, colormap=cmap, log=z_log)
 
     if draw_marginals:
-        _draw_marginal(ax_top, x_marginal, orientation="vertical", log_axis=x_log)
-        _draw_marginal(ax_right, y_marginal, orientation="horizontal", log_axis=y_log)
-        # Hide the shared tick labels on the marginal edges facing the density.
-        for lbl in ax_top.get_xticklabels():
-            lbl.set_visible(False)
-        for lbl in ax_right.get_yticklabels():
-            lbl.set_visible(False)
-        ax_top.set_ylabel("count")
-        ax_right.set_xlabel("count")
-
-    if title:
-        fig.suptitle(title)
+        _draw_marginal(top, x_marginal, horizontal=False)
+        top.set_log(x=x_log)
+        top.set_xlim(*xlim)
+        top.hide_tick_labels(x=True)
+        top.set_labels(y="count")
+        _draw_marginal(right, y_marginal, horizontal=True)
+        right.set_log(y=y_log)
+        right.set_ylim(*ylim)
+        right.hide_tick_labels(y=True)
+        right.set_labels(x="count")
 
     return fig
 
 
-def _density_norm(H: np.ndarray, z_log: bool) -> Normalize:
+def _density_levels(H: np.ndarray, z_log: bool) -> Tuple[float, float]:
+    """Colour range: the data's, from the smallest positive count on a log scale."""
     if z_log:
         positive = H[H > 0]
-        vmin = positive.min() if positive.size else 1.0
-        vmax = H.max() if H.size else 1.0
-        return LogNorm(vmin=vmin, vmax=max(vmax, vmin * 10))
-    vmax = H.max() if H.size else 1.0
-    return Normalize(vmin=0.0, vmax=max(vmax, 1.0))
+        vmin = float(positive.min()) if positive.size else 1.0
+        vmax = float(H.max()) if H.size else 1.0
+        return vmin, max(vmax, vmin * 10)
+    vmax = float(H.max()) if H.size else 1.0
+    return 0.0, max(vmax, 1.0)
 
 
-def _draw_marginal(ax, marginal: Marginal, *, orientation: str, log_axis: bool) -> None:
-    """Draw a stepped marginal histogram from an (edges, counts) tuple."""
+def _draw_marginal(ax, marginal: Marginal, *, horizontal: bool) -> None:
+    """A marginal histogram from an ``(edges, counts)`` tuple: one filled bar per bin."""
     if marginal is None:
         return
     edges, counts = np.asarray(marginal[0], dtype=float), np.asarray(marginal[1], dtype=float)
     centers = 0.5 * (edges[:-1] + edges[1:])
-    if orientation == "vertical":
-        ax.fill_between(centers, counts, step="mid", alpha=0.85, linewidth=0)
-        if log_axis:
-            ax.set_xscale("log")
-    else:
-        ax.fill_betweenx(centers, counts, step="mid", alpha=0.85, linewidth=0)
-        if log_axis:
-            ax.set_yscale("log")
+    ax.bars(centers, counts, width=np.diff(edges), color="C0", alpha=0.85,
+            horizontal=horizontal)
 
 
 __all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure"]

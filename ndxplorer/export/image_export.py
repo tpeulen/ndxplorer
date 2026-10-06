@@ -21,8 +21,9 @@ def export_image(
     """
     Persist the current selection visualization as an image.
 
-    Supports Matplotlib figures and any image object exposing ``save(path)``
-    (a PIL image, as the emtk app's screenshot is).
+    Supports an :mod:`emtk.figure` figure (PNG at *dpi*, SVG, PDF), a figure
+    exposing ``savefig`` and any image object exposing ``save(path)`` (a PIL
+    image, as the emtk app's screenshot is).
     """
 
     source = _resolve_source(payload)
@@ -33,8 +34,10 @@ def export_image(
     op_name = f"export_image[{path.suffix.lower() or 'unknown'}]"
     perf.start_timer(op_name)
     try:
-        if hasattr(source, "savefig"):
-            _save_matplotlib(source, path, dpi=dpi, transparent=transparent)
+        if hasattr(source, "to_bytes"):
+            path.write_bytes(source.to_bytes(path.suffix, dpi=dpi))
+        elif hasattr(source, "savefig"):
+            _save_savefig(source, path, dpi=dpi, transparent=transparent)
         elif hasattr(source, "save"):
             _save_via_save_method(source, path, quality=quality)
         else:
@@ -54,7 +57,7 @@ def _resolve_source(payload: SelectionExportPayload) -> Any:
     raise ValueError("Selection payload does not contain any drawable object.")
 
 
-def _save_matplotlib(fig: Any, path: Path, *, dpi: int, transparent: bool) -> None:
+def _save_savefig(fig: Any, path: Path, *, dpi: int, transparent: bool) -> None:
     fig.savefig(path, dpi=dpi, transparent=transparent, bbox_inches="tight")
 
 

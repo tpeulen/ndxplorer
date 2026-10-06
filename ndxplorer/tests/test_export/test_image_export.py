@@ -3,7 +3,7 @@
 Exercises the current API — ``export_image(payload, path, ...)`` and the
 ``save_selection(..., format='image')`` facade — covering the two things that
 make an export "publication quality": high-DPI raster output and true vector
-output (SVG/PDF via Matplotlib ``savefig``).
+output (SVG/PDF written by :mod:`emtk.figure`'s own painters).
 """
 import tempfile
 from pathlib import Path
@@ -11,9 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from emtk.figure import Figure
 
 from ndxplorer.export import api as export_api
 from ndxplorer.export.image_export import export_image
@@ -22,13 +20,12 @@ from ndxplorer.export.models import SelectionExportPayload, ExportValidationErro
 
 @pytest.fixture
 def figure():
-    """A small Matplotlib figure with a known size for DPI assertions."""
-    fig, ax = plt.subplots(figsize=(4, 3))
-    ax.plot(np.arange(10), np.arange(10) ** 2)
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    yield fig
-    plt.close(fig)
+    """A small figure with a known size for DPI assertions: 4x3 in at 96 px/in."""
+    fig = Figure(size=(384, 288))
+    ax = fig.ax()
+    ax.line(np.arange(10), np.arange(10) ** 2)
+    ax.set_labels(x="x", y="y")
+    return fig
 
 
 def test_export_png_high_dpi(figure):
@@ -69,8 +66,9 @@ def test_export_svg_is_vector(figure):
         assert path.exists()
         head = path.read_text(errors="ignore")[:512]
         assert "<svg" in head
-        # Vector plots carry <path> geometry rather than an <image> bitmap.
-        assert "<path" in path.read_text(errors="ignore")
+        # Vector plots carry stroked geometry rather than an <image> bitmap.
+        text = path.read_text(errors="ignore")
+        assert "<polyline" in text and "<image" not in text
 
 
 def test_export_pdf_is_vector(figure):
@@ -83,7 +81,8 @@ def test_export_pdf_is_vector(figure):
 
 
 def test_export_transparent(figure):
-    """Transparent background is honoured for raster output."""
+    """A transparent request is accepted and gives an RGBA raster (the figure
+    itself is drawn on white paper)."""
     from PIL import Image
 
     with tempfile.TemporaryDirectory() as tmp:
