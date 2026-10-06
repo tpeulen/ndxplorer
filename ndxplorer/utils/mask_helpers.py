@@ -279,7 +279,7 @@ def create_gaussian_brush_kernel(size: int = 21, sigma: float = 3.0) -> np.ndarr
     kernel : np.ndarray
         Gaussian kernel
     """
-    import scipy.stats as st
+    from chisurf.core.math.special import norm
     
     # Ensure odd size
     if size % 2 == 0:
@@ -287,7 +287,7 @@ def create_gaussian_brush_kernel(size: int = 21, sigma: float = 3.0) -> np.ndarr
     
     interval = (2.0 * sigma + 1.) / size
     x = np.linspace(-sigma - interval/2., sigma + interval/2., size + 1)
-    kern1d = np.diff(st.norm.cdf(x))
+    kern1d = np.diff(norm.cdf(x))
     kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
     kernel = kernel_raw / kernel_raw.sum()
     

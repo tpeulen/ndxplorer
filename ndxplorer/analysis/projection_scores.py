@@ -306,7 +306,7 @@ class RankingTable:
         Spearman ``|ρ|`` at or above *threshold* over the sample is the test,
         because ranks see through any monotone transform.
         """
-        from scipy.stats import rankdata
+        from chisurf.core.math.special import rankdata
 
         present = [n for n in sources if n in self.raw]
         if not present:
@@ -469,7 +469,7 @@ def correlation(a, b, method: str = "pearson") -> Tuple[float, float, float]:
     method : str
         ``"pearson"``, or ``"spearman"`` (Pearson on average ranks).
     """
-    from scipy.stats import rankdata, t as t_dist
+    from chisurf.core.math.special import rankdata, t as t_dist
 
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
