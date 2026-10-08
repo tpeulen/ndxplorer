@@ -79,6 +79,14 @@ installed) or Tk. Without a window, `ndxplorer filter` gates a burst folder and
 writes the kept burst IDs, and `ndxplorer image` renders a parameter map
 (`ndxplorer filter --help`, `ndxplorer image --help`).
 
+
+The native and Tk launchers use the declared 1200×800 size in
+`ndxplorer/app/window.view.json` when `--size` is omitted. An explicit `--size`
+still takes precedence. ChiSurf embedding restores saved custom geometry after
+this default. The standalone launcher does not add host-size persistence; its
+existing dock/layout settings remain independent. The declaration ships in the
+Python wheel alongside the application.
+
 ### In a browser
 
 The same app (`ndxplorer`) also runs in a browser tab: Pyodide runs

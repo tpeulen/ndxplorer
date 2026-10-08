@@ -92,6 +92,6 @@ include = ["ndxplorer*"]
 # The emtk app's view specs, those of its feature modules and its resources
 # (plain folders beside the modules, not packages -- so they are named from
 # ndxplorer.app).
-"ndxplorer.app" = ["views/*.json", "features/*/*.json", "features/*/*.md", "resources/*"]
+"ndxplorer.app" = ["*.view.json", "views/*.json", "features/*/*.json", "features/*/*.md", "resources/*"]
 "ndxplorer.settings" = ["*.json", "*.yaml"]
 "ndxplorer.settings.templates" = ["*"]

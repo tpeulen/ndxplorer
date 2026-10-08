@@ -34,7 +34,7 @@ from .menus import build_menu_bar, refresh as refresh_menus
 from .model import ExplorerModel
 from .view_model import PanelModel
 
-__all__ = ["NdxApp", "make_app", "load_spec", "live_apps"]
+__all__ = ["NdxApp", "make_app", "load_spec", "live_apps", "default_window_size"]
 
 #: The apps not yet closed, by creation order (what a host's push reaches).
 _LIVE: "weakref.WeakValueDictionary[int, NdxApp]" = weakref.WeakValueDictionary()
@@ -86,8 +86,31 @@ def _toolbar_with_corner(header: dict, corner: dict) -> dict:
 
 def load_spec(name: str) -> dict:
     """One of the app's view specs, parsed."""
-    with open(VIEWS / f"{name}.view.json", encoding="utf-8") as handle:
+    path = pathlib.Path(__file__).with_name("window.view.json") if name == "window" else VIEWS / f"{name}.view.json"
+    with open(path, encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def default_window_size() -> tuple[int, int]:
+    """Read the authored viewer dimensions as bounded logical pixels.
+
+    Returns
+    -------
+    tuple[int, int]
+        Initial width and height, before the host applies user geometry or
+        available-screen limits.
+
+    Raises
+    ------
+    ValueError
+        The declaration does not contain integer dimensions between 120 and 8192.
+    """
+    window = load_spec("window").get("window")
+    if (not isinstance(window, dict) or set(window) != {"width", "height"}
+            or any(type(window[key]) is not int or not 120 <= window[key] <= 8192
+                   for key in ("width", "height"))):
+        raise ValueError("window requires integer width and height between 120 and 8192")
+    return window["width"], window["height"]
 
 
 class NdxApp:
@@ -123,6 +146,7 @@ class NdxApp:
         import emtk
         from emtk.view_form import FormState
 
+        self.window_size = default_window_size()
         self.model = model if model is not None else ExplorerModel(settings_file)
         _LIVE[next(_LIVE_SEQ)] = self
         self.on_exit = on_exit

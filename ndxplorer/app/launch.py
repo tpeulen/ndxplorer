@@ -19,12 +19,12 @@ from __future__ import annotations
 import importlib.util
 from typing import Optional
 
+from .frame import default_window_size
+
 __all__ = ["run", "available_host", "parse_size"]
 
-#: The window's default logical size: small, so it opens beside other windows
-#: on a laptop; the layout wraps down to it without clipping. (The parity captures keep the Qt
-#: baseline's 1400x900, :data:`ndxplorer.app.capture.WINDOW`.)
-SIZE = (900, 600)
+#: The authored viewer default; explicit CLI sizes and hosted saved geometry take precedence.
+SIZE = default_window_size()
 TITLE = "ndX"
 
 
@@ -62,7 +62,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     *chisurf_rpc* is ``host:port`` of a ChiSurf RPC server (``--chisurf-rpc``):
     the connection "Send selection to" uses. A desktop
     option -- a browser page has no socket to open. *size* is the window's
-    logical ``(width, height)`` (``--size``); :data:`SIZE` by default.
+    logical ``(width, height)`` (``--size``); the app declaration by default.
     """
     import logging
 
@@ -71,7 +71,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     from . import theme
 
     host = host or available_host()
-    size = tuple(size) if size else SIZE
+    size = tuple(size) if size else None
     app = NdxApp(layout_store=layout_store(), session_autosave=True)
     if chisurf_rpc:
         from ..rpc import connect
@@ -92,7 +92,7 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
         else:
             from emtk.tk_host import TkHost
 
-            window = TkHost(app, title=TITLE, size=size, background=theme.WINDOW_BG)
+            window = TkHost(app, title=TITLE, size=size or app.window_size, background=theme.WINDOW_BG)
             app.on_exit = window.close
             window.run()
     finally:
