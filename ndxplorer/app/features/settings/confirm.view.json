@@ -10,11 +10,11 @@
    "buttons": [
     {
      "label": "Yes",
-     "action": "yes"
+     "action": "yes", "description": "Answer yes and continue."
     },
     {
      "label": "No",
-     "action": "no"
+     "action": "no", "description": "Answer no and continue without it."
     }
    ]
   }

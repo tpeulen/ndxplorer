@@ -47,7 +47,7 @@
   },
   {
    "type": "custom",
-   "key": "overlay_curves"
+   "key": "overlay_curves", "description": "List of the overlay curves drawn over the plots, with their parameters."
   }
  ]
 }

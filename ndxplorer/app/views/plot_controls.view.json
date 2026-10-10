@@ -10,7 +10,7 @@
    "sections": [
     {
      "type": "custom",
-     "key": "playback"
+     "key": "playback", "description": "Controls for stepping through the data along one column."
     }
    ]
   },
@@ -364,7 +364,7 @@
    "sections": [
     {
      "type": "custom",
-     "key": "draw_mask"
+     "key": "draw_mask", "description": "Draw or erase a mask on the 2D histogram to select bursts."
     }
    ]
   },
@@ -449,31 +449,31 @@
        {
         "key": "name",
         "title": "Parameter",
-        "editable": false
+        "editable": false, "tooltip": "Name of the parameter or constant."
        },
        {
         "key": "lower",
         "title": "Min",
         "format": "%.4g",
-        "width": 64
+        "width": 64, "tooltip": "Lower bound of the gate on this parameter."
        },
        {
         "key": "upper",
         "title": "Max",
         "format": "%.4g",
-        "width": 64
+        "width": 64, "tooltip": "Upper bound of the gate on this parameter."
        },
        {
         "key": "invert",
         "title": "Invert",
-        "width": 64
+        "width": 64, "tooltip": "Keep the bursts outside the range instead of inside."
        },
        {
         "key": "enabled",
-        "title": "Enable"
+        "title": "Enable", "tooltip": "Tick to apply this gate to the selection."
        }
       ]
-     }
+     }, "description": "Gates: range limits on parameters that select bursts; edit cells to change them."
     }
    ]
   }

@@ -6,8 +6,8 @@
   {"type": "value", "attr": "measurement_file", "label": "Measurement:", "kind": "str",
    "description": "Optional: the TTTR file the pixel table was made from; its flat background gives n_bg per pixel and frame."},
   {"type": "button_row", "buttons": [
-   {"label": "Choose IRF…", "action": "choose_irf"},
-   {"label": "Choose measurement…", "action": "choose_measurement"}]},
+   {"label": "Choose IRF…", "action": "choose_irf", "description": "Pick the IRF measurement that serves as the phasor reference."},
+   {"label": "Choose measurement…", "action": "choose_measurement", "description": "Pick a measurement of a reference dye of known lifetime as the phasor reference."}]},
   {"type": "value", "attr": "green_channels", "label": "Green channels:", "kind": "str",
    "description": "Routing channels of the green detectors (empty: skip green)."},
   {"type": "value", "attr": "red_channels", "label": "Red channels:", "kind": "str",
@@ -16,11 +16,11 @@
    "description": "Routing channels of the unlabelled g, s columns (empty: skip)."},
   {"type": "value", "attr": "tau_ref", "label": "Reference lifetime (ns):", "kind": "float",
    "description": "0 for scatter / a mirror; the lifetime of a reference dye otherwise."},
-  {"type": "toggle", "attr": "subtract_background", "label": "Remove the reference's flat background"},
+  {"type": "toggle", "attr": "subtract_background", "label": "Remove the reference's flat background", "description": "Subtract the flat background of the reference decay before computing the phasor reference."},
   {"type": "info", "source": "result_text"},
   {"type": "button_row", "buttons": [
-   {"label": "Compute", "action": "compute"},
-   {"label": "Apply", "action": "apply"},
-   {"label": "Close", "action": "cancel"}]}
+   {"label": "Compute", "action": "compute", "description": "Compute the phasor reference calibration from the chosen reference."},
+   {"label": "Apply", "action": "apply", "description": "Apply the computed reference calibration to the loaded data."},
+   {"label": "Close", "action": "cancel", "description": "Discard the changes and close the dialog."}]}
  ]
 }

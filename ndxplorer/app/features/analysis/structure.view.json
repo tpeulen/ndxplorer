@@ -37,10 +37,10 @@
     "minimum": -1, "maximum": 64, "style": "spin", "special_text": "All cores",
     "description": "Threads UMAP may use; -1 uses all cores."},
    {"type": "value", "attr": "umap_learning_rate", "label": "Learning rate:", "kind": "float",
-    "minimum": 0.1, "maximum": 10.0, "decimals": 2, "step": 0.1, "style": "spin"},
-   {"type": "choice", "attr": "umap_init", "label": "Initialisation:", "options_source": "init_options"},
+    "minimum": 0.1, "maximum": 10.0, "decimals": 2, "step": 0.1, "style": "spin", "description": "UMAP learning rate of the embedding optimisation; larger values move points faster."},
+   {"type": "choice", "attr": "umap_init", "label": "Initialisation:", "options_source": "init_options", "description": "How the UMAP embedding is initialised (e.g. spectral or random)."},
    {"type": "value", "attr": "umap_spread", "label": "Spread:", "kind": "float",
-    "minimum": 0.1, "maximum": 5.0, "decimals": 2, "step": 0.1, "style": "spin"},
+    "minimum": 0.1, "maximum": 5.0, "decimals": 2, "step": 0.1, "style": "spin", "description": "UMAP spread; sets how widely the embedded points are scattered."},
    {"type": "value", "attr": "umap_n_epochs", "label": "Epochs:", "kind": "int",
     "minimum": 0, "maximum": 2000, "style": "spin", "special_text": "Auto",
     "description": "Optimisation epochs; Auto lets UMAP choose from the data size."}

@@ -12,9 +12,9 @@
    "options": {"source": "rows", "editable": true, "edited_call": "edit_row", "selected_call": "select_row",
     "delete_call": "delete_row", "tooltip_key": "message", "expand": true, "reserve": 52, "height": 480,
     "columns": [
-     {"key": "output", "title": "Output", "width": 130},
-     {"key": "expression", "title": "Expression"},
-     {"key": "status", "title": "✓", "width": 26, "editable": false, "tooltip": "✓ valid; ✗ the problem is shown under the table when the row is selected."}]}},
+     {"key": "output", "title": "Output", "width": 130, "tooltip": "Name of the column that the equation writes."},
+     {"key": "expression", "title": "Expression", "tooltip": "Expression evaluated per burst; may use other column names."},
+     {"key": "status", "title": "✓", "width": 26, "editable": false, "tooltip": "✓ valid; ✗ the problem is shown under the table when the row is selected."}]}, "description": "Derived columns: each row computes an output column from an expression."},
   {"type": "info", "source": "preview_text"},
   {"type": "info", "source": "status_text"}
  ]

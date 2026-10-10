@@ -4,9 +4,9 @@
   {"type": "custom", "key": "data_table",
    "options": {"source": "rows", "editable": true, "edited_call": "edit", "filter": true, "height": 330,
     "row_key": "column",
-    "columns": [{"key": "shown", "title": "Shown", "width": 56}, {"key": "column", "title": "Column", "editable": false}]}},
+    "columns": [{"key": "shown", "title": "Shown", "width": 56, "tooltip": "Tick to show this column in the burst table."}, {"key": "column", "title": "Column", "editable": false, "tooltip": "Name of the burst-table column."}]}, "description": "Burst-table columns; tick to show a column and filter the list by name."},
   {"type": "button_row", "buttons": [
-   {"label": "Show all", "action": "show_all"}, {"label": "Hide all", "action": "hide_all"},
-   {"label": "Close", "action": "close"}]}
+   {"label": "Show all", "action": "show_all", "description": "Show every column in the burst table."}, {"label": "Hide all", "action": "hide_all", "description": "Hide every column in the burst table."},
+   {"label": "Close", "action": "close", "description": "Close this dialog."}]}
  ]
 }

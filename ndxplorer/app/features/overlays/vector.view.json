@@ -7,6 +7,6 @@
   {"type": "choice", "attr": "column", "label": "Picked by:", "options_source": "column_options",
    "description": "The burst column whose value says which population a burst is in."},
   {"type": "button_row", "buttons": [
-   {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
+   {"label": "OK", "action": "ok", "description": "Accept the entries and close the dialog."}, {"label": "Cancel", "action": "cancel", "description": "Discard the changes and close the dialog."}]}
  ]
 }

@@ -35,7 +35,7 @@
      "label": "Right Axis",
      "description": "Show/hide the right axis of the X plot"
     }
-   ]
+   ], "description": "Axis visibility of the x marginal plot."
   },
   {
    "type": "panel",
@@ -66,7 +66,7 @@
      "label": "Right Axis",
      "description": "Show/hide the right axis of the Y plot"
     }
-   ]
+   ], "description": "Axis visibility of the y marginal plot."
   },
   {
    "type": "panel",
@@ -91,7 +91,7 @@
      "label": "Left Axis",
      "description": "Show/hide the left axis of the Z plot"
     }
-   ]
+   ], "description": "Axis visibility and enabling of the z marginal plot."
   },
   {
    "type": "panel",
@@ -122,7 +122,7 @@
      "label": "Right Axis",
      "description": "Show/hide the right axis of the 2D plot"
     }
-   ]
+   ], "description": "Axis visibility of the 2D histogram plot."
   },
   {
    "type": "panel",
@@ -153,7 +153,7 @@
      "label": "Right Axis",
      "description": "Show/hide the right axis of the overlay plot"
     }
-   ]
+   ], "description": "Axis visibility of the overlay plot."
   },
   {
    "type": "panel",
@@ -182,7 +182,7 @@
        "label": "Right Axis Label",
        "description": "The y parameter's name right of the Y plot"
       }
-     ]
+     ], "description": "Axis labels of the y marginal plot."
     },
     {
      "type": "panel",
@@ -194,7 +194,7 @@
        "label": "Top Axis Label",
        "description": "The x parameter's name above the X plot"
       }
-     ]
+     ], "description": "Axis labels of the x marginal plot."
     },
     {
      "type": "panel",
@@ -213,9 +213,9 @@
        "label": "Left Axis Label",
        "description": "The z parameter's name left of the Z plot"
       }
-     ]
+     ], "description": "Axis labels of the z marginal plot."
     }
-   ]
+   ], "description": "Choose which axis labels are shown on the plots."
   },
   {
    "type": "panel",
@@ -228,7 +228,7 @@
      "kind": "color",
      "description": "Colour of the axis titles"
     }
-   ]
+   ], "description": "Font sizes and colours of the plot titles and axis labels."
   },
   {
    "type": "button_row",

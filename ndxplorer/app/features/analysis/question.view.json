@@ -2,8 +2,8 @@
  "sections": [
   {"type": "info", "source": "body"},
   {"type": "button_row", "buttons": [
-   {"label": "Yes", "label_source": "yes_label", "action": "yes"},
-   {"label": "No", "label_source": "no_label", "action": "no"}
+   {"label": "Yes", "label_source": "yes_label", "action": "yes", "description": "Answer yes and continue."},
+   {"label": "No", "label_source": "no_label", "action": "no", "description": "Answer no and continue without it."}
   ]}
  ]
 }

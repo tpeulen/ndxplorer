@@ -4,7 +4,7 @@
   {"type": "info", "text": "Double-click a name to insert it into the focused expression."},
   {"type": "custom", "key": "data_table",
    "options": {"source": "rows", "activated_call": "insert", "filter": true, "height": 330,
-    "columns": [{"key": "label", "title": "Name"}]}},
-  {"type": "button_row", "buttons": [{"label": "Close", "action": "close"}]}
+    "columns": [{"key": "label", "title": "Name", "tooltip": "Population number."}]}, "description": "Available names that can be used in the expression; double-click to insert one."},
+  {"type": "button_row", "buttons": [{"label": "Close", "action": "close", "description": "Close this dialog."}]}
  ]
 }

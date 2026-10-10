@@ -128,7 +128,7 @@
           "type": "info",
           "source": "sample_text"
         }
-      ]
+      ], "description": "Choose the criterion used to rank pairs of parameters by how informative their 2D view of the bursts is."
     },
     {
       "type": "custom",
@@ -144,7 +144,7 @@
         "fit_columns": true,
         "expand": true,
         "height": 320
-      }
+      }, "description": "Ranked parameter pairs; click a row to show that view in the main plot."
     }
   ]
 }

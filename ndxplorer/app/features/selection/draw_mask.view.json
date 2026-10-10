@@ -17,7 +17,7 @@
      "options": ["draw", "erase"],
      "labels": ["Draw", "Erase"],
      "style": "radio",
-     "description": "Paint the category, or erase back to unpainted."
+     "description": "Paint the category, or erase back to unpainted.", "descriptions": ["Add the painted area to the mask.", "Remove the painted area from the mask."]
     },
     {
      "type": "value",

@@ -212,7 +212,7 @@
      "attr": "inject_columns",
      "description": "Write the corrected per-burst columns under new names. Not redundant with applying the constants: ndX's own efficiency equation has no direct-excitation term, so constants alone cannot make its native column accurate. Its own columns are left untouched."
     }
-   ]
+   ], "description": "How the gamma correction factor is obtained for the accurate FRET calibration."
   },
   {
    "type": "panel",

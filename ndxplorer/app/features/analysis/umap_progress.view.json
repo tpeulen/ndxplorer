@@ -1,11 +1,11 @@
 {
  "title": "UMAP Computation Progress",
  "sections": [
-  {"type": "custom", "key": "code_editor", "target": "log_text", "options": {"height": 330, "read_only": true}},
+  {"type": "custom", "key": "code_editor", "target": "log_text", "options": {"height": 330, "read_only": true}, "description": "Live log of the UMAP embedding run (read only)."},
   {"type": "progress", "attr": "progress_fraction", "text_source": "status"},
   {"type": "button_row", "buttons": [
-   {"label": "Cancel", "action": "cancel", "hidden_when": {"attr": "running", "equals": "false"}},
-   {"label": "Close", "action": "close", "hidden_when": {"attr": "running", "equals": "true"}}
+   {"label": "Cancel", "action": "cancel", "hidden_when": {"attr": "running", "equals": "false"}, "description": "Discard the changes and close the dialog."},
+   {"label": "Close", "action": "close", "hidden_when": {"attr": "running", "equals": "true"}, "description": "Close this dialog."}
   ]}
  ]
 }

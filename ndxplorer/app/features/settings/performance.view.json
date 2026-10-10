@@ -41,7 +41,7 @@
       }
      ]
     }
-   ]
+   ], "description": "Options that speed up histogram computation for large burst tables."
   },
   {
    "type": "panel",
@@ -73,7 +73,7 @@
       }
      ]
     }
-   ]
+   ], "description": "Options that trade memory for speed by caching intermediate results."
   },
   {
    "type": "panel",
@@ -95,7 +95,7 @@
      "type": "info",
      "text": "Values in settings file override environment variables."
     }
-   ]
+   ], "description": "Expert options; the defaults are suitable for most users."
   },
   {
    "type": "button_row",

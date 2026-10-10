@@ -18,7 +18,7 @@
           {"label": "Export…", "action": "export", "description": "Ask where to save, then write the figure."},
           {"label": "Cancel", "action": "cancel", "description": "Close without exporting."}
         ]}
-      ]
+      ], "description": "Export the current plot as a publication-quality figure."
     }
   ]
 }

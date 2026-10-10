@@ -10,7 +10,7 @@
    "buttons": [
     {
      "label": "OK",
-     "action": "ok"
+     "action": "ok", "description": "Accept the entries and close the dialog."
     }
    ]
   }

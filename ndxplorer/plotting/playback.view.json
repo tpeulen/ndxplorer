@@ -54,7 +54,7 @@
           "style": "radio",
           "options": ["window", "integrate", "stack"],
           "labels": ["Window", "Integrate", "Stack"],
-          "description": "Window: one slice at a time — what the sample looked like then. Integrate: everything up to the current step, accumulating, so a population that only appears late is visible as it arrives. Stack: no gating, the whole measurement at once."
+          "description": "Window: one slice at a time — what the sample looked like then. Integrate: everything up to the current step, accumulating, so a population that only appears late is visible as it arrives. Stack: no gating, the whole measurement at once.", "descriptions": ["One slice at a time: the data inside the current playback window.", "Everything up to the current step, accumulating as playback advances.", "No gating: the whole measurement at once."]
         },
         {
           "type": "value",

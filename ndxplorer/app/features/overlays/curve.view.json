@@ -8,7 +8,7 @@
    "description": "y as a function of x; every other name is a parameter."},
   {"type": "custom", "key": "code_editor", "target": "text", "function": true,
    "hidden_when": {"attr": "visible", "equals": false},
-   "options": {"height": 150, "language": "python"}},
+   "options": {"height": 150, "language": "python"}, "description": "Python expression or function that defines the overlay curve."},
   {"type": "value", "attr": "where", "label": "Where:", "kind": "str", "parametric": true, "points": true,
    "hidden_when": {"attr": "visible", "equals": false},
    "description": "Definitions evaluated first, in order, separated by ';' (omega = 2*pi*f*harmonic*1e-3; tau = tan(t)/omega); x and y may use them."},

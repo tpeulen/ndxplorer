@@ -22,6 +22,6 @@
   ]},
   {"type": "button_row", "buttons": [
    {"label": "Fit", "action": "run_fit", "description": "Optimise every free parameter against the selected data"},
-   {"label": "Close", "action": "close"}]}
+   {"label": "Close", "action": "close", "description": "Close this dialog."}]}
  ]
 }

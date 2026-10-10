@@ -35,25 +35,25 @@
       "key": "use",
       "title": "Use",
       "width": 44,
-      "editable": true
+      "editable": true, "tooltip": "Tick to include this column in the analysis."
      },
      {
       "key": "name",
-      "title": "Column"
+      "title": "Column", "tooltip": "Name of the parameter or constant."
      }
     ]
-   }
+   }, "description": "Tick the burst-table columns to include in the analysis."
   },
   {
    "type": "button_row",
    "buttons": [
     {
      "label": "☑ Select All",
-     "action": "select_all"
+     "action": "select_all", "description": "Tick every column in the list."
     },
     {
      "label": "☐ Deselect All",
-     "action": "deselect_all"
+     "action": "deselect_all", "description": "Untick every column in the list."
     }
    ]
   },
@@ -62,11 +62,11 @@
    "buttons": [
     {
      "label": "OK",
-     "action": "ok"
+     "action": "ok", "description": "Accept the entries and close the dialog."
     },
     {
      "label": "Cancel",
-     "action": "cancel"
+     "action": "cancel", "description": "Discard the changes and close the dialog."
     }
    ]
   }

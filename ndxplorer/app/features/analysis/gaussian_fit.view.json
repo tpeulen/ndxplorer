@@ -20,7 +20,7 @@
     {"label": "del", "action": "remove_component", "description": "Remove the selected Gaussian (or the last)."}
    ]},
    {"type": "parameter_table", "table": "table", "height": 300}
-  ]},
+  ], "description": "Add or remove Gaussian components of the fit to the current histogram."},
   {"type": "row", "n_col": 4, "sections": [
    {"type": "toggle", "attr": "select_point", "label": "Select point",
     "description": "Clicks on the map add a Gaussian there."},

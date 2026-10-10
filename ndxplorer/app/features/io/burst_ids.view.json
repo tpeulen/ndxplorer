@@ -3,11 +3,11 @@
   "description": "Asked after the burst-ID (.bst) files were written: what to do with them.",
   "sections": [
     {"type": "info", "text": "Choose what to do with the saved Burst IDs:"},
-    {"type": "toggle", "attr": "microtime_histogram", "label": "Compute microtime histogram"},
-    {"type": "toggle", "attr": "correlate", "label": "Open FCS Correlator Wizard to correlate BST files"},
+    {"type": "toggle", "attr": "microtime_histogram", "label": "Compute microtime histogram", "description": "Compute a microtime (decay) histogram for the selected bursts."},
+    {"type": "toggle", "attr": "correlate", "label": "Open FCS Correlator Wizard to correlate BST files", "description": "Open the FCS correlator wizard afterwards to correlate the burst photon files."},
     {"type": "button_row", "buttons": [
-      {"label": "OK", "action": "ok"},
-      {"label": "Cancel", "action": "cancel"}
+      {"label": "OK", "action": "ok", "description": "Accept the entries and close the dialog."},
+      {"label": "Cancel", "action": "cancel", "description": "Discard the changes and close the dialog."}
     ]}
   ]
 }

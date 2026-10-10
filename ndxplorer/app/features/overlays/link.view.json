@@ -5,9 +5,9 @@
   {"type": "custom", "key": "data_table",
    "options": {"source": "targets", "selected_call": "pick", "activated_call": "link", "filter": true,
     "height": 260, "row_key": "id",
-    "columns": [{"key": "owner", "title": "Owner"}, {"key": "name", "title": "Parameter"},
-                {"key": "value", "title": "Value"}]}},
+    "columns": [{"key": "owner", "title": "Owner", "tooltip": "Overlay curve that owns the parameter."}, {"key": "name", "title": "Parameter", "tooltip": "Name of the parameter or constant."},
+                {"key": "value", "title": "Value", "tooltip": "Value of the correction factor."}]}, "description": "Existing parameters of other overlay curves; double-click one to link to it."},
   {"type": "button_row", "buttons": [
-   {"label": "Link", "action": "link_selected"}, {"label": "Cancel", "action": "cancel"}]}
+   {"label": "Link", "action": "link_selected", "description": "Link the new parameter to the selected existing parameter so they share one value."}, {"label": "Cancel", "action": "cancel", "description": "Discard the changes and close the dialog."}]}
  ]
 }

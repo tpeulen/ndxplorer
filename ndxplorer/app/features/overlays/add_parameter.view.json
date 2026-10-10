@@ -2,11 +2,11 @@
  "_comment": "Parameters > Add parameter: the name, then the value -- and, for a vector, its populations and the column that picks them (Qt: two QInputDialogs).",
  "sections": [
   {"type": "value", "attr": "name", "label": "Parameter name:", "kind": "str",
-   "hidden_when": {"attr": "step", "equals": "value"}},
+   "hidden_when": {"attr": "step", "equals": "value"}, "description": "Name of the new overlay parameter."},
   {"type": "value", "attr": "value", "label": "{value_label}", "kind": "float",
-   "hidden_when": {"attr": "step", "equals": "name"}},
+   "hidden_when": {"attr": "step", "equals": "name"}, "description": "Initial value of the new overlay parameter."},
   {"type": "choice", "attr": "kind", "label": "Kind:", "options": ["Scalar", "Vector"], "style": "radio",
-   "hidden_when": {"attr": "step", "equals": "name"}},
+   "hidden_when": {"attr": "step", "equals": "name"}, "description": "Scalar: one value for all bursts. Vector: one value per population.", "descriptions": ["One value shared by all bursts.", "One value per population, picked by a column of the burst table."]},
   {"type": "value", "attr": "populations", "label": "Populations:", "kind": "str",
    "description": "How many (3: populations 0, 1, 2), or their names (HF, LF).",
    "hidden_when": {"attr": "vector_hidden", "equals": true}},
@@ -14,6 +14,6 @@
    "description": "The burst column whose value says which population a burst is in.",
    "hidden_when": {"attr": "vector_hidden", "equals": true}},
   {"type": "button_row", "buttons": [
-   {"label": "OK", "action": "ok"}, {"label": "Cancel", "action": "cancel"}]}
+   {"label": "OK", "action": "ok", "description": "Accept the entries and close the dialog."}, {"label": "Cancel", "action": "cancel", "description": "Discard the changes and close the dialog."}]}
  ]
 }

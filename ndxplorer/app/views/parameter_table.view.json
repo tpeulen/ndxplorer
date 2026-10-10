@@ -20,7 +20,7 @@
    "min_column_width": 34,
    "height": 200,
    "columns": [
-    {"key": "name", "title": "Name", "editable": false},
+    {"key": "name", "title": "Name", "editable": false, "tooltip": "Name of the parameter or constant."},
     {"key": "value", "title": "Value", "align": "right",
      "tooltip": "The value. Double-click to type one; a linked parameter shows its master's."},
     {"key": "fixed", "title": "Fixed", "tooltip": "Fixed: a fit leaves it where it is."},
@@ -31,6 +31,6 @@
     {"key": "link", "title": "Link", "editable": false,
      "tooltip": "The parameter this one follows (right-click to link or unlink). Shown while one is linked."}
    ]
-  }
+  }, "description": "Table of parameters (burst-table columns) with their per-parameter settings."
  }
 }

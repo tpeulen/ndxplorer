@@ -5,7 +5,7 @@
    {"type": "toggle_row", "items": [
     {"attr": "hide_empty", "label": "Hide empty", "description": "Hide columns that contain no values"},
     {"attr": "colour_cells", "label": "Colour by value", "description": "Shade numeric cells by their value"},
-    {"attr": "colour_table", "label": "∥ One scale", "description": "Scale colours across all columns instead of per column"}]},
+    {"attr": "colour_table", "label": "∥ One scale", "description": "Scale colours across all columns instead of per column"}], "description": "Display options for the array table below."},
    {"type": "button_row", "buttons": [
     {"label": "☑ Columns…", "action": "choose_columns", "description": "Choose which columns are shown"},
     {"label": "Export CSV…", "action": "export_csv", "description": "Export the visible rows and columns as CSV"}]}
@@ -13,7 +13,7 @@
   {"type": "custom", "key": "data_table",
    "options": {"source": "arrays", "columns_source": "columns", "editable": true, "filter": true,
     "edited_call": "edit_cell", "context_call": "cell_menu", "colour_source": "colour_mode",
-    "min_column_width": 96, "expand": true, "reserve": 64, "height": 380}},
+    "min_column_width": 96, "expand": true, "reserve": 64, "height": 380}, "description": "Arrays held by the overlay store; edit cells to change parameter values."},
   {"type": "info", "source": "status_text"},
   {"type": "button_row", "buttons": [
    {"label": "↺ Reset", "action": "reset", "description": "Discard every change made in this dialog"},
