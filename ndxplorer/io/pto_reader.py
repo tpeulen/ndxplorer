@@ -28,7 +28,7 @@ from ndxplorer.core.data_source import DataSource, float_column
 from ndxplorer.io import tables
 from ndxplorer.io.container import open_container, read_store
 
-__all__ = ["is_container", "read_container"]
+__all__ = ["is_container", "list_tables", "read_container"]
 
 #: What ChiSurf's measurement container is called on disk.
 SUFFIX = ".pto"
@@ -74,6 +74,57 @@ def is_container(path: str | pathlib.Path) -> bool:
     """Return whether *path* is a measurement container ndX can read bursts from."""
     p = pathlib.Path(path)
     return p.is_file() and p.suffix.lower() == SUFFIX
+
+
+def list_tables(path: str | pathlib.Path) -> list[Dict[str, Any]]:
+    """Return the tables a container offers to open: its burst searches, else its image.
+
+    A measurement holds one burst table per search setting; opening it means
+    choosing which. This is the list that question is asked from -- the same
+    objects :func:`read_container` takes its candidates from, with no payload
+    read beyond the row and column counts.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The ``.pto``.
+
+    Returns
+    -------
+    list of dict
+        ``name`` (what to pass as ``table=``), ``rows``, ``columns`` (names),
+        ``operation``, ``grain`` and ``run`` (the analysis the table is in), in
+        write order. Empty when the container holds nothing ndX can show.
+    """
+    path = pathlib.Path(path)
+    out: list[Dict[str, Any]] = []
+    with open_container(path) as handle:
+        objects = list(handle.objects())
+
+        def tag(uid: int, item: str):
+            return tttrlib.pto_tag(handle, uid, item) or ""
+
+        searches = [o for o in objects
+                    if tag(o.uid, "_mmfdb_artifact.row_grain") == _BURST_GRAIN
+                    and tag(o.uid, "_mmfdb_operation.operation_type") == _SEARCH]
+        chosen = searches or [o for o in objects
+                              if tag(o.uid, "_mmfdb_artifact.row_grain") == _PIXEL_GRAIN][-1:]
+        for obj in chosen:
+            store = read_store(handle, obj.uid)
+            if store is None:
+                continue
+            store = tttrlib.deinterleave_burst_rows(store)
+            name = str(obj.name)
+            run = name.split("/bi4_bur/")[0] if "/bi4_bur/" in name else name.rpartition("/")[0]
+            out.append({
+                "name": name,
+                "rows": int(store.n_rows()),
+                "columns": [str(n) for n in store.column_names()],
+                "operation": str(tag(obj.uid, "_mmfdb_operation.operation_type")),
+                "grain": str(tag(obj.uid, "_mmfdb_artifact.row_grain")),
+                "run": run,
+            })
+    return out
 
 
 def read_container(

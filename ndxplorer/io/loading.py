@@ -187,7 +187,9 @@ def reader_for(kind: Optional[str], paths: Paths,
     if kind == "pto":
         from .pto_reader import read_container
 
-        return read_container, items[0]
+        # *store* names one of the container's tables when it holds several
+        # (``pto_reader.list_tables``); none means the newest.
+        return functools.partial(read_container, table=store), items[0]
     if any(p.lower().endswith(".er4") for p in items):
         return reader.read_csv_sampling, items
     return reader.read_csv, items
@@ -218,7 +220,8 @@ def load(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",
     equations, constants
         The window's; the equation columns are computed when given.
     store : str, optional
-        Which stored table of a ChiSurf project (``kind="cs_project"``).
+        Which stored table of a ChiSurf project (``kind="cs_project"``) or of a
+        measurement container (``kind="pto"``).
 
     Returns
     -------

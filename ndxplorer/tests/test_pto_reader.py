@@ -95,3 +95,28 @@ def test_an_empty_container_says_what_is_missing(container):
     _close(handle)
     with pytest.raises(FileNotFoundError, match="no burst or image table"):
         read_container(path)
+
+
+def test_list_tables_offers_every_burst_search_and_read_takes_the_chosen_one(container):
+    from ndxplorer.io.pto_reader import list_tables
+
+    path, handle = container
+    photons = handle.add("tttr_photon_stream", "ptu", "m.ptu", b"raw")
+    for run, threshold, photons_per_burst in (("a#60", 60, [60.0, 61.0]),
+                                              ("b#30", 30, [30.0, 31.0, 32.0])):
+        _add(handle, "burst_table", f"{run}/bi4_bur/m.bur",
+             _table(**{"Number of Photons": photons_per_burst}), grain="burst",
+             operation="burst_selection", parents=[photons], settings={"L": threshold})
+    # a per-burst result is a companion, not something to open on its own
+    _add(handle, "burst_table", "bva", _table(**{"Proximity Ratio Mean": [0.1, 0.2, 0.3]}),
+         grain="burst", operation="burst_variance_analysis", parents=[photons],
+         settings={"w": 5})
+    _close(handle)
+
+    found = list_tables(path)
+    assert [t["name"] for t in found] == ["a#60/bi4_bur/m.bur", "b#30/bi4_bur/m.bur"]
+    assert [t["rows"] for t in found] == [2, 3]
+    assert [t["run"] for t in found] == ["a#60", "b#30"]
+    assert "Number of Photons" in found[0]["columns"]
+    assert read_container(path, table=found[0]["name"]).size == 2
+    assert read_container(path).size == 3          # no choice: the newest, as before

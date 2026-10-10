@@ -359,6 +359,13 @@ class NdxApp:
         """
         from ..io.loading import kind_for_paths
 
+        if kind_for_paths(path) == "pto":
+            # A container holds one burst table per search setting: the io
+            # feature asks which when there is more than one (StoreChoice).
+            io_feature = self._feature("io")
+            if io_feature is not None:
+                io_feature.open_pto(str(path))
+                return True
         if kind_for_paths(path) == "cs_project":
             # A project may hold several stored tables: the io feature asks
             # which (StoreChoice) and loads it in the background.

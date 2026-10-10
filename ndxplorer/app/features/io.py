@@ -161,10 +161,12 @@ class StoreChoice(_Dialog):
     spec_name = "store_choice"
     width, height = 560.0, 130.0
 
-    def __init__(self, path: str, stores: List[dict], then: Callable[[str], None]) -> None:
+    def __init__(self, path: str, stores: List[dict], then: Callable[[str], None],
+                 kind: str = "cs_project") -> None:
         from emtk.i18n import tr
 
-        super().__init__(tr("Open ChiSurf Project"))
+        super().__init__(tr("Open PTO Container") if kind == "pto" else tr("Open ChiSurf Project"))
+        self.kind = kind
         self.path = str(path)
         self.stores = list(stores)
         self.then = then
@@ -173,12 +175,19 @@ class StoreChoice(_Dialog):
     def prompt(self) -> str:
         from emtk.i18n import tr
 
+        if self.kind == "pto":
+            return tr("{name} holds {n} tables. Which one?").format(
+                name=pathlib.Path(self.path).name, n=len(self.stores))
         return tr("{name} holds {n} stored tables. Which one?").format(
             name=pathlib.Path(self.path).name, n=len(self.stores))
 
     def store_options(self) -> list:
         from emtk.i18n import tr
 
+        if self.kind == "pto":
+            return [(i, tr("{name} ({rows} rows, {columns} columns)").format(
+                        name=store["name"], rows=store["rows"], columns=len(store["columns"])))
+                    for i, store in enumerate(self.stores)]
         return [(i, tr("{name} ({rows} draws, {params} parameters)").format(
                     name=store["name"], rows=store["rows"],
                     params=len([c for c in store["columns"] if c not in ("chain", "draw")])))
@@ -387,6 +396,9 @@ class IoFeature(Feature):
             if importer.kind == "cs_project":
                 self.open_project(paths[0], append=append, merge_mode=mode)
                 return
+            if importer.kind == "pto":
+                self.open_pto(paths[0], append=append, merge_mode=mode)
+                return
             self.load(paths, importer.kind, append=append, merge_mode=mode)
 
         if importer.mode == "folder":
@@ -395,6 +407,28 @@ class IoFeature(Feature):
             self.service.ask_open(importer.title, list(importer.filters), chosen,
                                   multiple=importer.multiple)
         self._answer_from_queue()
+
+    def open_pto(self, path: str, append: bool = False,
+                 merge_mode: str = "columns") -> Optional[Task]:
+        """Open a measurement container's burst table: asked which, when there are several.
+
+        A container holds one burst table per search setting; the newest is no
+        better a guess than any other, so with more than one the same
+        :class:`StoreChoice` a project uses asks (``kind="pto"``). Returns the
+        load, or ``None`` while the choice is on screen.
+        """
+        from ...io.pto_reader import list_tables
+
+        try:
+            found = list_tables(path)
+        except Exception as exc:  # noqa: BLE001 - the load reports it properly
+            logger.debug("listing the tables of %s failed: %s", path, exc)
+            found = []
+        if len(found) > 1:
+            self.dialog = StoreChoice(path, found, lambda name: self.load(
+                [path], "pto", append=append, merge_mode=merge_mode, store=name), kind="pto")
+            return None
+        return self.load([path], "pto", append=append, merge_mode=merge_mode)
 
     def open_project(self, path: str, append: bool = False,
                      merge_mode: str = "columns") -> Optional[Task]:

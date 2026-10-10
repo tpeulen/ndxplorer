@@ -252,3 +252,40 @@ def test_a_project_with_several_chains_asks_which(tmp_path):
         assert "Loaded 30 rows from two.cs.pto" in app.status
     finally:
         app.close()
+
+
+def test_a_container_with_several_burst_tables_asks_which(tmp_path):
+    import numpy as np
+    import tttrlib
+
+    from ndxplorer.app.features.io import StoreChoice
+    from ndxplorer.app.frame import NdxApp
+
+    path = tmp_path / "m.pto"
+    handle = tttrlib.PtoFile()
+    assert handle.create(str(path), "test")
+    photons = handle.add("tttr_photon_stream", "ptu", "m.ptu", b"raw")
+    for run, rows in (("a#60", 4), ("b#30", 9)):
+        store = tttrlib.DataStore()
+        store.add("Number of Photons", np.arange(rows, dtype=float) + 30)
+        uid = tttrlib.pto_add_store(handle, "burst_table", f"{run}/bi4_bur/m.bur", store)
+        tttrlib.pto_describe(handle, uid, data_format="dstore", row_grain="burst",
+                             operation_type="burst_selection", parameters={"L": rows},
+                             run=tttrlib.pto_settings_hash({"L": rows}),
+                             derived_from=[photons], software="test 1")
+    assert handle.commit()
+    handle.close()
+
+    app = NdxApp(session_autosave=False)
+    try:
+        io = app._feature("io")
+        assert app.open_path(str(path))
+        assert isinstance(io.dialog, StoreChoice) and io.dialog.kind == "pto"
+        labels = [label for _i, label in io.dialog.store_options()]
+        assert labels[0].startswith("a#60/bi4_bur/m.bur (4 rows, 1 columns)")
+        io.dialog.choice = 0
+        io.dialog.ok()
+        io.task.wait(30)
+        assert app.model.source.size == 4
+    finally:
+        app.close()
