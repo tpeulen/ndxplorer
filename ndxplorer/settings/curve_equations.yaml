@@ -420,6 +420,30 @@
   links: {f: f_rep, harmonic: harmonic, tau0: tauD0, R0: forster_radius}
   color: "#ffa0c0"
 
+- name: "FRET trajectory (WLC distance)"
+  # The donor-acceptor linker is a worm-like chain: t is its contour length
+  # (Angstrom), lp its persistence length. The end-to-end distance follows the
+  # exact worm-like-chain distribution (core/wlc.py), the donor decay is the
+  # mixture over it, so the phasor lies inside the circle: a flexible chain
+  # (L >> lp) approaches the Gaussian-distance trajectory, a stiff one (L << lp)
+  # the fixed-distance trajectory with RDA = L.
+  parametric:
+    where: >-
+      omega = 2*pi*f*harmonic*1e-3;
+      R = np.linspace(0.5, 1.15*np.max(t), 300);
+      P = wlc_pdf(R, t, lp);
+      tauR = tau0*(1 - 1/(1+(R/R0)**6)); a = P*tauR[None, :];
+      gR = 1/(1+(omega*tauR)**2)
+    x: "np.sum(a*gR[None, :], 1)/np.sum(a, 1)"
+    y: "np.sum(a*(omega*tauR*gR)[None, :], 1)/np.sum(a, 1)"
+    t: [20.0, 200.0]
+  parameters: {f: 80.0, harmonic: 1, tau0: 4.0, R0: 52.0, lp: 40.0}
+  ranges: {f: [0.001, 10000.0], harmonic: [1, 16], tau0: [0.01, 100.0], R0: [10.0, 150.0],
+           lp: [2.0, 500.0]}
+  fixed: [f, harmonic]
+  links: {f: f_rep, harmonic: harmonic, tau0: tauD0, R0: forster_radius}
+  color: "#ffc0a0"
+
 - name: "Two-component mixing line"
   # Mixtures of two single-exponential species: the straight chord between
   # their points; t is the intensity fraction of tau2.

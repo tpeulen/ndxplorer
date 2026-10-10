@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import numpy as np
 
 from ..logging_config import logging
+from .wlc import wlc_pdf
 
 __all__ = [
     "NON_PARAMETER_NAMES",
@@ -79,6 +80,7 @@ NON_PARAMETER_NAMES = frozenset({
     "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh",
     "deg2rad", "rad2deg", "floor", "ceil", "trunc", "round", "clip", "where",
     "minimum", "maximum", "heaviside", "nan_to_num", "sinc", "erf",
+    "wlc_pdf",
 })
 
 #: What an equation or a function body may call, besides its parameters: every
@@ -87,6 +89,8 @@ NON_PARAMETER_NAMES = frozenset({
 _NAMESPACE = {"np": np, "abs": np.abs, "inf": np.inf, "nan": np.nan}
 _NAMESPACE.update({name: getattr(np, name) for name in NON_PARAMETER_NAMES
                    if name not in _NAMESPACE and hasattr(np, name)})
+#: ``wlc_pdf(R, L, lp)``: the end-to-end distribution of a worm-like chain, one row per L.
+_NAMESPACE["wlc_pdf"] = wlc_pdf
 
 #: A name in an expression; an attribute (``np.linspace``) is not one.
 _IDENTIFIER = re.compile(r"(?<![.\w])([a-zA-Z][a-zA-Z0-9_]*)\b")

@@ -157,6 +157,7 @@ SHIPPED_SINCE: Dict[str, Dict[str, str]] = {
         'FRET trajectory': '2026-09-29',
         'FRET trajectory (distance)': '2026-09-29',
         'FRET trajectory (Gaussian distance)': '2026-09-29',
+        'FRET trajectory (WLC distance)': '2026-10-10',
         'Two-component mixing line': '2026-09-29',
         'Iso-phase line': '2026-09-29',
         'Iso-modulation arc': '2026-09-29',
