@@ -5,7 +5,8 @@ Both GUIs open files the same way, and this module is that way:
 * :data:`IMPORTERS` -- the File > Import entries as data: what the file
   dialog is called, whether it asks for files or a folder, its filters, and the
   title of the merge question;
-* :func:`kind_for_paths` -- the dispatch a drop and ``--file`` use;
+* :func:`kind_for_paths` -- the dispatch a drop and ``--file`` use (a
+  ``.cs.pto`` is a ChiSurf project, read by :mod:`.project_reader`);
 * :func:`reader_for` / :func:`read` / :func:`load` -- the reader for a kind,
   and the load the app runs on its worker (read, then compute the equation
   columns);
@@ -92,6 +93,8 @@ IMPORTERS: Dict[str, Importer] = {
                  "Open Sampling Files", multiple=True),
         Importer("pto", "PTO Measurement Containers", "open",
                  (("PTO files", ("*.pto",)), ("All Files", ("*.*",))), "Open PTO Container"),
+        Importer("cs_project", "ChiSurf project", "open",
+                 (("ChiSurf projects", ("*.cs.pto",)),), "Open ChiSurf Project"),
     )
 }
 
@@ -131,9 +134,10 @@ def kind_for_paths(paths: Paths) -> str:
 
     A folder with a ``parameters.json`` is a sampling folder, any other folder
     a burst-analysis folder; then by the first file's extension: ``.er4``
-    sampling, ``.h5``/``.hdf5``/``.zip`` an analysis file, ``.pto`` a
-    measurement container, and anything else a text table (``.csv``, ``.dat``,
-    ``.txt``, a single ``.bur``).
+    sampling, ``.h5``/``.hdf5``/``.zip`` an analysis file, ``.cs.pto`` a
+    ChiSurf project (its stored sampling chains), ``.pto`` a measurement
+    container, and anything else a text table (``.csv``, ``.dat``, ``.txt``, a
+    single ``.bur``).
     """
     items = _as_list(paths)
     if not items:
@@ -146,18 +150,22 @@ def kind_for_paths(paths: Paths) -> str:
         return "er4"
     if suffix in (".h5", ".hdf5", ".zip"):
         return "mfd_hdf5"
+    if [s.lower() for s in first.suffixes[-2:]] == [".cs", ".pto"]:
+        return "cs_project"
     if suffix == ".pto":
         return "pto"
     return "csv"
 
 
 def reader_for(kind: Optional[str], paths: Paths,
-               merge_mode: str = "columns") -> Tuple[Callable, object]:
+               merge_mode: str = "columns",
+               store: Optional[str] = None) -> Tuple[Callable, object]:
     """``(reader, argument)``: the reader for *kind* and what to hand it.
 
     A folder chosen for a burst analysis that turns out to hold a
     ``parameters.json`` is read as the sampling folder it is. A text import
-    that picked ``.er4`` files reads them as sampling chains.
+    that picked ``.er4`` files reads them as sampling chains. A ChiSurf
+    project reads its stored table *store* (the only one when ``None``).
     """
     from . import reader
 
@@ -172,6 +180,10 @@ def reader_for(kind: Optional[str], paths: Paths,
         return reader.read_csv_sampling, items
     if kind == "mfd_hdf5":
         return functools.partial(reader.read_mfd_hdf5, merge_mode=merge_mode), items
+    if kind == "cs_project":
+        from .project_reader import read_store
+
+        return functools.partial(read_store, store=store), items[0]
     if kind == "pto":
         from .pto_reader import read_container
 
@@ -181,14 +193,15 @@ def reader_for(kind: Optional[str], paths: Paths,
     return reader.read_csv, items
 
 
-def read(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns"):
+def read(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",
+         store: Optional[str] = None):
     """Read *paths* with the reader for *kind*; the raw table, no equation columns."""
-    data_reader, argument = reader_for(kind, paths, merge_mode)
+    data_reader, argument = reader_for(kind, paths, merge_mode, store)
     return data_reader(argument)
 
 
 def load(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",
-         equations=None, constants=None):
+         equations=None, constants=None, store: Optional[str] = None):
     """Read *paths* and compute the equation columns: a whole load.
 
     This is what the Qt window runs on its worker thread and what the emtk
@@ -204,13 +217,15 @@ def load(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",
         How several analysis files combine (``read_mfd_hdf5``).
     equations, constants
         The window's; the equation columns are computed when given.
+    store : str, optional
+        Which stored table of a ChiSurf project (``kind="cs_project"``).
 
     Returns
     -------
     DataSource
         Possibly empty (a folder with nothing readable in it).
     """
-    source = read(paths, kind, merge_mode)
+    source = read(paths, kind, merge_mode, store)
     if source is not None and not source.empty and (equations or constants):
         logging.info("Computing columns for %s rows", source.size)
         source.compute_columns(constants=constants or {}, equations=equations or [])

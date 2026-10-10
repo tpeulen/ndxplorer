@@ -88,6 +88,7 @@ class PlotArea:
         self._band_pixels: Optional[tuple] = None
         #: Plot rectangles of the last frame, in pixels, by name.
         self.rects: dict = {}
+        self.hover: Optional[tuple] = None
 
     # ---------------------------------------------------------------- data
     def texture(self):
@@ -125,6 +126,9 @@ class PlotArea:
         """Forget last frame's plot boxes and titles; call before any plot draws."""
         self._titles = []
         self.rects = {}
+        #: ``(x, y)`` in data units under the pointer on the map this frame, or
+        #: ``None``: what the status bar's readout shows.
+        self.hover = None
 
     def draw(self, boxes: dict) -> None:
         """The x marginal, the map and the y marginal, in their boxes.
@@ -337,6 +341,9 @@ class PlotArea:
         if texture is not None:
             (x0, x1, _), (y0, y1, _) = self._range("x"), self._range("y")
             implot.plot_image("##histogram", texture, (x0, y0), (x1, y1))
+            if implot.is_plot_hovered():
+                point = implot.get_plot_mouse_pos()
+                self.hover = (float(point.x), float(point.y))
             consumed = any(f.plot_input("map") for f in self._features())
             if not consumed and not self._gate_rect():
                 self._rubber_band()

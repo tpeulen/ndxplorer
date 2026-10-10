@@ -167,3 +167,88 @@ def test_without_chisurf_interval_gates_still_save_and_load(tmp_path, monkeypatc
 
     with pytest.raises(RuntimeError, match="chisurf.core.roi"):
         save_selections([Region()], str(tmp_path / "r.selection.json"))
+
+
+# ------------------------------------------------------------- ChiSurf projects ---
+def _chain_text(n_chains: int, n_draws: int, seed: int) -> bytes:
+    """A chain table as ChiSurf stores it: parameters, then ``chain`` and ``draw``."""
+    rng = np.random.default_rng(seed)
+    lines = ["tau\tx_D\tchain\tdraw"]
+    for c in range(n_chains):
+        for d in range(n_draws):
+            lines.append(f"{rng.normal(4.0, 0.1)!r}\t{rng.random()!r}\t{c}\t{d}")
+    return ("\n".join(lines) + "\n").encode()
+
+
+def write_cs_project(path, chains: dict) -> pathlib.Path:
+    """A ``.cs.pto`` laid out as ChiSurf's project writer lays it out.
+
+    ndX must not import ChiSurf, so the container is built here with the same
+    tttrlib calls: one ``chisurf.project`` object and ``chisurf.project-entry``
+    objects for the embedded entries. ChiSurf's own test
+    (``test/project/test_sampling_roundtrip.py``) reads a project it saved.
+    """
+    import tttrlib
+
+    handle = tttrlib.PtoFile()
+    assert handle.create(str(path), "project")
+    assert handle.add("chisurf.project", "json", "project", b"{}")
+    for uid, data in chains.items():
+        assert handle.add("chisurf.project-entry", "raw", f"sampling/{uid}/chain.er4", data)
+        assert handle.add("chisurf.project-entry", "raw", f"sampling/{uid}/diagnostics.json",
+                          b"{}")
+    assert handle.add("chisurf.project-entry", "raw", "datasets/curve.csv", b"x\ty\n1\t2\n")
+    assert handle.commit()
+    handle.close()
+    return pathlib.Path(path)
+
+
+def test_a_chisurf_project_is_its_own_kind(tmp_path):
+    assert loading.kind_for_paths("a.cs.pto") == "cs_project"
+    assert loading.kind_for_paths([str(tmp_path / "b.CS.PTO")]) == "cs_project"
+    assert loading.kind_for_paths("a.pto") == "pto"
+    importer = loading.IMPORTERS["cs_project"]
+    assert importer.mode == "open" and importer.filters == (("ChiSurf projects", ("*.cs.pto",)),)
+
+
+def test_read_store_reads_one_chain_and_refuses_to_guess(tmp_path):
+    from ndxplorer.io.project_reader import list_stores, read_store
+
+    one = write_cs_project(tmp_path / "one.cs.pto", {"fit-a": _chain_text(3, 50, 1)})
+    stores = list_stores(one)
+    assert stores == [{"name": "sampling/fit-a/chain.er4", "rows": 150,
+                       "columns": ["tau", "x_D", "chain", "draw"]}]
+    source = read_store(one)
+    assert source.size == 150
+    assert loading.read(str(one)).size == 150     # the dispatch a drop takes
+
+    two = write_cs_project(tmp_path / "two.cs.pto", {"fit-a": _chain_text(2, 10, 2),
+                                                    "fit-b": _chain_text(1, 30, 3)})
+    with pytest.raises(ValueError, match="fit-a.*fit-b"):
+        read_store(two)
+    chosen = loading.load([str(two)], "cs_project", store="sampling/fit-b/chain.er4")
+    assert chosen.size == 30
+    with pytest.raises(ValueError, match="No stored table"):
+        read_store(two, "sampling/nope/chain.er4")
+
+
+def test_a_project_with_several_chains_asks_which(tmp_path):
+    from ndxplorer.app.features.io import StoreChoice
+    from ndxplorer.app.frame import NdxApp
+
+    two = write_cs_project(tmp_path / "two.cs.pto", {"fit-a": _chain_text(2, 10, 2),
+                                                    "fit-b": _chain_text(1, 30, 3)})
+    app = NdxApp(session_autosave=False)
+    try:
+        io = app._feature("io")
+        assert app.open_path(str(two))
+        assert isinstance(io.dialog, StoreChoice)
+        labels = [label for _i, label in io.dialog.store_options()]
+        assert labels[1].startswith("sampling/fit-b/chain.er4 (30 draws, 2 parameters)")
+        io.dialog.choice = 1
+        io.dialog.ok()
+        io.task.wait(30)
+        assert app.model.source.size == 30
+        assert "Loaded 30 rows from two.cs.pto" in app.status
+    finally:
+        app.close()

@@ -505,19 +505,41 @@ def test_a_right_click_elsewhere_closes_a_menu(app):
     assert app.popup is None
 
 
-def test_show_status_writes_a_line_in_the_menu_bar_row(app, source):
-    """The status line costs the plots no height: it sits right of the menus."""
-    app.model.set_source(source)
-    app.show_status("Copied 2-D histogram")
+def test_the_status_bar_runs_along_the_bottom(app, source):
+    """A real status bar: always drawn at ``y+h-STATUS_H``, the docks above it."""
+    from emtk import style
     from emtk.testing import RecordingPainter
 
-    from ndxplorer.app.frame import MENU_H
+    from ndxplorer.app.frame import STATUS_H
 
+    app.model.set_source(source)
+    app.show_status("Copied 2-D histogram")
+    x, y, w, h = 10.0, 20.0, 1400.0, 900.0
     painter = RecordingPainter()
-    app.draw(painter, 0.0, 0.0, 1400.0, 900.0)
+    app.draw(painter, x, y, w, h)
+    assert app.status_box == (x, y + h - STATUS_H, w, STATUS_H)
     text = next(t for t in painter.texts if t[5] == "Copied 2-D histogram")
-    assert text[1] < MENU_H and text[0] > 200.0
-    assert app.plots.rects["map"][1] + app.plots.rects["map"][3] > 890.0
+    assert y + h - STATUS_H <= text[1] < y + h and text[0] < x + 20.0   # left-aligned
+    # the docks end where the bar begins: the map stays above it
+    assert app.plots.rects["map"][1] + app.plots.rects["map"][3] <= y + h - STATUS_H + 0.5
+    # the 1-px rule on its top edge
+    assert any(r[:4] == (x, y + h - STATUS_H, w, 1.0) and r[4] == style.BORDER
+               for r in painter.fills)
+
+
+def test_the_status_bar_is_there_without_a_message_and_cuts_a_long_one(app):
+    from emtk.testing import RecordingPainter
+
+    from ndxplorer.app.frame import STATUS_H
+
+    app.show_status("")
+    app.draw(RecordingPainter(), 0.0, 0.0, 600.0, 400.0)
+    assert app.status_box == (0.0, 400.0 - STATUS_H, 600.0, STATUS_H)
+    app.show_status("word " * 400)
+    painter = RecordingPainter()
+    app.draw(painter, 0.0, 0.0, 600.0, 400.0)
+    shown = next(t for t in painter.texts if t[1] >= 400.0 - STATUS_H)
+    assert shown[5].endswith("…") and shown[5].startswith("word")
 
 
 def test_menu_shortcuts_run_their_action(app):

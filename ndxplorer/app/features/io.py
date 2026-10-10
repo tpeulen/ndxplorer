@@ -3,7 +3,8 @@
 What it owns:
 
 * File > Import (text files, analysis file, analysis folder, ChiSurf
-  sampling): the merge question when data is already loaded, the file or
+  sampling, ChiSurf project -- which of its stored tables, when it holds
+  several: :class:`StoreChoice`): the merge question when data is already loaded, the file or
   folder dialog, the load on a worker thread with a progress window, and a
   "Data Load Error" box with the reader's reason when it fails;
 * image mode: a table with ``X pixel``/``Y pixel`` columns is shown as the
@@ -53,6 +54,7 @@ IMPORT_ACTIONS: Dict[str, str] = {
     "open_analysis_file": "mfd_hdf5",
     "open_analysis_folder": "burst_dir",
     "open_sampling": "cs_sampling",
+    "open_cs_project": "cs_project",
 }
 
 #: Qt buttons of the io scenarios -> the app's actions (``click`` steps).
@@ -144,6 +146,47 @@ class MergeQuestion(_Dialog):
 
         self.done = True
         self.then(*merge_choice(int(self.choice)))
+
+    def cancel(self) -> None:
+        self.done = True
+
+
+class StoreChoice(_Dialog):
+    """Which stored table of a ChiSurf project to open, when it holds several.
+
+    ``then(name)`` runs on Open with the chosen store's entry name; Cancel
+    opens nothing.
+    """
+
+    spec_name = "store_choice"
+    width, height = 560.0, 130.0
+
+    def __init__(self, path: str, stores: List[dict], then: Callable[[str], None]) -> None:
+        from emtk.i18n import tr
+
+        super().__init__(tr("Open ChiSurf Project"))
+        self.path = str(path)
+        self.stores = list(stores)
+        self.then = then
+        self.choice = 0
+
+    def prompt(self) -> str:
+        from emtk.i18n import tr
+
+        return tr("{name} holds {n} stored tables. Which one?").format(
+            name=pathlib.Path(self.path).name, n=len(self.stores))
+
+    def store_options(self) -> list:
+        from emtk.i18n import tr
+
+        return [(i, tr("{name} ({rows} draws, {params} parameters)").format(
+                    name=store["name"], rows=store["rows"],
+                    params=len([c for c in store["columns"] if c not in ("chain", "draw")])))
+                for i, store in enumerate(self.stores)]
+
+    def ok(self) -> None:
+        self.done = True
+        self.then(self.stores[int(self.choice)]["name"])
 
     def cancel(self) -> None:
         self.done = True
@@ -341,6 +384,9 @@ class IoFeature(Feature):
     def _ask_paths(self, importer, append: bool, mode: str) -> None:
         def chosen(paths) -> None:
             paths = [paths] if isinstance(paths, str) else list(paths)
+            if importer.kind == "cs_project":
+                self.open_project(paths[0], append=append, merge_mode=mode)
+                return
             self.load(paths, importer.kind, append=append, merge_mode=mode)
 
         if importer.mode == "folder":
@@ -350,9 +396,41 @@ class IoFeature(Feature):
                                   multiple=importer.multiple)
         self._answer_from_queue()
 
+    def open_project(self, path: str, append: bool = False,
+                     merge_mode: str = "columns") -> Optional[Task]:
+        """Open a ChiSurf project's stored table: asked which, when there are several.
+
+        Returns the load (``None`` while the choice is on screen, or when the
+        project holds nothing to open -- said in a message box).
+        """
+        from emtk.i18n import tr
+
+        from ...io.project_reader import list_stores
+
+        try:
+            stores = list_stores(path)
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            self._report(tr("Data Load Error"), tr("Failed to load data: {error}").format(error=exc))
+            return None
+        if not stores:
+            self._report(tr("Data Load Error"),
+                         tr("{name} holds no stored sampling chain").format(
+                             name=pathlib.Path(path).name))
+            return None
+        if len(stores) == 1:
+            return self.load([path], "cs_project", append=append, merge_mode=merge_mode,
+                             store=stores[0]["name"])
+        self.dialog = StoreChoice(path, stores, lambda name: self.load(
+            [path], "cs_project", append=append, merge_mode=merge_mode, store=name))
+        return None
+
     def load(self, paths: List[str], kind: Optional[str] = None, append: bool = False,
-             merge_mode: str = "columns") -> Task:
-        """Read *paths* in the background; replace the table, or merge into it."""
+             merge_mode: str = "columns", store: Optional[str] = None) -> Task:
+        """Read *paths* in the background; replace the table, or merge into it.
+
+        *store* names the stored table of a ChiSurf project (``kind="cs_project"``).
+        The status bar says what is loading and, after, what was loaded.
+        """
         from ...io import loading
 
         manager = self.app.model.manager
@@ -362,25 +440,36 @@ class IoFeature(Feature):
 
         def work(_task):
             return loading.load(paths, kind, merge_mode, equations=equations,
-                                constants=constants)
+                                constants=constants, store=store)
 
+        from emtk.i18n import tr
+
+        self.app.show_status(tr("Loading {names}…").format(names=names))
         return self._run("Loading", f"Loading {names}…", work,
                          lambda source: self._loaded(paths, source, append, merge_mode),
                          lambda exc: self._load_failed(paths, exc))
 
     def _load_failed(self, paths, exc: BaseException) -> None:
+        from emtk.i18n import tr
+
         logger.error("Failed to load %s: %s", paths, exc)
         self.app.model.error = f"Failed to load data: {exc}"
+        self.app.show_status(tr("Loading failed: {error}").format(error=exc))
         self._report("Data Load Error", self.app.model.error)
 
     def _loaded(self, paths: List[str], source, append: bool, merge_mode: str) -> None:
         from ...io import loading
 
+        from emtk.i18n import tr
+
         model = self.app.model
         if source is None or source.empty:
             model.error = f"No data in {', '.join(paths)}"
+            self.app.show_status(tr("No data in {paths}").format(paths=", ".join(paths)))
             self._report("Data Load Error", model.error)
             return
+        self.app.show_status(tr("Loaded {rows} rows from {name}").format(
+            rows=source.size, name=pathlib.Path(paths[0]).name))
         model.error = ""
         if append and model.has_data:
             if not loading.merge(model.source, source, merge_mode, warn=self._report):

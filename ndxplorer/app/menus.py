@@ -24,6 +24,9 @@ MENUS: List[tuple] = [
             {"label": "Analysis file (*.zip, *.hdf)", "action": "open_analysis_file"},
             {"label": "Analysis-Folder", "action": "open_analysis_folder", "shortcut": "Ctrl+I"},
             {"label": "ChiSurf-Sampling", "action": "open_sampling"},
+            {"label": "ChiSurf project (*.cs.pto)", "action": "open_cs_project",
+             "description": "Open a sampling chain stored in a ChiSurf project; asks which "
+                            "one when the project holds several."},
         ]),
         ("Save", [
             {"label": "Burst IDs", "action": "save_burst_ids"},

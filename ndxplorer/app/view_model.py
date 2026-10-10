@@ -28,7 +28,7 @@ FIELD_DEFAULTS = {"selected_cluster": -1, "cluster_colours": False}
 
 #: What stays usable without data: opening something, and leaving.
 WITHOUT_DATA = frozenset({"open_text", "open_analysis_folder", "open_analysis_file",
-                          "open_sampling", "browse", "working_path", "colormap", "exit",
+                          "open_sampling", "open_cs_project", "browse", "working_path", "colormap", "exit",
                           "toggle_plot_controls", "toggle_plot", "reset_layout"})
 
 

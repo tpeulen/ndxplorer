@@ -12,8 +12,8 @@ The layout starts as the Qt window's: the menu bar; on the left the *Plot
 controls* dock (its panels a ``view.json`` drawn by :mod:`emtk.view_form`) with
 the features' tabs beside it; on the right the *Plot* dock -- a toolbar (the
 working path, the colours, the point counts and the actions), the x marginal
-over the 2-D histogram and the y marginal beside it; the status line in the
-menu bar's row. Every dock
+over the 2-D histogram and the y marginal beside it; the status bar along the
+bottom. Every dock
 is a sticky window (:mod:`.docks`, :mod:`emtk.docking`): the user can float
 it, snap it, drop it back into a region, close it and reopen it from View.
 
@@ -52,11 +52,13 @@ def live_apps() -> list:
 
 VIEWS = pathlib.Path(__file__).with_name("views")
 
-#: Height of the menu bar, in logical pixels. The status line shares its row,
-#: right of the menus, so it costs the plots no height.
+#: Height of the menu bar, in logical pixels.
 MENU_H = 24.0
-#: Space between the last menu title and the status text.
-STATUS_GAP = 24.0
+#: Height of the status bar along the window's bottom edge, in logical pixels.
+#: It is always there, so the docks above it never jump when a message comes.
+STATUS_H = 22.0
+#: Left inset of the status text, and the gap kept before the axis readout.
+STATUS_PAD = 6.0
 
 
 #: The narrowest corner that holds its controls (two buttons side by side),
@@ -222,10 +224,12 @@ class NdxApp:
         #: ``{"folder", "files", "gate", "mask", "n_rows", "n_selected"}``;
         #: returns a status line or ``None``. ``None`` here: nothing is recorded.
         self.burst_ids_recorder: Optional[Callable[[dict], Optional[str]]] = None
-        #: One line of non-modal feedback (Qt's status bar), in the menu bar's
-        #: row; set it with :meth:`show_status`. It starts with what the
-        #: shipped defaults added to the user's older settings.
+        #: One line of non-modal feedback (Qt's status bar), in the status bar
+        #: along the bottom; set it with :meth:`show_status`. It starts with what
+        #: the shipped defaults added to the user's older settings.
         self.status = self._defaults_added()
+        #: Where the status bar was drawn last frame, ``(x, y, w, h)``.
+        self.status_box = None
 
     def _defaults_added(self) -> str:
         """"Added 2 new constants from the defaults: f_rep, harmonic", or ``""``."""
@@ -353,6 +357,15 @@ class NdxApp:
         A file that cannot be read says why in a message box ("Data Load
         Error", as the Qt window's), and the data on screen stays.
         """
+        from ..io.loading import kind_for_paths
+
+        if kind_for_paths(path) == "cs_project":
+            # A project may hold several stored tables: the io feature asks
+            # which (StoreChoice) and loads it in the background.
+            io_feature = self._feature("io")
+            if io_feature is not None:
+                io_feature.open_project(str(path))
+                return True
         ok = self.model.open(path)
         if not ok:
             self.message = ("Data Load Error", self.model.error)
@@ -403,11 +416,12 @@ class NdxApp:
         painter.fill_rect(x, y, w, h, theme.WINDOW_BG)
         self.plots.begin_frame()
         with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage) as ctx:
-            emtk.begin("##ndx", (x, y + MENU_H, w, h - MENU_H))
+            body_h = max(h - MENU_H - STATUS_H, 1.0)
+            emtk.begin("##ndx", (x, y + MENU_H, w, body_h))
             modal = self.message is not None or getattr(self, "_feature_modal", False)
             if modal:
                 emtk.begin_disabled(True)
-            self.docks.draw((x, y + MENU_H, w, max(h - MENU_H, 1.0)))
+            self.docks.draw((x, y + MENU_H, w, body_h))
             if modal:
                 emtk.end_disabled()
             emtk.end()
@@ -432,32 +446,57 @@ class NdxApp:
         self._layout_due = False
 
     def _draw_chrome(self, painter, x, y, w, h) -> None:
-        """The menu bar, and the status line in its row right of the menus."""
+        """The menu bar along the top and the status bar along the bottom."""
         self._menu_box = (x, y, w, MENU_H)
         self.menubar.set_viewport(x + w, y + h)
         self.menubar.draw(painter, *self._menu_box)
-        if self.status:
-            self._draw_status(painter, x, y, w)
+        self._draw_status(painter, x, y + h - STATUS_H, w, STATUS_H)
 
-    def _draw_status(self, painter, x, y, w) -> None:
-        """The status text, right-aligned in the menu bar's row; a text too
-        long for the room right of the menus shows its end after a "…"."""
+    def _draw_status(self, painter, x, y, w, h) -> None:
+        """The status bar: the message left-aligned, the axis readout at the right.
+
+        The message is cut at its end with "…" when it does not fit; the
+        readout (the axes and the point under the pointer on the map) keeps its
+        room first, since it changes as the pointer moves and is short.
+        """
         from emtk import style
         from emtk.painter import ALIGN_LEFT, ALIGN_VCENTER
 
-        menus_w = sum(self.menubar.title_width(painter, menu) for menu in self.menubar.menus)
-        left = x + menus_w + STATUS_GAP
-        room = x + w - 6.0 - left
-        if room < 20.0:
-            return
+        self.status_box = (x, y, w, h)
+        painter.fill_rect(x, y, w, h, theme.WINDOW_BG)
+        painter.fill_rect(x, y, w, 1.0, style.BORDER)
+        right = x + w - STATUS_PAD
+        readout = self.axis_readout()
+        if readout:
+            rw = painter.text_width(readout)
+            if rw < w * 0.6:
+                painter.text(right - rw, y, rw + 1.0, h, ALIGN_LEFT | ALIGN_VCENTER, readout,
+                             style.TEXT_DISABLED)
+                right -= rw + 4.0 * STATUS_PAD
+        room = right - (x + STATUS_PAD)
         text = self.status
-        if painter.text_width(text) > room:
-            while text and painter.text_width("…" + text) > room:
-                text = text[1:]
-            text = "…" + text
-        tw = painter.text_width(text)
-        painter.text(x + w - 6.0 - tw, y, tw + 1.0, MENU_H, ALIGN_LEFT | ALIGN_VCENTER, text,
-                     style.TEXT)
+        if not text or room < 20.0:
+            return
+        text = _elide_end(painter, text, room)
+        painter.text(x + STATUS_PAD, y, painter.text_width(text) + 1.0, h,
+                     ALIGN_LEFT | ALIGN_VCENTER, text, style.TEXT)
+
+    def axis_readout(self) -> str:
+        """"E 0.42 · S 0.55" for the point under the pointer on the map, else the axes.
+
+        Empty without data.
+        """
+        model = self.model
+        if not model.has_data:
+            return ""
+        try:
+            x_name, y_name = model.axis("x").name, model.axis("y").name
+        except Exception:  # noqa: BLE001 - no readout is better than no window
+            return ""
+        hover = getattr(self.plots, "hover", None)
+        if hover is not None:
+            return f"{x_name} {hover[0]:.4g} · {y_name} {hover[1]:.4g}"
+        return f"{x_name} × {y_name}"
 
     def _keep_menu(self) -> None:
         """Keep the context menu (:meth:`open_menu`) up; what it picks runs
@@ -692,9 +731,10 @@ class NdxApp:
                     binding.control.commit_edit()
 
     def show_status(self, text: str) -> None:
-        """Say *text* in the status line, until the next one.
+        """Say *text* in the status bar, until the next one.
 
-        The line shares the menu bar's row, right of the menus.
+        The bar runs along the window's bottom edge; a text too long for it is
+        cut at its end with "…".
 
         Non-modal feedback ("Copied 2-D histogram"); a box the user must
         dismiss is :attr:`message`.
@@ -847,6 +887,20 @@ class NdxApp:
         if getattr(self, "_frame_due", False):
             return True
         return any(feature.animating() for feature in self.features)
+
+
+def _elide_end(painter, text: str, room: float) -> str:
+    """*text*, cut at its end with "…" to fit *room* pixels of *painter*."""
+    if painter.text_width(text) <= room:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:  # the longest prefix that fits with the ellipsis
+        mid = (lo + hi + 1) // 2
+        if painter.text_width(text[:mid].rstrip() + "…") <= room:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo].rstrip(" ·,;:") + "…"
 
 
 def make_app() -> NdxApp:

@@ -1,0 +1,13 @@
+{
+  "title": "Stored table",
+  "description": "Asked when a ChiSurf project holds more than one stored table (one per sampled fit): which one to open.",
+  "sections": [
+    {"type": "info", "source": "prompt"},
+    {"type": "choice", "attr": "choice", "label": "Table:", "options_source": "store_options",
+     "description": "The sampling chain to open: the fit it belongs to, with its number of draws and parameters."},
+    {"type": "button_row", "buttons": [
+      {"label": "Open", "action": "ok", "description": "Open the chosen table."},
+      {"label": "Cancel", "action": "cancel", "description": "Open nothing."}
+    ]}
+  ]
+}
