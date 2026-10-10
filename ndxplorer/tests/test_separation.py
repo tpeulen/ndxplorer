@@ -344,7 +344,7 @@ def test_the_view_spec_names_only_what_the_model_has(small_table):
 # ---- the real tables ---------------------------------------------------------------------------
 
 HERE = pathlib.Path(__file__).resolve()
-MFD = HERE.parents[2] / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = HERE.parents[2] / "tests" / "mfd" / "burstwise_All 0.1500#30"
 ALEX = pathlib.Path.home() / "dev/tttr-data/sm/cal1/001_60g_25r_cal1_cy3b_8_18_33bp_atto647n_alex.pto"
 
 

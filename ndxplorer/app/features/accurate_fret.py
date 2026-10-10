@@ -602,10 +602,13 @@ class AccurateFretFeature(Feature):
 
     def menu_entries(self) -> List[tuple]:
         return [
-            (("FRET",), {"label": "FRET calibration…", "action": "fret_calibration"}),
+            (("FRET",), {"label": "FRET calibration…", "action": "fret_calibration",
+             "description": "Determine FRET correction factors from the loaded burst data."}),
             (("FRET",), None),
-            (("FRET",), {"label": "Save calibration…", "action": "save_fret_calibration"}),
-            (("FRET",), {"label": "Load calibration…", "action": "load_fret_calibration"}),
+            (("FRET",), {"label": "Save calibration…", "action": "save_fret_calibration",
+             "description": "Store the current FRET factors in the measurement or a calibration file."}),
+            (("FRET",), {"label": "Load calibration…", "action": "load_fret_calibration",
+             "description": "Apply a saved FRET calibration to the current ndX session."}),
             (("File", "Import"),
              {"label": "From MMFDB…", "action": "open_from_mmfdb",
               "description": "Open a burst selection registered in MMFDB "

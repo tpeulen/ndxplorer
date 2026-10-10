@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = REPO / "tests" / "mfd" / "burstwise_All 0.1500#30"
 SIZE = (1400, 900)
 
 

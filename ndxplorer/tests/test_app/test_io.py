@@ -15,7 +15,7 @@ from ndxplorer.core.data_source import DataSource
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 IRIS = REPO / "ndxplorer" / "tests" / "fixtures" / "iris.csv"
-MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = REPO / "tests" / "mfd" / "burstwise_All 0.1500#30"
 SIZE = (1200, 800)
 
 

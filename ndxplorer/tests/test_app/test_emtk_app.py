@@ -18,7 +18,7 @@ import pytest
 from ndxplorer.core.data_source import DataSource
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = REPO / "tests" / "mfd" / "burstwise_All 0.1500#30"
 SIZE = (1400, 900)
 
 
@@ -352,6 +352,28 @@ def test_the_menu_bar_mirrors_the_qt_menus(app):
     assert app.panel.available("exit")
     assert not app.panel.available("clear_gates")
     assert not app.panel.available("umap")                    # not ported: shown, disabled
+
+
+def test_every_ndx_menu_action_has_a_tooltip():
+    from ndxplorer.app.menus import build_menu_bar
+    from emtk.widgets.menus import Menu
+
+    bar = build_menu_bar(lambda _action: True, lambda _attribute: False)
+    actions = []
+
+    def visit(entries):
+        for entry in entries:
+            if entry is None:
+                continue
+            if isinstance(entry, Menu):
+                visit(entry.entries)
+            elif entry.action:
+                actions.append(entry)
+
+    for menu in bar.menus:
+        visit(menu.entries)
+    assert actions
+    assert all(item.tooltip for item in actions)
 
 
 def test_the_file_menu_opens(app):

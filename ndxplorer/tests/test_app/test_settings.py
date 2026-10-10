@@ -14,8 +14,17 @@ import shutil
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = REPO / "tests" / "mfd" / "burstwise_All 0.1500#30"
 SIZE = (1400, 900)
+
+
+def test_settings_directory_override_is_used_without_touching_home(tmp_path, monkeypatch):
+    configured = tmp_path / "settings" / "ndxplorer"
+    monkeypatch.setenv("NDXPLORER_SETTINGS_DIR", str(configured))
+    from ndxplorer.settings import get_settings_path
+
+    assert get_settings_path() == configured
+    assert configured.is_dir()
 
 
 @pytest.fixture

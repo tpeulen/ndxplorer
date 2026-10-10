@@ -148,7 +148,9 @@ def build_menu_bar(available: Callable[[str], bool], checked: Callable[[str], bo
                 row = MenuItem(item["label"], shortcut=item.get("shortcut", ""),
                                checkable=bool(item.get("checkable")),
                                checked=bool(item.get("checked") and checked(item["checked"])),
-                               enabled=available(item["action"]))
+                               enabled=available(item["action"]),
+                               tooltip=(item.get("description") or item.get("tooltip")
+                                        or f"Run {item['label']} in the current ndX session."))
                 row.action = item["action"]
                 out.append(row)
         return out

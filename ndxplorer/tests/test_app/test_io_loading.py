@@ -13,7 +13,7 @@ from ndxplorer.io.reader import read_burst_analysis, read_csv, read_sampling_fol
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 IRIS = REPO / "ndxplorer" / "tests" / "fixtures" / "iris.csv"
-MFD = REPO / "test" / "mfd" / "burstwise_All 0.1500#30"
+MFD = REPO / "tests" / "mfd" / "burstwise_All 0.1500#30"
 
 
 def test_a_drop_dispatches_by_folder_and_extension(tmp_path):

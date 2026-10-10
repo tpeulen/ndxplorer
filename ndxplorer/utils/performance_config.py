@@ -165,9 +165,12 @@ def _get_environment_overrides() -> dict:
     overrides = {}
     try:
         # Try to find and load the settings file
+        configured_dir = os.environ.get("NDXPLORER_SETTINGS_DIR")
+        user_dir = (Path(configured_dir).expanduser() if configured_dir
+                    else Path.home() / ".ndxplorer")
         settings_paths = [
-            # User settings directory
-            Path.home() / ".ndxplorer" / "mfd.settings.json",
+            # User settings directory (override supports embedded applications).
+            user_dir / "mfd.settings.json",
             # Module settings directory
             Path(__file__).parent.parent / "settings" / "mfd.settings.json",
             # Current directory

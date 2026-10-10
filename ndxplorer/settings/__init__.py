@@ -21,7 +21,8 @@ def get_settings_path() -> pathlib.Path:
         pathlib.Path: Path to the ndxplorer settings folder
     """
     try:
-        settings_path = pathlib.Path.home() / ".ndxplorer"
+        configured = os.environ.get("NDXPLORER_SETTINGS_DIR")
+        settings_path = pathlib.Path(configured).expanduser() if configured else pathlib.Path.home() / ".ndxplorer"
         settings_path.mkdir(parents=True, exist_ok=True)
     except Exception:
         settings_path = pathlib.Path(__file__).parent
