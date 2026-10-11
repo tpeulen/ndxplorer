@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import mark, tr
 from .projection_scores import (
     DEFAULT_MAX_ROWS,
     METHOD_HELP,
@@ -49,13 +50,15 @@ MAX_DISCRETE_VALUES = 10
 
 #: Caption prefix of the class that is the z parameter's value.
 Z_CLASS_PREFIX = "z parameter: "
+#: ... as the panel shows it, before the parameter's name.
+Z_CLASS_CAPTION = mark("z parameter: {name}")
 
 #: How bursts count in the Separation score: key -> caption. Low-photon bursts
 #: are wide (shot noise) and fill the valleys between populations.
 PHOTON_MODES = {
-    "all": "All bursts, equal weight",
-    "weight": "Weight by photons",
-    "min": "Only bursts with at least Min photons",
+    "all": mark("All bursts, equal weight"),
+    "weight": mark("Weight by photons"),
+    "min": mark("Only bursts with at least Min photons"),
 }
 
 
@@ -121,12 +124,23 @@ class IslandClusters:
         x, y = self.names
         n = self.count
         labelled = round(100.0 * self.coverage)
-        rest = "on ridges/outliers" if self.mode == "whole" else "outside the cores"
-        text = (f"{n} islands of {x} vs {y} written as clusters 0\u2013{n - 1}; "
-                f"{labelled} % of bursts labelled, {100 - labelled} % {rest} (\u22121)")
+        if self.mode == "whole":
+            text = tr("{n} islands of {x} vs {y} written as clusters 0\u2013{last}; {labelled} % "
+                      "of bursts labelled, {rest} % on ridges/outliers (\u22121)")
+        else:
+            text = tr("{n} islands of {x} vs {y} written as clusters 0\u2013{last}; {labelled} % "
+                      "of bursts labelled, {rest} % outside the cores (\u22121)")
+        text = text.format(n=n, x=x, y=y, last=n - 1, labelled=labelled, rest=100 - labelled)
         if replaced:
-            text += ", replacing the previous clusters"
+            text += tr(", replacing the previous clusters")
         return text
+
+
+def class_label(caption: str) -> str:
+    """How the panel shows the class *caption* (a key of the context's classes)."""
+    if caption.startswith(Z_CLASS_PREFIX):
+        return tr(Z_CLASS_CAPTION).format(name=caption[len(Z_CLASS_PREFIX):])
+    return tr(caption)
 
 
 def photon_column(names) -> str:
@@ -248,21 +262,22 @@ def build_context(source, axis_settings: Optional[Dict[str, dict]] = None,
     if selections:
         gated = tuple(sorted({n for s in selections for n in _selection_columns(s, all_names)}))
         inside = source.selection_mask(selections).astype(np.float64)
-        classes["Gate: inside vs outside"] = ClassLabels(
-            inside, True, "inside vs outside the gate", exclude=gated, use_all_rows=True
+        classes[mark("Gate: inside vs outside")] = ClassLabels(
+            inside, True, mark("inside vs outside the gate"), exclude=gated, use_all_rows=True
         )
         if len(selections) >= 2:
             masks = np.vstack([source.selection_mask([s]) for s in selections])
             hits = masks.sum(axis=0)
             labels = np.where(hits == 1, np.argmax(masks, axis=0).astype(np.float64), np.nan)
-            classes["Gates: one population per gate"] = ClassLabels(
-                labels, True, "the gate a burst falls in", exclude=gated, use_all_rows=True
+            classes[mark("Gates: one population per gate")] = ClassLabels(
+                labels, True, mark("the gate a burst falls in"), exclude=gated,
+                use_all_rows=True
             )
     if clusters is not None and len(clusters) == source.size:
         values = np.asarray(clusters, dtype=np.float64)
         # HDBSCAN's noise label is "no cluster", not a population of its own.
         values = np.where(values < 0, np.nan, values)
-        classes["Clusters"] = ClassLabels(values, True, "cluster")
+        classes[mark("Clusters")] = ClassLabels(values, True, mark("cluster"))
         class_keys["Clusters"] = (id(clusters),)
     if z_name in columns:
         # Only a z that holds labels (a population index, cluster ids): a
@@ -301,7 +316,8 @@ class ProjectionRankModel(VizRankModel):
                  pairs: bool = True, **kwargs):
         super().__init__(**kwargs)
         self.pairs = pairs
-        self.title = "Find informative projections" if pairs else "Find informative z parameters"
+        self.title = (mark("Find informative projections") if pairs
+                      else mark("Find informative z parameters"))
         self._context_provider = context_provider
         self._context: Optional[RankingContext] = context_provider()
         self.sample_rows = DEFAULT_MAX_ROWS
@@ -330,19 +346,19 @@ class ProjectionRankModel(VizRankModel):
         Classes are offered only when there is something to separate, so the
         choice cannot land on a score that has no classes to read.
         """
-        has_classes = bool(self.class_options())
+        has_classes = bool(self.class_keys())
         options = []
         for key, (caption, needs, for_pairs, for_single) in METHODS.items():
             if not ((self.pairs and for_pairs) or (not self.pairs and for_single)):
                 continue
             if needs and not has_classes:
                 continue
-            options.append((key, caption))
+            options.append((key, tr(caption)))
         return options
 
     def method_text(self) -> str:
         """What the chosen score means, in FRET terms (the line under the choice)."""
-        return METHOD_HELP.get(self.method, "")
+        return tr(METHOD_HELP.get(self.method, ""))
 
     @property
     def min_photons_hidden(self) -> bool:
@@ -362,7 +378,7 @@ class ProjectionRankModel(VizRankModel):
 
     def label_mode_options(self) -> list:
         """``(key, label)`` of what *Use islands as clusters* labels."""
-        return [("whole", "Whole islands"), ("cores", "Cores only")]
+        return [("whole", tr("Whole islands")), ("cores", tr("Cores only"))]
 
     def use_islands(self) -> None:
         """*Use islands as clusters*: the host labels every burst by the islands
@@ -374,24 +390,28 @@ class ProjectionRankModel(VizRankModel):
         """*Show islands on the map* was switched: the host repaints."""
         self._changed()
 
-    def class_options(self) -> list:
-        """The classes ndX has now, by caption."""
+    def class_keys(self) -> list:
+        """The classes ndX has now, by caption (the value :attr:`classes` holds)."""
         context = self._context
         if context is None:
             return []
         return [caption for caption in context.classes
                 if self.pairs or not caption.startswith(Z_CLASS_PREFIX)]
 
+    def class_options(self) -> list:
+        """``(caption, label)`` of the classes, the label in the active language."""
+        return [(key, class_label(key)) for key in self.class_keys()]
+
     def photon_options(self) -> list:
         """``(key, label)`` of how bursts count; weighting needs a photon column."""
         context = self._context
         names = context.columns if context is not None else ()
         keys = ("all", "weight", "min") if photon_column(names) else ("all",)
-        return [(key, PHOTON_MODES[key]) for key in keys]
+        return [(key, tr(PHOTON_MODES[key])) for key in keys]
 
     def _pick_defaults(self) -> None:
         """Separation always; the first class ready for when *Classes* is chosen."""
-        options = self.class_options()
+        options = self.class_keys()
         made = [c for c in options if not c.startswith(Z_CLASS_PREFIX)]
         self.classes = made[0] if made else (options[0] if options else "")
         self.method = "populations"
@@ -399,7 +419,7 @@ class ProjectionRankModel(VizRankModel):
     def refresh_context(self) -> None:
         """Re-read what ndX offers; keep the chosen classes if they still exist."""
         self._context = self._context_provider()
-        options = self.class_options()
+        options = self.class_keys()
         if self.classes not in options:
             self.classes = options[0] if options else ""
             if not options and self.method == "separation":
@@ -431,13 +451,13 @@ class ProjectionRankModel(VizRankModel):
         context = self._context_provider()
         self._context = context
         if context is None:
-            raise RuntimeError("no table to rank")
+            raise RuntimeError(tr("no table to rank"))
         self._check_method()
         labels = None
         if METHODS[self.method][1]:
             labels = context.classes.get(self.classes)
             if labels is None:
-                raise RuntimeError("the chosen classes are no longer available")
+                raise RuntimeError(tr("the chosen classes are no longer available"))
         rows, weights = context.rows, None
         photons = photon_column(context.columns)
         if self.method == "populations" and photons and self.photon_mode != "all":
@@ -457,11 +477,12 @@ class ProjectionRankModel(VizRankModel):
             return ""
         ranker = self._run.ranker
         table = ranker.table
-        note = f"{table.n_rows} of {table.n_eligible} bursts sampled"
+        note = tr("{rows} of {total} bursts sampled").format(rows=table.n_rows,
+                                                              total=table.n_eligible)
         if getattr(ranker, "_columns_ready", True):
             left_out = len(table.columns) - len(ranker.attrs)
             if left_out:
-                note += f" · {left_out} parameters left out or merged"
+                note += " · " + tr("{n} parameters left out or merged").format(n=left_out)
         return note
 
     def ranked_key(self):

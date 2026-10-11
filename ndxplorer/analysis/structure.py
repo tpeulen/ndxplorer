@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
+from ..i18n import mark, tr
 from ..logging_config import logging
 from ..utils.lazy_imports import get_umap
 
@@ -134,15 +135,19 @@ class Method:
         if self.available():
             return ""
         if in_browser() and not self.browser:
-            return (f"{self.title} is not available in the browser: {self.package} needs "
-                    "numba's compiled code, which the browser cannot run. Use PCA for a "
-                    "projection here, or the desktop app for " + self.title + ".")
+            return tr("{method} is not available in the browser: {package} needs numba's "
+                      "compiled code, which the browser cannot run. Use PCA for a projection "
+                      "here, or the desktop app for {method}.").format(method=self.title,
+                                                                       package=self.package)
         if in_browser():
-            return (f"{self.title} needs {self.package}, which this page did not load.")
+            return tr("{method} needs {package}, which this page did not load.").format(
+                method=self.title, package=self.package)
         if not self.installable:
-            return (f"{self.package} could not be imported, although it ships with the "
-                    "application. The installation is likely broken.")
-        return f"{self.title} needs {self.package}, which is not installed."
+            return tr("{package} could not be imported, although it ships with the "
+                      "application. The installation is likely broken.").format(
+                          package=self.package)
+        return tr("{method} needs {package}, which is not installed.").format(
+            method=self.title, package=self.package)
 
 
 METHODS: Tuple[Method, ...] = (
@@ -153,7 +158,7 @@ METHODS: Tuple[Method, ...] = (
         probe=_numpy,
         package="numpy",
         import_name="numpy",
-        blurb="Linear decomposition. Reports which parameters carry the variance.",
+        blurb=mark("Linear decomposition. Reports which parameters carry the variance."),
         min_columns=2,
         installable=False,
     ),
@@ -164,7 +169,7 @@ METHODS: Tuple[Method, ...] = (
         probe=get_umap,
         package="tttrlib",
         import_name="tttrlib",
-        blurb="Non-linear projection to 2-3 dimensions for visual inspection.",
+        blurb=mark("Non-linear projection to 2-3 dimensions for visual inspection."),
         min_columns=2,
         installable=False,
     ),
@@ -175,7 +180,7 @@ METHODS: Tuple[Method, ...] = (
         probe=get_tttrlib,
         package="tttrlib",
         import_name="tttrlib",
-        blurb="Density-based. Finds clusters of varying shape and leaves noise unlabelled.",
+        blurb=mark("Density-based. Finds clusters of varying shape and leaves noise unlabelled."),
         installable=False,
     ),
     Method(
@@ -185,7 +190,7 @@ METHODS: Tuple[Method, ...] = (
         probe=get_tttrlib,
         package="tttrlib",
         import_name="tttrlib",
-        blurb="Partitions every point into exactly k groups of similar spread.",
+        blurb=mark("Partitions every point into exactly k groups of similar spread."),
         installable=False,
     ),
 )
@@ -260,13 +265,13 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
 
     data = np.asarray(data, dtype=np.float64)
     if data.ndim != 2 or len(data) == 0:
-        raise RuntimeError("No data available for clustering.")
-    yield 0.1, "Preparing the data"
+        raise RuntimeError(tr("No data available for clustering."))
+    yield 0.1, tr("Preparing the data")
     if stop():
         return None, None
     mask = finite_rows(data)
     clean = data[mask]
-    yield 0.3, f"{int(mask.sum())} finite rows"
+    yield 0.3, tr("{n} finite rows").format(n=int(mask.sum()))
     if stop():
         return None, None
 
@@ -276,18 +281,18 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
         min_samples = int(params.get("min_samples", 5))
         min_cluster_size = int(params.get("min_cluster_size", 5))
         if len(clean) < min_cluster_size:
-            raise RuntimeError(f"Not enough data points for HDBSCAN: need at least "
-                               f"{min_cluster_size}.")
+            raise RuntimeError(tr("Not enough data points for HDBSCAN: need at least {n}.")
+                               .format(n=min_cluster_size))
         if len(clean) < min_samples:
-            raise RuntimeError(f"Not enough data points for HDBSCAN: need at least "
-                               f"{min_samples} (min. samples).")
+            raise RuntimeError(tr("Not enough data points for HDBSCAN: need at least {n} "
+                                  "(min. samples).").format(n=min_samples))
         backend = get_tttrlib()
         if backend is None:
             raise RuntimeError(METHODS_BY_KEY["hdbscan"].unavailable())
-        yield 0.4, "Running HDBSCAN"
+        yield 0.4, tr("Running HDBSCAN")
         result = backend.hdbscan(clean, min_cluster_size=min_cluster_size,
                                  min_samples=min_samples)
-        yield 0.8, "HDBSCAN finished"
+        yield 0.8, tr("HDBSCAN finished")
         if stop():
             return None, None
         full_labels[mask] = np.asarray(result.labels, dtype=np.int32)
@@ -295,16 +300,16 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
     elif method == "kmeans":
         n_clusters = int(params.get("n_clusters", 2))
         if len(clean) < n_clusters:
-            raise RuntimeError(f"Not enough data points for K-means: need at least "
-                               f"{n_clusters} (one per cluster).")
+            raise RuntimeError(tr("Not enough data points for K-means: need at least {n} "
+                                  "(one per cluster).").format(n=n_clusters))
         backend = get_tttrlib()
         if backend is None:
             raise RuntimeError(METHODS_BY_KEY["kmeans"].unavailable())
-        yield 0.4, "Running K-means"
+        yield 0.4, tr("Running K-means")
         uniforms = backend.kmeans_uniforms(n_clusters, KMEANS_N_INIT, seed=KMEANS_SEED)
         centres, labels, _stats = backend.kmeans(
             np.ascontiguousarray(clean), n_clusters, uniforms, KMEANS_N_INIT, 300, 1e-4)
-        yield 0.7, "K-means finished"
+        yield 0.7, tr("K-means finished")
         if stop():
             return None, None
         labels = np.asarray(labels, dtype=np.int32)
@@ -317,7 +322,7 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
             ok = chunk >= 0
             diff = clean[start:end][ok] - centres[chunk[ok]]
             distances[start:end][ok] = np.sqrt(np.einsum("ij,ij->i", diff, diff))
-            yield 0.7 + 0.2 * end / len(clean), "Distances to the centres"
+            yield 0.7 + 0.2 * end / len(clean), tr("Distances to the centres")
             if stop():
                 return None, None
         top = float(distances.max()) if distances.size and distances.max() > 0 else 1.0
@@ -325,7 +330,7 @@ def label_points(task, data: np.ndarray, method: str, params: Dict[str, Any]):
         full_probabilities[mask] = 1.0 - distances / top
     else:
         raise RuntimeError(f"Unsupported clustering method: {method}")
-    yield 1.0, "Finished"
+    yield 1.0, tr("Finished")
     return full_labels, full_probabilities
 
 
@@ -396,9 +401,10 @@ def embed_umap(task, data: np.ndarray, params: Dict[str, Any]):
     clean = data[mask]
     umap_params = prepare_umap_params(params)
     if len(clean) < umap_params["n_neighbors"]:
-        raise RuntimeError(f"Not enough data points for UMAP: need at least "
-                           f"{umap_params['n_neighbors']}.")
-    yield None, f"Embedding {len(clean)} rows in {umap_params['n_components']} dimensions"
+        raise RuntimeError(tr("Not enough data points for UMAP: need at least {n}.").format(
+            n=umap_params["n_neighbors"]))
+    yield None, tr("Embedding {rows} rows in {n} dimensions").format(
+        rows=len(clean), n=umap_params["n_components"])
     if task is not None and task.cancelled:
         return None
     reducer = backend.UMAP(**umap_params)
@@ -408,7 +414,7 @@ def embed_umap(task, data: np.ndarray, params: Dict[str, Any]):
         embedding = reducer.fit_transform(clean)
     out = np.full((len(data), embedding.shape[1]), np.nan)
     out[mask] = embedding
-    yield 1.0, "UMAP finished"
+    yield 1.0, tr("UMAP finished")
     return out
 
 
@@ -425,9 +431,14 @@ def pca_report(result) -> Tuple[List[Tuple[str, str]], str]:
         share = 100.0 * float(result.explained_variance_ratio[component])
         drivers = ", ".join(f"{name} ({weight:+.2f})"
                             for name, weight in result.top_contributors(component, n=3))
-        lines.append((f"PC_{component + 1}", f"{share:.0f}% of variance: {drivers}"))
+        lines.append((f"PC_{component + 1}",
+                      tr("{share}% of variance: {drivers}").format(share=f"{share:.0f}",
+                                                                   drivers=drivers)))
     total = 100.0 * float(np.sum(result.explained_variance_ratio))
-    footer = (f"{result.n_samples} rows fitted"
-              + (f", {result.n_dropped} dropped as non-finite" if result.n_dropped else "")
-              + f"; {total:.0f}% of the variance retained.")
+    if result.n_dropped:
+        footer = tr("{rows} rows fitted, {dropped} dropped as non-finite; {share}% of the "
+                    "variance retained.")
+    else:
+        footer = tr("{rows} rows fitted; {share}% of the variance retained.")
+    footer = footer.format(rows=result.n_samples, dropped=result.n_dropped, share=f"{total:.0f}")
     return lines, footer

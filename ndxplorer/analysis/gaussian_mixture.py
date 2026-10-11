@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import tr
 from ..logging_config import logging
 
 __all__ = [
@@ -460,20 +461,23 @@ def fit_mixture(components: Sequence[Any], x, y, x_range, y_range, log_x: bool =
         No Gaussians, no data, no data in range.
     """
     if not components:
-        raise GaussianFitError("No Gaussians",
-                               "Add one or more Gaussians (click on the histogram) before fitting.")
+        raise GaussianFitError(tr("No Gaussians"),
+                               tr("Add one or more Gaussians (click on the histogram) before "
+                                  "fitting."))
     x = np.asarray(x, dtype=float).ravel()
     y = np.asarray(y, dtype=float).ravel()
     if x.size == 0 or y.size == 0 or x.size != y.size:
-        raise GaussianFitError("No data", "No data available for fitting.")
+        raise GaussianFitError(tr("No data"), tr("No data available for fitting."))
     X = np.column_stack([x, y])
     (x0, x1), (y0, y1) = sorted(map(float, x_range)), sorted(map(float, y_range))
     X = X[(X[:, 0] >= x0) & (X[:, 0] <= x1) & (X[:, 1] >= y0) & (X[:, 1] <= y1)]
     if not len(X):
-        raise GaussianFitError("No data", "No data within the visible histogram range to fit.")
+        raise GaussianFitError(tr("No data"),
+                               tr("No data within the visible histogram range to fit."))
     X = X[np.all(np.isfinite(X), axis=1)]
     if not len(X):
-        raise GaussianFitError("No data", "Selected data contains no finite values for fitting.")
+        raise GaussianFitError(tr("No data"),
+                               tr("Selected data contains no finite values for fitting."))
     if log_x or log_y:
         keep = np.ones(len(X), dtype=bool)
         if log_x:
@@ -481,8 +485,9 @@ def fit_mixture(components: Sequence[Any], x, y, x_range, y_range, log_x: bool =
         if log_y:
             keep &= X[:, 1] > 0.0
         if not np.any(keep):
-            raise GaussianFitError("No data",
-                                   "No positive data available on log-scaled axis for fitting.")
+            raise GaussianFitError(tr("No data"),
+                                   tr("No positive data available on log-scaled axis for "
+                                      "fitting."))
         X = X[keep].copy()
         if log_x:
             X[:, 0] = np.log(X[:, 0])
@@ -861,5 +866,6 @@ def axis_mismatch(file_axes: Optional[dict], current: dict) -> Optional[str]:
     now = describe(current, "x"), describe(current, "y")
     if old == now:
         return None
-    return (f"File axes:\nX: {old[0]}\nY: {old[1]}\nCurrent axes:\nX: {now[0]}\nY: {now[1]}"
-            "\n\nGaussians were loaded regardless.")
+    return tr("File axes:\nX: {file_x}\nY: {file_y}\nCurrent axes:\nX: {x}\nY: {y}\n\n"
+              "Gaussians were loaded regardless.").format(file_x=old[0], file_y=old[1],
+                                                          x=now[0], y=now[1])

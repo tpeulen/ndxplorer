@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import numpy as np
 
 from ..core.parameters import Parameter, is_held
+from ..i18n import tr
 from .curve_fit import (
     FINITE_DIFFERENCE_STEP,
     RESOLUTION_PARAMETERS,
@@ -185,7 +186,7 @@ class PopulationCurveFit:
         """Optimise every free shared parameter and element together."""
         free = [p for p in self._parameters if not p.fixed]
         if not free:
-            return CurveFitResult(False, message="all parameters are fixed")
+            return CurveFitResult(False, message=tr("all parameters are fixed"))
         start = [float(p.value) for p in free]
         try:
             solution = _fit_from_best_start(free, self._residuals(free),
@@ -193,7 +194,8 @@ class PopulationCurveFit:
         except Exception as exc:  # noqa: BLE001 - reported, the start restored
             for p, v in zip(free, start):
                 p.value = v
-            message = "stopped" if isinstance(exc, CurveFitAborted) else f"fit failed: {exc}"
+            message = (tr("stopped") if isinstance(exc, CurveFitAborted)
+                       else tr("fit failed: {error}").format(error=exc))
             return CurveFitResult(False, message=message)
         for p, v in zip(free, solution.x):
             p.value = float(v)
@@ -233,7 +235,7 @@ def build_population_fit(host, curve, target: str = "2d", reduction: str = "clou
     labels = population_labels(group)
     read, _targets = host.fit_data_reader()
     if not hasattr(read, "by_population"):
-        raise CurveFitError("this window cannot split its data by population")
+        raise CurveFitError(tr("this window cannot split its data by population"))
     parts = read.by_population(_vector_axis(next(iter(sources.values()))), labels)
 
     constants = dict(host.constants) if hasattr(host.constants, "keys") else {}
@@ -265,7 +267,7 @@ def build_population_fit(host, curve, target: str = "2d", reduction: str = "clou
         aliases = [_Alias(p.name, elements[label].get(p.name) or shared[p.name])
                    for p in group.parameters_all]
         if float(np.sum(weights)) <= 0.0:
-            raise CurveFitError(f"population {label} has no displayed data")
+            raise CurveFitError(tr("population {label} has no displayed data").format(label=label))
         if target == "2d":
             _h, x_edges, y_edges = host.histogram_2d()
             x_edges, y_edges = np.asarray(x_edges, float), np.asarray(y_edges, float)
@@ -273,7 +275,8 @@ def build_population_fit(host, curve, target: str = "2d", reduction: str = "clou
                 counts = histogram_on_edges(d1, d2, x_edges, y_edges, weights)
                 px, py, w = cloud_for_fit(host, x_edges, y_edges, counts=counts)
                 if np.count_nonzero(w) < 3:
-                    raise CurveFitError(f"too little displayed data in population {label}")
+                    raise CurveFitError(
+                        tr("too little displayed data in population {label}").format(label=label))
                 fits.append(ParametricCurveFit(
                     curve_tracer(curve, x_edges), aliases, px, py,
                     ey=np.full(py.shape, float(np.median(np.diff(y_edges)))),
@@ -289,7 +292,8 @@ def build_population_fit(host, curve, target: str = "2d", reduction: str = "clou
             x = bin_centers(edges) if edges.size == y.size + 1 else edges
             ey = np.sqrt(np.maximum(y, 1.0))
         if int(np.isfinite(y).sum()) < 3:
-            raise CurveFitError(f"too few points to fit in population {label} (need 3)")
+            raise CurveFitError(tr("too few points to fit in population {label} (need 3)").format(
+                label=label))
         if parametric:
             fits.append(ParametricCurveFit(curve.function, aliases, x, y, ey))
         else:

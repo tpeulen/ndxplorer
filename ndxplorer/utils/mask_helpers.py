@@ -9,6 +9,8 @@ Provides functionality to:
 """
 from typing import Optional, Dict, List, Tuple
 import numpy as np
+
+from ..i18n import tr
 from pathlib import Path
 
 
@@ -69,8 +71,8 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
         # libtiff refuses a zero-pixel image, from three frames down inside the
         # writer. Say what is wrong here instead.
         raise ValueError(
-            f"cannot write an empty mask (shape {output.shape}) to {filename}: "
-            "a TIFF needs at least one pixel"
+            tr("cannot write an empty mask (shape {shape}) to {path}: a TIFF needs at least "
+               "one pixel").format(shape=output.shape, path=filename)
         )
 
     if binary:
@@ -85,13 +87,13 @@ def save_mask_as_bitmap(mask: np.ndarray, filename: str, binary: bool = True) ->
         largest, smallest = int(output.max()), int(output.min())
         if smallest < 0:
             raise ValueError(
-                f"mask holds a negative class label ({smallest}); class labels "
-                "are unsigned and 0 is background"
+                tr("mask holds a negative class label ({label}); class labels are unsigned "
+                   "and 0 is background").format(label=smallest)
             )
         if largest > 65535:
             raise ValueError(
-                f"mask holds class label {largest}, above the 65535 a 16-bit "
-                "TIFF can carry; relabel the classes consecutively"
+                tr("mask holds class label {label}, above the 65535 a 16-bit TIFF can "
+                   "carry; relabel the classes consecutively").format(label=largest)
             )
         output = output.astype(np.uint8 if largest <= 255 else np.uint16)
 

@@ -19,6 +19,7 @@ import tempfile
 from typing import Dict, List, Optional, Union
 
 from ndxplorer.core.data_source import DataSource
+from ndxplorer.i18n import tr
 
 __all__ = ["ENTRY_KIND", "SUFFIX", "is_project", "list_stores", "read_store"]
 
@@ -52,10 +53,11 @@ def _entries(path: PathLike) -> Dict[str, bytes]:
 
     source = pathlib.Path(path)
     if not source.is_file():
-        raise FileNotFoundError(f"No such project: {source}")
+        raise FileNotFoundError(tr("No such project: {path}").format(path=source))
     handle = tttrlib.PtoFile()
     if not handle.open(str(source)):
-        raise OSError(f"Could not open {source}: {handle.error()}")
+        raise OSError(tr("Could not open {path}: {error}").format(path=source,
+                                                              error=handle.error()))
     try:
         found: Dict[str, bytes] = {}
         for obj in handle.objects():
@@ -130,13 +132,14 @@ def read_store(path: PathLike, store: Optional[str] = None) -> DataSource:
     """
     entries = _entries(path)
     if not entries:
-        raise ValueError(f"{pathlib.Path(path).name} holds no stored sampling chain")
+        raise ValueError(tr("{name} holds no stored sampling chain").format(
+            name=pathlib.Path(path).name))
     if store is None:
         if len(entries) > 1:
-            raise ValueError("Several stored tables; choose one of: "
-                             + ", ".join(sorted(entries)))
+            raise ValueError(tr("Several stored tables; choose one of: {names}").format(
+                names=", ".join(sorted(entries))))
         store = next(iter(entries))
     if store not in entries:
-        raise ValueError(f"No stored table {store!r}; the project holds: "
-                         + ", ".join(sorted(entries)))
+        raise ValueError(tr("No stored table {name}; the project holds: {names}").format(
+            name=repr(store), names=", ".join(sorted(entries))))
     return DataSource(_store(entries[store]))

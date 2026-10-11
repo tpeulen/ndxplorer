@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover
 
 from ..core.data_source import DataSource, float_column, store_from_columns, store_with_columns
 from ..settings import get_settings_path, ensure_default_settings
+from ..i18n import tr
 from . import tables
 
 import tttrlib
@@ -283,7 +284,7 @@ def _process_burst_analysis_dir(
         bur_files = sorted(dir_fallback.glob("*.bur"))
 
     if not bur_files:
-        raise FileNotFoundError("No .bur files in 'bi4_bur' or 'bur'.")
+        raise FileNotFoundError(tr("No .bur files in 'bi4_bur' or 'bur'."))
 
     n_files = len(bur_files)
     logging.info("Processing %d .bur files from %s", n_files, base_path)
@@ -405,13 +406,13 @@ def _read_chain_store(filename: str, sep: str = '\t') -> "tttrlib.DataStore":
         if is_ensemble_sampling_hdf5(str(path)):
             source = read_ensemble_sampling_hdf5(str(path))
             if source.empty:
-                raise ValueError("no sampled states in the file")
+                raise ValueError(tr("no sampled states in the file"))
             return source.store
         store = read_hdf5_store(path)
         if store is None:
             store = read_hdf5_store(path, "/results")
         if store is None:
-            raise ValueError("no columnar HDF5 table in the file")
+            raise ValueError(tr("no columnar HDF5 table in the file"))
         return store
     return tttrlib.read_csv(str(path), delimiter=sep, has_header=True)
 
@@ -571,7 +572,7 @@ class _NamesOnlyUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
         """Refuse every global lookup, which is what makes this safe."""
         raise pickle.UnpicklingError(
-            f"refusing to load {module}.{name} out of a data file"
+            tr("refusing to load {name} out of a data file").format(name=f"{module}.{name}")
         )
 
 
@@ -812,8 +813,8 @@ def read_hdf5_file(filename: str) -> "tttrlib.DataStore":
             store = read_hdf5_store(h5_path, "/")
         if store is None:
             raise ValueError(
-                f"{h5_path.name} holds no columnar HDF5 table (one 1-D dataset "
-                "per column, at the root or under /results)")
+                tr("{name} holds no columnar HDF5 table (one 1-D dataset per column, at the "
+                   "root or under /results)").format(name=h5_path.name))
         return store
 
     p = pathlib.Path(filename)
@@ -821,7 +822,7 @@ def read_hdf5_file(filename: str) -> "tttrlib.DataStore":
         with zipfile.ZipFile(p, "r") as zf:
             members = [f for f in zf.namelist() if f.lower().endswith(_HDF5_EXTS)]
             if not members:
-                raise FileNotFoundError(f"No HDF5 files in zip: {filename}")
+                raise FileNotFoundError(tr("No HDF5 files in zip: {name}").format(name=filename))
             target = members[0]
             with tempfile.TemporaryDirectory() as tdir:
                 tpath = pathlib.Path(tdir)
@@ -891,7 +892,7 @@ def read_csv_file(filename: str) -> "tttrlib.DataStore":
         with zipfile.ZipFile(p, "r") as zf:
             inner = _find_first_member(zf, _TEXT_EXTS)
             if inner is None:
-                raise ValueError(f"No CSV-like files found in zip: {filename}")
+                raise ValueError(tr("No CSV-like files found in zip: {name}").format(name=filename))
             with tempfile.TemporaryDirectory() as tdir:
                 extracted = pathlib.Path(zf.extract(inner, tdir))
                 store = _read_text_store(extracted, _detect_format(extracted, use_cache=False))

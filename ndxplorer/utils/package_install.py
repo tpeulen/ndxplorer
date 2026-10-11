@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from ..i18n import tr
 from ..logging_config import logging
 
 # ------------------------------
@@ -53,7 +54,7 @@ def _run_command(cmd: List[str]) -> Tuple[bool, Optional[str], str, str]:
         if err:
             logging.debug(f"deps_installer stderr:\n{err}")
         if proc.returncode != 0:
-            return False, f"Exit code {proc.returncode}", out, err
+            return False, tr("Exit code {code}").format(code=proc.returncode), out, err
         return True, None, out, err
     except Exception as e:
         return False, str(e), '', ''
@@ -144,9 +145,10 @@ def _run_with_elevation(cmd: List[str]) -> Tuple[bool, Optional[str], Optional[s
                         tail_hint = ''.join(lines[-25:]).strip()
             except Exception:
                 pass
-            msg = f"Elevation failed with exit code {proc.returncode}. See log: {log_file}"
+            msg = tr("Elevation failed with exit code {code}. See log: {log}").format(
+                code=proc.returncode, log=log_file)
             if tail_hint:
-                msg += f"\n--- Log tail ---\n{tail_hint}"
+                msg += "\n--- " + tr("Log tail") + f" ---\n{tail_hint}"
             return False, msg, log_file
         return True, None, log_file
     except Exception as e:
@@ -327,13 +329,15 @@ def install_task(task, packages: List[str], channels: Optional[List[str]] = None
     """
     channels = channels or ["conda-forge", "defaults"]
     solver, name = choose_solver()
-    yield None, f"Installing {', '.join(packages)} with {name}…"
+    yield None, tr("Installing {packages} with {solver}…").format(packages=", ".join(packages),
+                                                                  solver=name)
     if hasattr(task, "write"):
         task.write(f"{name} install {' '.join(packages)} -c {' -c '.join(channels)}\n"
                    f"into {sys.prefix}\n")
     ok, err = conda_install(list(packages), channels=channels)
     if hasattr(task, "write"):
-        task.write(("installed\n" if ok else f"failed: {err}\n"))
+        task.write(tr("installed") + "\n" if ok
+                   else tr("failed: {error}").format(error=err) + "\n")
     if not ok:
         return False
     if import_name:

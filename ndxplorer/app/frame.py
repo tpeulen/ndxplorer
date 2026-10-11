@@ -30,9 +30,10 @@ import weakref
 from typing import Any, Callable, Dict, Optional
 
 from . import plots, theme
-from .menus import build_menu_bar, refresh as refresh_menus
+from .menus import build_menu_bar, menu_specs, refresh as refresh_menus
 from .model import ExplorerModel
 from .view_model import PanelModel
+from ..i18n import tr
 
 __all__ = ["NdxApp", "make_app", "load_spec", "live_apps", "default_window_size"]
 
@@ -203,8 +204,9 @@ class NdxApp:
                 form.custom.update(feature.custom_sections())
         docks.add_feature_windows(self)
         self.panel.availability = self._feature_available
-        self.menubar = build_menu_bar(self.panel.available, self._checked,
-                                      extra=self._feature_menu_entries())
+        #: emtk's language generation the menus and dock titles were built in.
+        self._language_generation = None
+        self._follow_language()
         self._menu_box = (0.0, 0.0, 1.0, MENU_H)
         self.popup = None
         self.box = (0.0, 0.0, 1.0, 1.0)
@@ -375,7 +377,7 @@ class NdxApp:
                 return True
         ok = self.model.open(path)
         if not ok:
-            self.message = ("Data Load Error", self.model.error)
+            self.message = (tr("Data Load Error"), self.model.error)
         else:
             self.data_changed()
         return ok
@@ -412,14 +414,47 @@ class NdxApp:
                 _LIVE.pop(key, None)
         self._each_feature("on_close")
 
+    def _follow_language(self) -> None:
+        """Rebuild the menus and retitle the docks when emtk's language changed.
+
+        Both hold text made once, so a switch (Settings > Language, or the host
+        switching its own) shows on the next frame without a restart. A dock's
+        key is its English title; the title shown is its translation.
+        """
+        from emtk import i18n
+
+        generation = i18n.generation()
+        if generation == self._language_generation:
+            return
+        self._language_generation = generation
+        extra = self._feature_menu_entries()
+        self._menu_specs = menu_specs(extra)
+        self.menubar = build_menu_bar(self.panel.available, self._checked, extra=extra)
+        for key, window in self.docks.windows.items():
+            window.title = tr(key)
+
     # ------------------------------------------------------------- drawing
     def draw(self, painter, x: float, y: float, w: float, h: float) -> None:
-        """Draw one frame of the window into *painter*."""
+        """Draw one frame of the window into *painter*.
+
+        Inside ndX's translation domain: a label emtk translates for ndX (a
+        view.json form, a dock title) resolves in ndX's catalogue first, even
+        when a host's catalogue holds the same English.
+        """
+        from emtk.i18n import use_domain
+
+        from ..i18n import DOMAIN
+
+        with use_domain(DOMAIN):
+            self._draw_frame(painter, x, y, w, h)
+
+    def _draw_frame(self, painter, x: float, y: float, w: float, h: float) -> None:
         import emtk
 
         self.box = (x, y, w, h)
         self.model.update()
-        refresh_menus(self.menubar, self.panel.available, self._checked)
+        self._follow_language()
+        refresh_menus(self.menubar, self.panel.available, self._checked, self._menu_specs)
         painter.fill_rect(x, y, w, h, theme.WINDOW_BG)
         self.plots.begin_frame()
         with emtk.frame(painter, (x, y, w, h), io=self.io, storage=self.storage) as ctx:
@@ -622,9 +657,9 @@ class NdxApp:
             emtk.invisible_button(f"##ndx.{key}", (max(bar[2], 1.0), max(bar[3], 1.0)))
             active = emtk.is_item_active()
             if key == "hsplit":
-                emtk.set_item_tooltip("Drag to resize the x marginal.")
+                emtk.set_item_tooltip(tr("Drag to resize the x marginal."))
             else:
-                emtk.set_item_tooltip("Drag to resize the y marginal.")
+                emtk.set_item_tooltip(tr("Drag to resize the y marginal."))
             if active:
                 dragging = True
                 mx, my = io.mouse_pos
@@ -671,7 +706,7 @@ class NdxApp:
         x, y = emtk.get_cursor_screen_pos()
         emtk.invisible_button("##ndx.zsplit", (max(width, 1.0), SPLIT + 2.0))
         state.rects["zsplit"] = (x, y, max(width, 1.0), SPLIT + 2.0)
-        emtk.set_item_tooltip("Drag to resize the z marginal.")
+        emtk.set_item_tooltip(tr("Drag to resize the z marginal."))
         active = emtk.is_item_active()
         if active:
             mouse_y = emtk.get_io().mouse_pos[1]
@@ -707,7 +742,7 @@ class NdxApp:
         emtk.separator()
         emtk.text_wrapped(text)
         emtk.set_cursor_screen_pos((box[0] + dw - 100.0, box[1] + dh - 32.0))
-        if emtk.button("OK", (90.0, 0.0)):
+        if emtk.button(tr("OK"), (90.0, 0.0)):
             self.message = None
         emtk.end()
 
@@ -914,7 +949,11 @@ def make_app() -> NdxApp:
     """The factory :mod:`emtk.native` and :mod:`emtk.web` start (``ndxplorer.app.frame:make_app``).
 
     The window layout is remembered between runs (:func:`.docks.layout_store`).
+    A standalone start, so it picks the language (:func:`ndxplorer.i18n.select_language`);
+    a host that embeds ndX constructs :class:`NdxApp` itself and keeps its own.
     """
+    from ..i18n import select_language
     from .docks import layout_store
 
+    select_language()
     return NdxApp(layout_store=layout_store(), session_autosave=True)

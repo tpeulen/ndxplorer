@@ -117,16 +117,21 @@ def reference_phasor(path: str, channels: Sequence[int], f_rep_mhz: float, harmo
     frequency = phasor_frequency(f_rep_mhz, harmonic, header.micro_time_resolution)
     counts = microtime_histogram(tttr, channels)
     if counts.sum() < 10:
-        raise ValueError(f"{path}: fewer than 10 photons in channels {list(channels)}")
+        from ..i18n import tr
+
+        raise ValueError(tr("{path}: fewer than 10 photons in channels {channels}").format(
+            path=path, channels=list(channels)))
     raw = histogram_phasor(counts, frequency)
     level = flat_level(counts) if subtract_background else 0.0
     ref = histogram_phasor(counts, frequency, level)
     if ref["n_bg"] > 0.5 * ref["n"]:
         # A detector that saw no reflection: what is left is dark counts, and
         # its "phasor" is noise divided by a small number.
-        raise ValueError(f"{path}: channels {list(channels)} hold no instrument response "
-                         f"({100 * ref['n_bg'] / ref['n']:.0f} % of the photons are flat "
-                         "background)")
+        from ..i18n import tr
+
+        raise ValueError(tr("{path}: channels {channels} hold no instrument response "
+                            "({percent} % of the photons are flat background)").format(
+            path=path, channels=list(channels), percent=f"{100 * ref['n_bg'] / ref['n']:.0f}"))
     z = complex(ref["g"], ref["s"])
     if tau_ref:
         z *= complex(1.0, -2.0 * np.pi * f_rep_mhz * harmonic * 1e-3 * float(tau_ref))

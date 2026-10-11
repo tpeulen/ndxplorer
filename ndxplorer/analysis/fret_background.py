@@ -20,6 +20,8 @@ from typing import Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
+from ..i18n import tr
+
 __all__ = ["burst_durations_ms", "fitted_background", "measured_background",
            "stored_rates", "stored_background_constants",
            "BACKGROUND_CONSTANTS", "BACKGROUND_ROLES", "ROLE_TO_BG"]
@@ -169,14 +171,15 @@ def measured_background(table: Mapping[str, np.ndarray],
         read (empty when something was).
     """
     if not container:
-        return {}, {}, "the bursts carry no container, so no measured background"
+        return {}, {}, tr("the bursts carry no container, so no measured background")
     try:
         rates = stored_rates(container)
     except Exception:  # noqa: BLE001
         logging.debug("could not read a background from %s", container, exc_info=True)
-        return {}, {}, f"could not read a background from {container}"
+        return {}, {}, tr("could not read a background from {container}").format(
+            container=container)
     if not rates:
-        return {}, {}, "the measurement stores no background"
+        return {}, {}, tr("the measurement stores no background")
     counts: Dict[str, np.ndarray] = {}
     out_rates: Dict[str, float] = {}
     for detector, role in BACKGROUND_ROLES.items():

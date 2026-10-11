@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 import numpy as np
 
+from ..i18n import mark
 from ..logging_config import logging
 from .wlc import wlc_pdf
 
@@ -67,7 +68,8 @@ __all__ = [
 ]
 
 #: The first entry of the equation list: a curve the user types.
-CUSTOM_EQUATION = "Custom Equation"
+#: Data (a curve-title base and the combo value); shown translated.
+CUSTOM_EQUATION = mark("Custom Equation")  # an identity; shown translated
 
 #: Names that appear in an equation but are NOT free parameters: the independent
 #: variables and the maths functions/constants the evaluator provides. Without
@@ -502,7 +504,9 @@ def curve_points(evaluator: CurveEvaluator, equation, parameters: Mapping[str, f
         # A constant equation ("2") is a horizontal line.
         ys = np.full(xs.shape, float(ys))
     if ys.shape != xs.shape:
-        evaluator.last_error = "x and y differ in length"
+        from ..i18n import tr
+
+        evaluator.last_error = tr("x and y differ in length")
         return np.empty(0), np.empty(0)
     if y_log:
         ys = np.maximum(ys, 1e-6)
@@ -667,8 +671,10 @@ class OverlayCurve:
                 self.function = self.evaluator.compile_function(self.text)
                 names = self.evaluator.get_function_parameters(self.function)
             except Exception as exc:  # noqa: BLE001 - shown to the user
+                from ..i18n import tr
+
                 self.function = None
-                self.error = f"cannot compile the function: {exc}"
+                self.error = tr("cannot compile the function: {error}").format(error=exc)
         else:
             names = equation_parameter_names(self.text)
         self._sync(names, signature_defaults(self.function))
@@ -680,9 +686,12 @@ class OverlayCurve:
         self.error = ""
         self.function = compile_spec(self.spec, lambda: self.samples)
         if self.kind == "data":
+            from ..i18n import tr
+
             source = self.spec.get("source")
-            self.text = f"{len(self.spec.get('x') or [])} tabulated points" + (
-                f" from {source}" if source else "")
+            count = len(self.spec.get('x') or [])
+            self.text = (tr("{n} tabulated points from {source}").format(n=count, source=source)
+                         if source else tr("{n} tabulated points").format(n=count))
         else:
             self.text = f"x = {self.spec.get('x', '')}; y = {self.spec.get('y', '')}"
         self._sync(spec_parameter_names(self.spec), {})

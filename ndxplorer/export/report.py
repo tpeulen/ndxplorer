@@ -42,6 +42,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 import numpy as np
 
+from ..i18n import tr
 from ..logging_config import logging
 
 __all__ = [
@@ -115,9 +116,10 @@ def parse_config(text: str, json_text: bool = False) -> Dict[str, Any]:
     try:
         data = json.loads(text) if json_text else (yaml.safe_load(text) if text.strip() else {})
     except Exception as exc:  # noqa: BLE001 - both parsers, one message
-        raise ConfigError(f"Could not parse the configuration: {exc}") from exc
+        raise ConfigError(tr("Could not parse the configuration: {error}").format(
+            error=exc)) from exc
     if not isinstance(data, dict) or not isinstance(data.get("plots"), list):
-        raise ConfigError("The configuration must define a top-level 'plots' list.")
+        raise ConfigError(tr("The configuration must define a top-level 'plots' list."))
     return data
 
 
@@ -500,7 +502,7 @@ class ReportGenerator:
         names = self.model.parameter_names
         name = find_parameter(names, wanted) or find_parameter(names, wanted, contains=True)
         if name is None:
-            raise KeyError(f"no parameter {wanted!r}")
+            raise KeyError(tr("no parameter {name}").format(name=repr(wanted)))
         self.model.set_parameter(key, name)
 
     def _style(self, plot: Mapping[str, Any], default: str) -> tuple:
@@ -526,13 +528,13 @@ class ReportGenerator:
             raise FileNotFoundError(str(folder))
         source = reader.read_burst_analysis(str(folder))
         if source is None or source.empty:
-            raise ValueError(f"No data found in folder: {folder}")
+            raise ValueError(tr("No data found in folder: {folder}").format(folder=folder))
         model = self.model
         model.set_source(source)
         report = FolderReport(folder=folder)
         for index, plot in enumerate(config.get("plots") or [], start=1):
             kind = str(plot.get("type", "1d")).lower()
-            title = str(plot.get("title") or f"Plot {index}")
+            title = str(plot.get("title") or tr("Plot {index}").format(index=index))
             try:
                 self._choose("x", plot.get("x"))
                 if kind == "2d" or str(plot.get("axis", "x")).lower() == "y":
@@ -540,7 +542,7 @@ class ReportGenerator:
                 model.update()
                 hist = model.histograms
                 if hist is None:
-                    raise ValueError("nothing to histogram")
+                    raise ValueError(tr("nothing to histogram"))
                 if kind == "2d":
                     self._add_2d(report, index, title, plot, hist)
                 else:

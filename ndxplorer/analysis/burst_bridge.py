@@ -52,6 +52,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import tr
 from ..logging_config import logging
 
 #: Default burst-provenance column names in an MFD table.
@@ -178,8 +179,8 @@ def selection_to_burst_slices(
     missing = [c for c in (file_col, last_file_col, first_col, last_col) if c not in names]
     if missing:
         raise BurstBridgeError(
-            f"burst table lacks provenance column(s) {missing}; "
-            "the selection cannot be resolved to TTTR photon intervals"
+            tr("burst table lacks provenance column(s) {missing}; the selection cannot be "
+               "resolved to TTTR photon intervals").format(missing=missing)
         )
 
     if selections:
@@ -372,8 +373,8 @@ class BurstAnalysisBridge:
         targets = self.discover()
         if key not in targets:
             raise BurstBridgeError(
-                f"ChiSurf does not advertise a burst consumer named {key!r}; "
-                f"it offers {sorted(targets) or 'none'}"
+                tr("ChiSurf does not advertise a burst consumer named {key}; it offers "
+                   "{offered}").format(key=repr(key), offered=sorted(targets) or tr("none"))
             )
         return targets[key]
 
@@ -390,8 +391,8 @@ class BurstAnalysisBridge:
     def _require_rpc(self) -> None:
         if not self.available():
             raise BurstBridgeError(
-                "no ChiSurf RPC connection — launch ndX with --chisurf-rpc "
-                "host:port, or open it from ChiSurf, to use analysis bridges"
+                tr("no ChiSurf RPC connection — launch ndX with --chisurf-rpc host:port, or "
+                   "open it from ChiSurf, to use analysis bridges")
             )
 
     def _call(self, method: str, params: Dict[str, Any]) -> Any:
@@ -402,7 +403,8 @@ class BurstAnalysisBridge:
             return reply
         if reply.get("ok", True):
             return reply.get("result", reply)
-        raise BurstBridgeError(f"{method} failed: {reply.get('error')}")
+        raise BurstBridgeError(tr("{method} failed: {error}").format(method=method,
+                                                                     error=reply.get("error")))
 
     # -- targets ------------------------------------------------------------
 
@@ -444,7 +446,7 @@ class BurstAnalysisBridge:
         slices = self.burst_slices(selections)
         if not slices:
             raise BurstBridgeError(
-                f"selection is empty — no bursts to send to {spec.title}"
+                tr("selection is empty — no bursts to send to {target}").format(target=spec.title)
             )
 
         call_params = dict(spec.defaults or {})
@@ -599,7 +601,7 @@ class BurstAnalysisBridge:
         """
         slices = self.burst_slices(selections)
         if not slices:
-            raise BurstBridgeError("selection is empty — nothing to send")
+            raise BurstBridgeError(tr("selection is empty — nothing to send"))
         if per_file:
             return [
                 {
@@ -626,40 +628,37 @@ def unavailable_reason(rpc_client: Any, data_source: Any, selections: Sequence[A
     missing says more than a missing entry.
     """
     if rpc_client is None:
-        return (
-            "No ChiSurf connection. Open ndX from ChiSurf, or start it with "
-            "--chisurf-rpc host:port."
-        )
+        return tr("No ChiSurf connection. Open ndX from ChiSurf, or start it with "
+                  "--chisurf-rpc host:port.")
     if data_source is None or data_source.empty:
-        return "No data loaded."
+        return tr("No data loaded.")
     missing = {FILE_COL, FIRST_PHOTON_COL, LAST_PHOTON_COL} - set(data_source.parameter_names)
     if missing:
-        return (
-            "This table has no burst provenance: "
-            f"{', '.join(sorted(missing))} missing. Sending needs the photon "
-            "intervals each burst came from."
-        )
+        return tr("This table has no burst provenance: {missing} missing. Sending needs the "
+                  "photon intervals each burst came from.").format(
+                      missing=", ".join(sorted(missing)))
     if not selections:
-        return "No selection. Draw a gate first — the whole table would be sent."
+        return tr("No selection. Draw a gate first — the whole table would be sent.")
     if not (bridge or BurstAnalysisBridge(rpc_client, data_source)).discover():
-        return (
-            "This ChiSurf advertises no burst analyses. It may be an older "
-            "version, or the burst services are not loaded."
-        )
+        return tr("This ChiSurf advertises no burst analyses. It may be an older version, or "
+                  "the burst services are not loaded.")
     return None
 
 
 def outcome_message(reply: Mapping[str, Any], target: str) -> str:
     """The status line after a send: how much went, and whether it was recorded."""
-    message = f"Sent {reply['n_bursts']} bursts from {reply['n_files']} file(s) to {target}"
     provenance = reply.get("provenance")
     if provenance is None:
-        message += " (not recorded: no database product attached)"
+        message = tr("Sent {bursts} bursts from {files} file(s) to {target} (not recorded: no "
+                     "database product attached)")
     elif isinstance(provenance, dict) and provenance.get("ok") is False:
-        message += f" — but the provenance record failed: {provenance.get('error')}"
+        message = tr("Sent {bursts} bursts from {files} file(s) to {target} — but the "
+                     "provenance record failed: {error}")
     else:
-        message += " and recorded it"
-    return message
+        message = tr("Sent {bursts} bursts from {files} file(s) to {target} and recorded it")
+    error = provenance.get("error") if isinstance(provenance, dict) else None
+    return message.format(bursts=reply["n_bursts"], files=reply["n_files"], target=target,
+                          error=error)
 
 
 

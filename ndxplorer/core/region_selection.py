@@ -33,6 +33,7 @@ from typing import Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import tr
 from .data_source import DataSelection
 
 
@@ -206,9 +207,9 @@ def save_selections(
 
         if not all(isinstance(s, RectangularDataSelection) for s in selections):
             raise RuntimeError(
-                "Saving drawn regions, masks or Gaussian gates needs ChiSurf's region "
-                "module (chisurf.core.roi), which is not installed here; interval "
-                "gates alone can be saved.") from None
+                tr("Saving drawn regions, masks or Gaussian gates needs ChiSurf's region "
+                   "module (chisurf.core.roi), which is not installed here; interval "
+                   "gates alone can be saved.")) from None
         import json
 
         with open(path, "w", encoding="utf-8") as handle:

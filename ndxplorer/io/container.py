@@ -19,6 +19,8 @@ from typing import Iterator, List, Optional
 
 import tttrlib
 
+from ..i18n import tr
+
 __all__ = ["open_container", "objects_named", "read_store", "software"]
 
 
@@ -40,10 +42,12 @@ def open_container(path, writable: bool = False) -> Iterator["tttrlib.PtoFile"]:
     handle = tttrlib.PtoFile()
     try:
         if not handle.open(str(path), bool(writable)):
-            raise OSError(f"could not open {path}: {handle.error()}")
+            raise OSError(tr("could not open {path}: {error}").format(path=path,
+                                                                  error=handle.error()))
         yield handle
         if writable and not handle.commit():
-            raise OSError(f"could not commit {path}: {handle.error()}")
+            raise OSError(tr("could not commit {path}: {error}").format(path=path,
+                                                                    error=handle.error()))
     finally:
         if handle.is_open():
             handle.close()

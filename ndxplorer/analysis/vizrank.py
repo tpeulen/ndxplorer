@@ -51,6 +51,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+from ..i18n import mark
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -89,13 +91,13 @@ class RunState(IntEnum):
 
 #: The button caption for each state. ``Done`` disables the button.
 BUTTON_LABELS = {
-    RunState.Invalid: "Start",
-    RunState.Initialized: "Start",
-    RunState.Ready: "Start",
-    RunState.Running: "Pause",
-    RunState.Paused: "Continue",
-    RunState.Hidden: "Continue",
-    RunState.Done: "Finished",
+    RunState.Invalid: mark("Start"),
+    RunState.Initialized: mark("Start"),
+    RunState.Ready: mark("Start"),
+    RunState.Running: mark("Pause"),
+    RunState.Paused: mark("Continue"),
+    RunState.Hidden: mark("Continue"),
+    RunState.Done: mark("Finished"),
 }
 
 
@@ -276,7 +278,7 @@ class Ranker:
     """
 
     #: Column captions, first one being the score.
-    header: Tuple[str, ...] = ("Score",)
+    header: Tuple[str, ...] = (mark("Score"),)
 
     def prepare(self) -> None:
         """Do the one-off work (subsampling, transforms) before scoring."""
@@ -308,7 +310,7 @@ class Ranker:
 class AttrRanker(Ranker):
     """Rank single columns. A state is an index into :attr:`attr_order`."""
 
-    header = ("Score", "Parameter")
+    header = (mark("Score"), mark("Parameter"))
 
     def __init__(self, attrs: Sequence[str]):
         self.attrs: List[str] = list(attrs)
@@ -344,7 +346,7 @@ class AttrPairRanker(AttrRanker):
     :meth:`score_attributes` order pay off early.
     """
 
-    header = ("Score", "x", "y")
+    header = (mark("Score"), "x", "y")
 
     def state_count(self) -> int:
         n = len(self.attrs)

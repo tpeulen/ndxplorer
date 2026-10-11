@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 import tttrlib
 
 from ndxplorer.core.data_source import DataSource, float_column
+from ndxplorer.i18n import tr
 from ndxplorer.io import tables
 from ndxplorer.io.container import open_container, read_store
 
@@ -138,8 +139,9 @@ def read_container(
     frames, names, provenance = _burst_frames(path, table)
     if not frames:
         raise FileNotFoundError(
-            f"{path.name} holds no burst or image table: convert the photons with a "
-            "burst search first, or point ndX at the analysis folder if one was written."
+            tr("{name} holds no burst or image table: convert the photons with a burst search "
+               "first, or point ndX at the analysis folder if one was written.").format(
+                   name=path.name)
         )
 
     logging.info("Reading %d burst table(s) from %s: %s", len(frames), path, names)

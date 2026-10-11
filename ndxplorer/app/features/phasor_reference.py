@@ -22,6 +22,7 @@ import logging
 import pathlib
 from typing import Any, Callable, Dict, List, Optional
 
+from ...i18n import mark, tr
 from . import Feature
 
 __all__ = ["PhasorReferenceFeature", "create"]
@@ -29,8 +30,8 @@ __all__ = ["PhasorReferenceFeature", "create"]
 logger = logging.getLogger(__name__)
 
 SPEC = pathlib.Path(__file__).with_name("phasor_reference") / "reference.view.json"
-TTTR_FILTERS = [("TTTR files", ["*.ptu", "*.ht3", "*.spc", "*.hdf5", "*.h5", "*.bin"]),
-                ("All files", ["*"])]
+TTTR_FILTERS = [(mark("TTTR files"), ["*.ptu", "*.ht3", "*.spc", "*.hdf5", "*.h5", "*.bin"]),
+                (mark("All files"), ["*"])]
 #: dialog attribute -> the constants' channel suffix.
 CHANNELS = {"green_channels": " (green)", "red_channels": " (red)", "plain_channels": ""}
 
@@ -49,7 +50,7 @@ class ReferenceDialog:
         from emtk.view_form import FormState
 
         self.feature = feature
-        self.window = DialogWindow("Phasor reference from IRF", size=(560.0, 470.0),
+        self.window = DialogWindow(tr("Phasor reference from IRF"), size=(560.0, 470.0),
                                    key="phasor-reference")
         self.window.show()
         self.form = FormState()
@@ -88,13 +89,15 @@ class ReferenceDialog:
     @property
     def result_text(self) -> str:
         rows = [f"{name} = {value:.6g}" for name, value in self.values.items()]
-        return "\n".join(rows + self.notes) or "Choose an IRF (and a measurement), then Compute."
+        return "\n".join(rows + self.notes) or tr(
+            "Choose an IRF (and a measurement), then Compute.")
 
     def choose_irf(self) -> None:
-        self.feature.ask_open("IRF / reference measurement", lambda p: setattr(self, "irf_file", p))
+        self.feature.ask_open(tr("IRF / reference measurement"),
+                              lambda p: setattr(self, "irf_file", p))
 
     def choose_measurement(self) -> None:
-        self.feature.ask_open("Measurement", lambda p: setattr(self, "measurement_file", p))
+        self.feature.ask_open(tr("Measurement"), lambda p: setattr(self, "measurement_file", p))
 
     def compute(self) -> None:
         from ...analysis import phasor_reference as ref
@@ -108,7 +111,8 @@ class ReferenceDialog:
             try:
                 channels = parse_channels(getattr(self, attr))
             except ValueError:
-                self.notes.append(f"{attr.split('_')[0]}: channels are numbers, e.g. 0 1")
+                self.notes.append(tr("{channel}: channels are numbers, e.g. 0 1").format(
+                    channel=attr.split('_')[0]))
                 continue
             if not channels:
                 continue
@@ -120,27 +124,35 @@ class ReferenceDialog:
                     self.values[f"g_irf{suffix}"] = r["g_irf"]
                     self.values[f"s_irf{suffix}"] = r["s_irf"]
                     self.notes.append(
-                        f"IRF{suffix or ''}: {r['n']:.0f} photons, {100 * r['f_bg']:.1f} % flat "
-                        f"background removed; the file's f_rep is {r['f_rep_header']:.3f} MHz "
-                        f"(constant f_rep {f_rep:g})")
+                        tr("IRF{suffix}: {photons} photons, {percent} % flat background "
+                           "removed; the file's f_rep is {header} MHz (constant f_rep "
+                           "{f_rep})").format(
+                            suffix=suffix or "", photons=f"{r['n']:.0f}",
+                            percent=f"{100 * r['f_bg']:.1f}",
+                            header=f"{r['f_rep_header']:.3f}", f_rep=f"{f_rep:g}"))
                 if self.measurement_file.strip():
                     if rows is None:
-                        self.notes.append("n_bg: the table is not a pixel table (no x pixel, "
-                                          "y pixel); set n_bg or edit the f_bg equation")
+                        self.notes.append(tr("n_bg: the table is not a pixel table (no x "
+                                             "pixel, y pixel); set n_bg or edit the f_bg "
+                                             "equation"))
                     else:
                         photons = self.feature.table_photons(f"Number of Photons{suffix}")
                         b = ref.background_per_row(self.measurement_file.strip(), channels,
                                                    rows, photons)
                         self.values[f"n_bg{suffix}"] = b["n_bg"]
-                        self.notes.append(f"background{suffix}: {100 * b['f_bg']:.1f} % of the "
-                                          f"photons, over {rows} pixels x frames")
+                        self.notes.append(
+                            tr("background{suffix}: {percent} % of the photons, over {rows} "
+                               "pixels x frames").format(suffix=suffix,
+                                                         percent=f"{100 * b['f_bg']:.1f}",
+                                                         rows=rows))
             except Exception as exc:  # noqa: BLE001 - shown in the dialog
                 self.notes.append(str(exc))
 
     def apply(self) -> None:
         if self.values:
             self.feature.write_constants(dict(self.values))
-            self.feature.app.show_status("Phasor reference: set " + ", ".join(self.values))
+            self.feature.app.show_status(tr("Phasor reference: set {names}").format(
+                names=", ".join(self.values)))
         self.cancel()
 
     def cancel(self) -> None:
@@ -203,9 +215,10 @@ class PhasorReferenceFeature(Feature):
             return
         service = getattr(self.app, "io_service", None)
         if service is None:
-            self.app.message = (title, "Opening files needs the io feature.")
+            self.app.message = (title, tr("Opening files needs the io feature."))
             return
-        service.ask_open(title, TTTR_FILTERS, lambda paths: callback(paths[0]))
+        filters = [(tr(label), patterns) for label, patterns in TTTR_FILTERS]
+        service.ask_open(title, filters, lambda paths: callback(paths[0]))
 
     def open_dialog(self) -> ReferenceDialog:
         self.window = ReferenceDialog(self)
@@ -222,9 +235,11 @@ class PhasorReferenceFeature(Feature):
 
     def menu_entries(self) -> List[tuple]:
         return [(("FRET",), None),
-                (("FRET",), {"label": "Phasor reference from IRF…", "action": "phasor_reference",
-                             "description": "Set g_irf, s_irf (and n_bg) of the corrected phasor "
-                                            "columns from an IRF and the measurement."})]
+                (("FRET",), {"label": mark("Phasor reference from IRF…"),
+                             "action": "phasor_reference",
+                             "description": mark("Set g_irf, s_irf (and n_bg) of the corrected "
+                                                 "phasor columns from an IRF and the "
+                                                 "measurement.")})]
 
     def draw_windows(self) -> bool:
         dialog = self.window

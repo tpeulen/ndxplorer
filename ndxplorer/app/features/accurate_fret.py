@@ -33,6 +33,7 @@ import pathlib
 from typing import Any, Callable, Dict, List, Optional
 
 from . import Feature
+from ...i18n import mark, tr
 
 __all__ = ["AccurateFretFeature", "create"]
 
@@ -51,9 +52,9 @@ TOOL_ACTIONS: Dict[str, str] = {
 TOOLBAR_TARGET = "widget:win.findChild(QtWidgets.QToolBar, 'ndxplorerAccurateFretToolbar')"
 
 #: Why File > Import > From MMFDB is off here.
-MMFDB_REASON = "only inside ChiSurf"
+MMFDB_REASON = mark("only inside ChiSurf")
 
-CALIBRATION_FILTERS = "FRET calibration (*.fretcal.json);;All files (*)"
+CALIBRATION_FILTERS = mark("FRET calibration (*.fretcal.json);;All files (*)")
 
 
 def load_spec(name: str) -> dict:
@@ -71,7 +72,10 @@ def _annotate(sections, notes: Dict[str, str]) -> list:
             section["sections"] = _annotate(section["sections"], notes)
         note = notes.get(str(section.get("attr", "")))
         if note:
-            section["description"] = (str(section.get("description") or "") + "\n\n" + note).strip()
+            # Translated here: the joined text is no catalogue entry of its own.
+            description = str(section.get("description") or "")
+            section["description"] = ((tr(description) if description else "")
+                                      + "\n\n" + note).strip()
         out.append(section)
     return out
 
@@ -92,11 +96,11 @@ def options_spec(notes: Optional[Dict[str, str]] = None) -> dict:
     sections.append({"type": "info", "source": "unavailable_text",
                      "hidden_when": {"attr": "runnable", "equals": "true"}})
     sections.append({"type": "button_row", "buttons": [
-        {"label": "Calibrate", "action": "calibrate",
-         "description": "Find the donor-only / acceptor-only / FRET populations in the loaded "
-                        "bursts and determine the correction factors from them."},
-        {"label": "Cancel", "action": "cancel"}]})
-    return {"title": "FRET calibration", "sections": sections}
+        {"label": mark("Calibrate"), "action": "calibrate",
+         "description": mark("Find the donor-only / acceptor-only / FRET populations in the "
+                             "loaded bursts and determine the correction factors from them.")},
+        {"label": mark("Cancel"), "action": "cancel"}]})
+    return {"title": mark("FRET calibration"), "sections": sections}
 
 
 # ------------------------------------------------------------------ dialogs
@@ -167,7 +171,7 @@ class OptionsDialog(Dialog):
         object.__setattr__(self, "method_reason", "")
         object.__setattr__(self, "feature", feature)
         notes = self._availability()
-        super().__init__(feature, "FRET calibration", options_spec(notes), "options")
+        super().__init__(feature, tr("FRET calibration"), options_spec(notes), "options")
 
     def _availability(self) -> Dict[str, str]:
         """Which gating dimensions the loaded table has, and the finder's state.
@@ -189,16 +193,18 @@ class OptionsDialog(Dialog):
         for dim, attr in DIMENSION_ATTRS.items():
             column = found.get(dim)
             if column is None:
-                need = DIMENSION_NEEDS.get(dim, "donor-excitation channel counts")
-                self.missing[dim] = f"Unavailable: this measurement has no {need}."
+                need = DIMENSION_NEEDS.get(dim, mark("donor-excitation channel counts"))
+                self.missing[dim] = tr("Unavailable: this measurement has no {need}.").format(
+                    need=tr(need))
                 setattr(self.options, attr, False)
                 notes[attr] = self.missing[dim]
             elif column:
-                notes[attr] = f"Read from the column '{column}'."
+                notes[attr] = tr("Read from the column '{column}'.").format(column=column)
         object.__setattr__(self, "method_reason", population_method_reason())
         if self.method_reason:
             self.options.population_method = "gmm"
-            notes["population_method"] = f"Unavailable: {self.method_reason}."
+            notes["population_method"] = tr("Unavailable: {reason}.").format(
+                reason=tr(self.method_reason))
         return notes
 
     # The form's fields are the options' attributes.
@@ -222,7 +228,8 @@ class OptionsDialog(Dialog):
     def unavailable_text(self) -> str:
         from ...analysis.fret_calibration import unavailable_reason
 
-        return unavailable_reason()
+        reason = unavailable_reason()
+        return tr(reason) if reason else reason
 
     def enabled(self, name: str) -> bool:
         from ...analysis.fret_calibration import DIMENSION_ATTRS
@@ -250,14 +257,14 @@ class ProgressDialog(Dialog):
     width, height = 420.0, 130.0
 
     def __init__(self, feature: "AccurateFretFeature") -> None:
-        super().__init__(feature, "FRET calibration…", load_spec("progress"), "progress")
+        super().__init__(feature, tr("FRET calibration…"), load_spec("progress"), "progress")
 
     def _task(self):
         return self.feature.task
 
     def message_text(self) -> str:
         task = self._task()
-        return (task.message if task is not None and task.message else "Starting…")
+        return tr(task.message) if task is not None and task.message else tr("Starting…")
 
     def fraction(self) -> Optional[float]:
         task = self._task()
@@ -326,22 +333,27 @@ class ReportWindow(Dialog):
     fit_height = True
 
     def __init__(self, feature, title: str, text: str, *, result: Optional[dict] = None,
-                 saved: Optional[dict] = None, header: str = "") -> None:
+                 saved: Optional[dict] = None, header: str = "", kind: str = "applied") -> None:
         super().__init__(feature, title, load_spec("report"), "report")
+        #: ``"applied"`` (a run's result) or ``"loaded"`` (a stored one): what
+        #: replay looks the window up by, whatever language its title is in.
+        self.kind = kind
         result = dict(result or {})
         self.result = result
         self.report_text = text
         self.header = header or (
-            "The correction factors were optimized against the loaded data." if result
-            else "A stored calibration.")
+            tr("The correction factors were optimized against the loaded data.") if result
+            else tr("A stored calibration."))
         self.status = ""
         if saved and saved.get("ok"):
-            self.status = (f"Stored in the measurement: {saved.get('target', '')}"
-                           if saved.get("where") == "container"
-                           else f"Saved to {saved.get('target', '')}"
-                           + (f" — {saved['warning']}" if saved.get("warning") else ""))
+            target = saved.get("target", "")
+            if saved.get("where") == "container":
+                self.status = tr("Stored in the measurement: {target}").format(target=target)
+            else:
+                self.status = tr("Saved to {target}").format(target=target) + (
+                    f" — {saved['warning']}" if saved.get("warning") else "")
         elif saved and saved.get("error"):
-            self.status = f"Not stored automatically: {saved['error']}"
+            self.status = tr("Not stored automatically: {error}").format(error=saved["error"])
         # Built once: a table rebinds (and loses its scroll) on a new list.
         self._factors = self._factor_rows()
         self._populations = self._population_rows()
@@ -364,9 +376,9 @@ class ReportWindow(Dialog):
                 continue
             rows.append({"factor": symbols.get(name, name), "value": _float(factors[name]),
                          "error": _float(errors.get(name)),
-                         "written": "written" if name in applied and name not in held
-                         else f"held at {float(held[name]):.4g}" if name in held
-                         else "held"})
+                         "written": tr("written") if name in applied and name not in held
+                         else tr("held at {value}").format(value=f"{float(held[name]):.4g}")
+                         if name in held else tr("held")})
         return rows
 
     def _population_rows(self) -> List[dict]:
@@ -418,12 +430,13 @@ class ReportWindow(Dialog):
         source = self.result.get("background")
         fitted = dict(self.result.get("background_fitted") or {})
         if source == "fit" and fitted:
-            lines.append("Background, fitted from the reference populations: "
-                         + ", ".join(f"{k} = {float(v):.2f} kHz" for k, v in fitted.items()))
+            lines.append(tr("Background, fitted from the reference populations: {values}").format(
+                values=", ".join(f"{k} = {float(v):.2f} kHz" for k, v in fitted.items())))
         elif source:
-            lines.append(f"Background: {source}")
+            lines.append(tr("Background: {source}").format(source=source))
         if self.result.get("injected"):
-            lines.append("New columns: " + ", ".join(self.result["injected"]))
+            lines.append(tr("New columns: {columns}").format(
+                columns=", ".join(self.result["injected"])))
         return "\n".join(lines)
 
     def status_text(self) -> str:
@@ -438,16 +451,16 @@ class ReportWindow(Dialog):
         service = self.feature.app.io_service
         if service.browser:
             service.save_bytes("fret_calibration.txt", data, "text/plain")
-            self.status = "Report downloaded as fret_calibration.txt"
+            self.status = tr("Report downloaded as {name}").format(name="fret_calibration.txt")
             return
 
         def write(path: str) -> None:
             with open(path, "wb") as handle:
                 handle.write(data)
-            self.status = f"Report written to {path}"
+            self.status = tr("Report written to {path}").format(path=path)
 
-        service.ask_save("Save report", "Text (*.txt);;All files (*)", "fret_calibration.txt",
-                         write)
+        service.ask_save(tr("Save report"), tr("Text (*.txt);;All files (*)"),
+                         "fret_calibration.txt", write)
 
 
 # ------------------------------------------------------------------ feature
@@ -579,8 +592,8 @@ class AccurateFretFeature(Feature):
         for name, vector in stored["vectors"].items():
             if vector.get("values") and vector.get("populations"):
                 self.write_vector(name, vector)
-        self.app.show_status(f"Restored {len(values)} constants stored in "
-                             f"{pathlib.Path(container).name}")
+        self.app.show_status(tr("Restored {n} constants stored in {name}").format(
+            n=len(values), name=pathlib.Path(container).name))
         return values
 
     # --------------------------------------------------------------- hooks
@@ -602,17 +615,22 @@ class AccurateFretFeature(Feature):
 
     def menu_entries(self) -> List[tuple]:
         return [
-            (("FRET",), {"label": "FRET calibration…", "action": "fret_calibration",
-             "description": "Determine FRET correction factors from the loaded burst data."}),
-            (("FRET",), None),
-            (("FRET",), {"label": "Save calibration…", "action": "save_fret_calibration",
-             "description": "Store the current FRET factors in the measurement or a calibration file."}),
-            (("FRET",), {"label": "Load calibration…", "action": "load_fret_calibration",
-             "description": "Apply a saved FRET calibration to the current ndX session."}),
-            (("File", "Import"),
-             {"label": "From MMFDB…", "action": "open_from_mmfdb",
-              "description": "Open a burst selection registered in MMFDB "
-                             f"(ChiSurf's database; {MMFDB_REASON})."}),
+            ((mark("FRET"),), {"label": mark("FRET calibration…"), "action": "fret_calibration",
+             "description": mark("Determine FRET correction factors from the loaded burst "
+                                 "data.")}),
+            ((mark("FRET"),), None),
+            ((mark("FRET"),), {"label": mark("Save calibration…"),
+                               "action": "save_fret_calibration",
+             "description": mark("Store the current FRET factors in the measurement or a "
+                                 "calibration file.")}),
+            ((mark("FRET"),), {"label": mark("Load calibration…"),
+                               "action": "load_fret_calibration",
+             "description": mark("Apply a saved FRET calibration to the current ndX session.")}),
+            ((mark("File"), mark("Import")),
+             {"label": mark("From MMFDB…"), "action": "open_from_mmfdb",
+              # Translated where it is built: the reason is a part of the sentence.
+              "description": tr("Open a burst selection registered in MMFDB (ChiSurf's "
+                                "database; {reason}).").format(reason=tr(MMFDB_REASON))}),
         ]
 
     def animating(self) -> bool:
@@ -659,9 +677,9 @@ class AccurateFretFeature(Feature):
     def _ask_file(self, kind: str, title: str, default: str, callback) -> None:
         service = self.app.io_service
         if kind == "save":
-            service.ask_save(title, CALIBRATION_FILTERS, default, callback)
+            service.ask_save(title, tr(CALIBRATION_FILTERS), default, callback)
         else:
-            service.ask_open(title, CALIBRATION_FILTERS, lambda paths: callback(paths[0]))
+            service.ask_open(title, tr(CALIBRATION_FILTERS), lambda paths: callback(paths[0]))
         if self._file_answers:
             service.answer(self._file_answers.pop(0))
 
@@ -705,7 +723,7 @@ class AccurateFretFeature(Feature):
         if isinstance(self.window, ProgressDialog):
             self.window = None
         if task.cancelled:
-            self.app.show_status("FRET calibration cancelled; the constants are unchanged")
+            self.app.show_status(tr("FRET calibration cancelled; the constants are unchanged"))
             return
         result = task.result if task.succeeded else {"ok": False, "error": task.error}
         self.finish(dict(result or {}), self._options)
@@ -715,7 +733,10 @@ class AccurateFretFeature(Feature):
         from ...analysis.fret_calibration import apply_result, report_text
 
         if not result.get("ok"):
-            self.message("Accurate FRET", str(result.get("error") or "calibration failed"))
+            self.message(tr("Accurate FRET"),
+                         # a declared reason (NO_BACKEND…) has a catalogue entry
+                         tr(str(result["error"])) if result.get("error")
+                         else tr("calibration failed"))
             return
         model = self.app.model
         # A factor this run wrote as one value replaces a stale vector of it.
@@ -736,8 +757,8 @@ class AccurateFretFeature(Feature):
 
             saved = save_calibration(self.constants, ndx=self, result=result, embed=True,
                                      vectors=self.vectors())
-        self.window = ReportWindow(self, "FRET calibration — applied", report_text(result),
-                                   result=result, saved=saved)
+        self.window = ReportWindow(self, tr("FRET calibration — applied"), report_text(result),
+                                   result=result, saved=saved, kind="applied")
 
     # ------------------------------------------------------------- saving
     def save_calibration(self, result: Optional[dict] = None,
@@ -747,14 +768,14 @@ class AccurateFretFeature(Feature):
 
         constants = self.constants
         if not constants:
-            self.message("FRET calibration", "This window carries no constants to save.")
+            self.message(tr("FRET calibration"), tr("This window carries no constants to save."))
             return
 
         def say(text: str) -> None:
             if report is not None:
                 report.status = text
             else:
-                self.message("FRET calibration", text)
+                self.message(tr("FRET calibration"), text)
 
         def to_file() -> None:
             container = container_of_window()
@@ -763,16 +784,16 @@ class AccurateFretFeature(Feature):
             service = self.app.io_service
             if service.browser:
                 service.save_bytes(start, data, "application/json")
-                say(f"Downloaded {start}")
+                say(tr("Downloaded {name}").format(name=start))
                 return
 
             def write(path: str) -> None:
                 out = save_calibration(constants, ndx=self, path=path, result=result,
                                        embed=False, vectors=self.vectors())
-                say(f"Saved to {out.get('target', '')}" if out.get("ok")
-                    else f"Could not save: {out.get('error')}")
+                say(tr("Saved to {target}").format(target=out.get("target", "")) if out.get("ok")
+                    else tr("Could not save: {error}").format(error=out.get("error")))
 
-            self._ask_file("save", "Save calibration", start, write)
+            self._ask_file("save", tr("Save calibration"), start, write)
 
         def container_of_window() -> str:
             from ...io.fret_calibration_io import container_of
@@ -788,16 +809,16 @@ class AccurateFretFeature(Feature):
             if answer == "yes":
                 out = save_calibration(constants, ndx=self, result=result, embed=True,
                                        vectors=self.vectors())
-                say(f"Stored in {out.get('target', '')}" if out.get("ok")
-                    else f"Could not store: {out.get('error')}")
+                say(tr("Stored in {target}").format(target=out.get("target", ""))
+                    if out.get("ok")
+                    else tr("Could not store: {error}").format(error=out.get("error")))
             elif answer == "no":
                 to_file()
 
-        self.ask("Save calibration",
-                 "Store the calibration in the measurement?\n\n"
-                 f"{container}\n\n"
-                 "Yes keeps it beside the photons and the burst table. "
-                 "No writes a separate file instead.", answered)
+        self.ask(tr("Save calibration"),
+                 tr("Store the calibration in the measurement?") + f"\n\n{container}\n\n"
+                 + tr("Yes keeps it beside the photons and the burst table. "
+                      "No writes a separate file instead."), answered)
 
     # ------------------------------------------------------------ loading
     def load_calibration(self) -> None:
@@ -805,7 +826,7 @@ class AccurateFretFeature(Feature):
         from ...io.fret_calibration_io import load_calibration, stored_calibrations
 
         def from_file() -> None:
-            self._ask_file("open", "Load calibration", "",
+            self._ask_file("open", tr("Load calibration"), "",
                            lambda path: self._offer(load_calibration(path=path)))
 
         stored = stored_calibrations(self) if self.container() else []
@@ -819,14 +840,14 @@ class AccurateFretFeature(Feature):
             elif answer == "no":
                 from_file()
 
-        self.ask("Load calibration",
-                 f"This measurement carries {len(stored)} stored calibration(s).\n\n"
-                 "Load the most recent one? No opens a file instead.", answered)
+        self.ask(tr("Load calibration"),
+                 tr("This measurement carries {n} stored calibration(s).").format(n=len(stored))
+                 + "\n\n" + tr("Load the most recent one? No opens a file instead."), answered)
 
     def _offer(self, loaded: dict) -> None:
         """Show what a loaded calibration would change, and apply it on Yes."""
         if not loaded.get("ok"):
-            self.message("FRET calibration", str(loaded.get("error")))
+            self.message(tr("FRET calibration"), str(loaded.get("error")))
             return
         values = {str(k): float(v) for k, v in dict(loaded.get("constants") or {}).items()
                   if _float(v) is not None}
@@ -836,10 +857,11 @@ class AccurateFretFeature(Feature):
         changes = [f"  {name}: {before.get(name, '—')!s} → {value}"
                    for name, value in sorted(values.items()) if before.get(name) != value]
         detail = "\n".join(
-            [f"Saved {loaded.get('saved_utc', '')} ({loaded.get('where')}: "
-             f"{loaded.get('target', '')})"]
-            + ([f"Note: {loaded['note']}"] if loaded.get("note") else [])
-            + ["", ("Changes:" if changes else "Nothing would change.")] + changes)
+            [tr("Saved {when} ({where}: {target})").format(
+                when=loaded.get("saved_utc", ""), where=loaded.get("where"),
+                target=loaded.get("target", ""))]
+            + ([tr("Note: {note}").format(note=loaded["note"])] if loaded.get("note") else [])
+            + ["", (tr("Changes:") if changes else tr("Nothing would change."))] + changes)
 
         def answered(answer: str) -> None:
             if answer != "yes":
@@ -853,10 +875,12 @@ class AccurateFretFeature(Feature):
                 result = {k: document[k] for k in ("factors", "uncertainties", "held",
                                                    "determined", "background",
                                                    "background_fitted") if k in document}
-                self.window = ReportWindow(self, "FRET calibration — loaded", loaded["report"],
-                                           result=result, header="A stored calibration.")
+                self.window = ReportWindow(self, tr("FRET calibration — loaded"),
+                                           loaded["report"], result=result,
+                                           header=tr("A stored calibration."), kind="loaded")
 
-        self.ask("Load calibration", "Apply this calibration to the window?\n\n" + detail,
+        self.ask(tr("Load calibration"),
+                 tr("Apply this calibration to the window?") + "\n\n" + detail,
                  answered, three_way=False)
 
     # --------------------------------------------------------------- MMFDB
@@ -866,8 +890,9 @@ class AccurateFretFeature(Feature):
         if callable(opener):
             opener()
             return
-        self.message("Open from MMFDB", "Opening a burst selection registered in MMFDB needs "
-                     "ChiSurf's MMFDB client: it works when ndX runs inside ChiSurf.")
+        self.message(tr("Open from MMFDB"),
+                     tr("Opening a burst selection registered in MMFDB needs ChiSurf's MMFDB "
+                        "client: it works when ndX runs inside ChiSurf."))
 
     # ------------------------------------------------------------- capture
     def capture_actions(self) -> Dict[str, str]:
@@ -887,7 +912,7 @@ class AccurateFretFeature(Feature):
             "dialog:FRET calibration": lambda _r: (self.window.box if isinstance(
                 self.window, ReportWindow) else None),
             "dialog:loaded": lambda _r: (self.window.box if isinstance(self.window, ReportWindow)
-                                         and "loaded" in self.window.title else None),
+                                         and self.window.kind == "loaded" else None),
         }
 
     def _dialog_box(self, _replay) -> Optional[tuple]:

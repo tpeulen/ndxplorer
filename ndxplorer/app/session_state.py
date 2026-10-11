@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..i18n import tr
+
 __all__ = ["SessionContext", "apply", "collect", "pack_array", "unpack_array"]
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,8 @@ class SessionContext:
         """Note and say ``True`` when one of *columns* is not in the table."""
         gone = [c for c in columns if c and c not in self.names]
         if gone:
-            self.skip(f"{what} (no column {', '.join(repr(c) for c in gone)})")
+            self.skip(tr("{what} (no column {columns})").format(
+                what=what, columns=", ".join(repr(c) for c in gone)))
         return bool(gone)
 
 
@@ -134,7 +137,7 @@ def restore_gate(gates, entry: Dict[str, Any], ctx: SessionContext) -> bool:
     from ..core.data_source import MaskDataSelection
 
     kind = entry.get("kind")
-    label = f"gate {entry.get('name') or kind}"
+    label = tr("gate {name}").format(name=entry.get("name") or kind)
     common = dict(invert=bool(entry.get("invert")), enabled=bool(entry.get("enabled", True)))
     if kind == "Interval":
         column = entry.get("column", "")
@@ -165,12 +168,12 @@ def restore_gate(gates, entry: Dict[str, Any], ctx: SessionContext) -> bool:
 
             from ..core.region_selection import RegionDataSelection
         except ImportError:
-            ctx.skip(f"{label} (drawn regions need ChiSurf's region module)")
+            ctx.skip(tr("{gate} (drawn regions need ChiSurf's region module)").format(gate=label))
             return False
         gates.add_selection(RegionDataSelection(roi_from_dict(entry["roi"]), i1, i2,
                                                 name=entry.get("name"), **common))
         return True
-    ctx.skip(f"{label} (unknown kind {kind!r})")
+    ctx.skip(tr("{gate} (unknown kind {kind!r})").format(gate=label, kind=kind))
     return False
 
 

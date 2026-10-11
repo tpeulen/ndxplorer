@@ -30,8 +30,9 @@ import pathlib
 from typing import Any, Callable, Dict, List, Optional
 
 from . import Feature
+from ...i18n import LANGUAGES, mark, tr
 
-__all__ = ["SettingsFeature", "create", "HELP_TEXT"]
+__all__ = ["SettingsFeature", "create", "HELP_TEXT", "help_text"]
 
 logger = logging.getLogger(__name__)
 
@@ -53,27 +54,44 @@ QT_ACTIONS: Dict[str, str] = {
     "actionUpdate": "update_app",
 }
 
+#: Settings > Language: ``"language_<code>"`` per shipped language, and
+#: ``"language_system"`` to follow the operating system again.
+LANGUAGE_ACTIONS: Dict[str, str] = {f"language_{code}": code for code, _name in LANGUAGES}
+LANGUAGE_ACTIONS["language_system"] = ""
+
 #: Actions that work without data.
 WITHOUT_DATA = frozenset({"performance_settings", "load_settings", "save_constants",
                           "save_equations", "axis_control", "make_report", "help", "about",
-                          "update_app"})
+                          "update_app", *LANGUAGE_ACTIONS})
 
-HELP_TEXT = (
-    "ndXplorer shows a table of measurements -- bursts, pixels, samples -- as "
-    "histograms you can gate.\n\n"
-    "1. Open data: File > Import (a burst-analysis folder, text files, an "
-    "analysis file or a ChiSurf sampling), or drop a file or folder on the window.\n"
-    "2. Choose the x, y and z parameters in Plot controls; each has bins, a "
-    "range (Auto), log and norm. Set stores a parameter's axis; Settings > Save "
-    "settings > Axis settings writes them to a file.\n"
-    "3. Drag a rectangle on the 2-D map to gate: the Selection table lists the "
-    "gates, which can be inverted, disabled and edited.\n"
-    "4. Parameters, Overlays, Equations and the analyses (clustering, Gaussian "
-    "fit, informative projections) are in the tabs and the View menu.\n"
-    "5. File > Make Report makes PNG/CSV/DOCX reports over many analysis "
-    "folders from a report.yaml.\n\n"
-    f"Documentation and source: {DOCS_URL}"
+#: Help > Help, a paragraph (or list item) per entry, each translated on its own.
+HELP_PARAGRAPHS = (
+    mark("ndXplorer shows a table of measurements -- bursts, pixels, samples -- as "
+         "histograms you can gate."),
+    "",
+    mark("1. Open data: File > Import (a burst-analysis folder, text files, an "
+         "analysis file or a ChiSurf sampling), or drop a file or folder on the window."),
+    mark("2. Choose the x, y and z parameters in Plot controls; each has bins, a "
+         "range (Auto), log and norm. Set stores a parameter's axis; Settings > Save "
+         "settings > Axis settings writes them to a file."),
+    mark("3. Drag a rectangle on the 2-D map to gate: the Selection table lists the "
+         "gates, which can be inverted, disabled and edited."),
+    mark("4. Parameters, Overlays, Equations and the analyses (clustering, Gaussian "
+         "fit, informative projections) are in the tabs and the View menu."),
+    mark("5. File > Make Report makes PNG/CSV/DOCX reports over many analysis "
+         "folders from a report.yaml."),
+    "",
+    mark("Documentation and source: {url}"),
 )
+
+
+def help_text() -> str:
+    """Help > Help in the active language."""
+    return "\n".join(tr(p).format(url=DOCS_URL) if p else "" for p in HELP_PARAGRAPHS)
+
+
+#: The help text in the source language.
+HELP_TEXT = "\n".join(p.format(url=DOCS_URL) for p in HELP_PARAGRAPHS)
 
 
 def load_spec(name: str) -> dict:
@@ -94,9 +112,9 @@ def _versions() -> List[tuple]:
         except metadata.PackageNotFoundError:
             module = __import__(name) if name != "ndxplorer" else None
             version = getattr(module, "__version__", None) if module else None
-            rows.append((name, str(version) if version else "not installed"))
+            rows.append((name, str(version) if version else tr("not installed")))
         except Exception:  # noqa: BLE001 - a broken distribution is not a crash
-            rows.append((name, "unknown"))
+            rows.append((name, tr("unknown")))
     rows.append(("Python", platform.python_version()))
     return rows
 
@@ -231,7 +249,7 @@ class AxisControl(Dialog):
 
     def __init__(self, feature) -> None:
         object.__setattr__(self, "_ready", False)
-        super().__init__(feature, "Axis Control")
+        super().__init__(feature, tr("Axis Control"))
         self.edit = feature.display.copy()
         self.z_enable = bool(feature.app.panel.z_gate_enabled)
         self._ready = True
@@ -311,7 +329,7 @@ class PerformanceDialog(Dialog):
     width, height = 580.0, 460.0
 
     def __init__(self, feature) -> None:
-        super().__init__(feature, "Performance Settings")
+        super().__init__(feature, tr("Performance Settings"))
         from ...utils.performance_config import get_performance_config
 
         self.show(get_performance_config())
@@ -337,11 +355,11 @@ class PerformanceDialog(Dialog):
         )
 
     def heading(self) -> str:
-        return "Performance Configuration"
+        return tr("Performance Configuration")
 
     def backend_note(self) -> str:
-        return ("Plots are drawn by emtk here; the Qt window's plot backend "
-                f"({self.plot_backend}) is kept in the settings for it.")
+        return tr("Plots are drawn by emtk here; the Qt window's plot backend "
+                  "({backend}) is kept in the settings for it.").format(backend=self.plot_backend)
 
     def settings_note(self) -> str:
         from ...utils.performance_config import default_settings_file
@@ -350,7 +368,7 @@ class PerformanceDialog(Dialog):
         home = os.path.expanduser("~")
         if path.startswith(home):
             path = "~" + path[len(home):]
-        return f"Settings are saved to: {path}"
+        return tr("Settings are saved to: {path}").format(path=path)
 
     def apply(self) -> bool:
         from ...utils.performance_config import save_performance_config
@@ -358,10 +376,12 @@ class PerformanceDialog(Dialog):
         try:
             save_performance_config(self.config())
         except (OSError, ValueError) as exc:
-            self.feature.message("Error", f"Failed to save settings: {exc}")
+            self.feature.message(tr("Error"),
+                                 tr("Failed to save settings: {error}").format(error=exc))
             return False
-        self.feature.message("Settings Applied", "Performance settings have been saved.\n\n"
-                             "Some changes may require restarting ndX to take full effect.")
+        self.feature.message(tr("Settings Applied"),
+                             tr("Performance settings have been saved.") + "\n\n"
+                             + tr("Some changes may require restarting ndX to take full effect."))
         return True
 
     def ok(self) -> None:
@@ -376,10 +396,12 @@ class PerformanceDialog(Dialog):
 
         def yes() -> None:
             self.show(PerformanceConfig())
-            self.feature.message("Reset", "Settings reset to defaults. Apply or OK saves them.")
+            self.feature.message(tr("Reset"),
+                                 tr("Settings reset to defaults. Apply or OK saves them."))
 
-        self.feature.ask("Reset Settings", "Reset all performance settings to their default "
-                         "values?\n\nThis will clear your custom configuration.", yes)
+        self.feature.ask(tr("Reset Settings"),
+                         tr("Reset all performance settings to their default values?") + "\n\n"
+                         + tr("This will clear your custom configuration."), yes)
 
 
 class ReportTool(Dialog):
@@ -389,7 +411,7 @@ class ReportTool(Dialog):
     width, height = 1000.0, 700.0
 
     def __init__(self, feature) -> None:
-        super().__init__(feature, "ndX Report Tool")
+        super().__init__(feature, tr("ndX Report Tool"))
         from ...export.report import default_config_text
         from ...settings import get_settings_path
 
@@ -440,8 +462,9 @@ class ReportTool(Dialog):
         roots = [p for p in paths if os.path.isdir(str(p))]
         found = [str(p) for p in discover_analysis_folders(roots)]
         if not found:
-            self.feature.message("No analysis folders found", "No analysis folders were found "
-                                 "in the dropped directory/directories.")
+            self.feature.message(tr("No analysis folders found"),
+                                 tr("No analysis folders were found in the dropped "
+                                    "directory/directories."))
             return
         self.add_paths(found)
 
@@ -452,11 +475,11 @@ class ReportTool(Dialog):
         if record is None:
             return
         path = str(record["path"])
-        self.feature.app.open_menu([MenuItem("Copy Path(s)")], where[0], where[1],
+        self.feature.app.open_menu([MenuItem(tr("Copy Path(s)"))], where[0], where[1],
                                    lambda _item: _copy(path))
 
     def add_folder(self) -> None:
-        self.feature.app.io_service.ask_folder("Select analysis folder",
+        self.feature.app.io_service.ask_folder(tr("Select analysis folder"),
                                                lambda path: self.add_paths([path]))
 
     def remove_folder(self) -> None:
@@ -474,7 +497,7 @@ class ReportTool(Dialog):
             self.selected = None
             self._images_for = None
 
-        self.feature.ask("Clear list", "Remove all folders from the list?", yes)
+        self.feature.ask(tr("Clear list"), tr("Remove all folders from the list?"), yes)
 
     # ------------------------------------------------------------- config
     def load_config(self) -> None:
@@ -490,13 +513,15 @@ class ReportTool(Dialog):
                 def keep() -> None:
                     self.config_text = text
 
-                self.feature.ask("Parse warning", "File read, but failed to parse config "
-                                 f"(will still load text):\n{exc}\n\nLoad as-is?", keep)
+                self.feature.ask(tr("Parse warning"),
+                                 tr("File read, but failed to parse config (will still load "
+                                    "text):\n{error}\n\nLoad as-is?").format(error=exc), keep)
                 return
             self.config_text = text
 
         self.feature.app.io_service.ask_open(
-            "Open config", [("YAML/JSON", ["*.yaml", "*.yml", "*.json"]), ("All files", ["*"])],
+            tr("Open config"),
+            [("YAML/JSON", ["*.yaml", "*.yml", "*.json"]), (tr("All files"), ["*"])],
             chosen)
 
     def save_config(self) -> None:
@@ -505,7 +530,7 @@ class ReportTool(Dialog):
         try:
             data = parse_config(self.config_text)
         except ConfigError as exc:
-            self.feature.message("Save error", str(exc))
+            self.feature.message(tr("Save error"), str(exc))
             return
 
         def chosen(path: str) -> None:
@@ -519,7 +544,8 @@ class ReportTool(Dialog):
                 handle.write(payload)
 
         self.feature.app.io_service.ask_save(
-            "Save config", [("YAML", ["*.yaml"]), ("JSON", ["*.json"])], "report.yaml", chosen)
+            tr("Save config"), [("YAML", ["*.yaml"]), ("JSON", ["*.json"])], "report.yaml",
+            chosen)
 
     # ------------------------------------------------------------- images
     @property
@@ -567,18 +593,19 @@ class ReportTool(Dialog):
         draw.add_rect_filled((x, y), (x + width, y + height), (34, 34, 34, 255))
         path = self._image_path()
         if path is None:
-            draw.add_text((x + 8.0, y + 8.0), (200, 200, 200, 255), "No images found")
+            draw.add_text((x + 8.0, y + 8.0), (200, 200, 200, 255), tr("No images found"))
             return
         picture = self._picture(path)
         if picture is None:
-            draw.add_text((x + 8.0, y + 8.0), (200, 200, 200, 255), f"Cannot show {path.name}")
+            draw.add_text((x + 8.0, y + 8.0), (200, 200, 200, 255),
+                          tr("Cannot show {name}").format(name=path.name))
             return
         io = emtk.get_io()
         mx, my = io.mouse_pos
         if io.mouse_clicked[1] and x <= mx < x + width and y <= my < y + height:
             from emtk.widgets.menus import MenuItem
 
-            self.feature.app.open_menu([MenuItem("Copy Image Path")], mx, my,
+            self.feature.app.open_menu([MenuItem(tr("Copy Image Path"))], mx, my,
                                        lambda _item: _copy(str(path)))
         texture, (iw, ih) = picture
         scale = min(width / iw, height / ih)
@@ -614,8 +641,9 @@ class ReportTool(Dialog):
             return self.last_status
         total = len(job["targets"])
         if job["index"] < total:
-            return f"Generating reports... {job['index'] + 1}/{total}: {job['targets'][job['index']]}"
-        return "Generating reports..."
+            return tr("Generating reports... {index}/{total}: {folder}").format(
+                index=job["index"] + 1, total=total, folder=job["targets"][job["index"]])
+        return tr("Generating reports...")
 
     def _draw_progress(self, section, model, state, width: float) -> None:
         import emtk
@@ -646,20 +674,22 @@ class ReportTool(Dialog):
         try:
             config = parse_config(self.config_text)
         except ConfigError as exc:
-            self.feature.message("Invalid config", str(exc))
+            self.feature.message(tr("Invalid config"), str(exc))
             return
         if not self.folders:
-            self.feature.message("No folders", "Please add analysis folders.")
+            self.feature.message(tr("No folders"), tr("Please add analysis folders."))
             return
         targets = discover_analysis_folders(self.folders)
         if not targets:
-            self.feature.message("No analysis folders found", "No valid analysis subfolders "
-                                 "were found. Please check your selection.")
+            self.feature.message(tr("No analysis folders found"),
+                                 tr("No valid analysis subfolders were found. Please check "
+                                    "your selection."))
             return
         targets = [t for t in targets if not is_folder_processed(t)]
         if not targets:
-            self.feature.message("Nothing to do", "All selected analysis folders already have a "
-                                 "report. Nothing to generate.")
+            self.feature.message(tr("Nothing to do"),
+                                 tr("All selected analysis folders already have a report. "
+                                    "Nothing to generate."))
             return
         self.job = {"config": config, "targets": targets, "index": 0, "results": [],
                     "errors": [], "cancelled": False, "generator": None}
@@ -689,7 +719,8 @@ class ReportTool(Dialog):
             job["errors"].extend(f"{folder}: {w}" for w in report.warnings)
         except Exception as exc:  # noqa: BLE001 - one folder's error, reported, the rest go on
             logger.exception("report for %s", folder)
-            job["errors"].append(f"Error for {folder}: {exc}")
+            job["errors"].append(tr("Error for {folder}: {error}").format(folder=folder,
+                                                                          error=exc))
         job["index"] += 1
         self._images_for = None
 
@@ -699,21 +730,22 @@ class ReportTool(Dialog):
         job, self.job = self.job, None
         self._images_for = None
         results = job["results"]
-        done = "Generation canceled." if job["cancelled"] else "Reports generated."
-        self.last_status = f"{done} {len(results)} folder(s)."
+        done = tr("Generation canceled.") if job["cancelled"] else tr("Reports generated.")
+        self.last_status = done + " " + tr("{n} folder(s).").format(n=len(results))
         text = done
         if not docx_available():
-            text += ("\n\npython-docx is not installed: PNGs and CSVs were written, no DOCX.")
+            text += "\n\n" + tr("python-docx is not installed: PNGs and CSVs were written, "
+                                "no DOCX.")
         if job["errors"]:
             text += "\n\n" + "\n".join(job["errors"][:8])
-        self.feature.message("Canceled" if job["cancelled"] else "Done", text)
+        self.feature.message(tr("Canceled") if job["cancelled"] else tr("Done"), text)
         if len(results) > 1 and docx_available():
             data = combined_docx_bytes(results)
             if data:
                 self.feature.app.io_service.save_bytes(
                     "ndX_Batch_Report.docx", data,
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    title="Save Final Combined Report", filters=[("DOCX", ["*.docx"])])
+                    title=tr("Save Final Combined Report"), filters=[("DOCX", ["*.docx"])])
 
     def clear_reports(self) -> None:
         from ...export.report import clear_reports, discover_analysis_folders
@@ -723,7 +755,7 @@ class ReportTool(Dialog):
         targets = list(dict.fromkeys(
             [pathlib.Path(r) for r in roots] + discover_analysis_folders(roots)))
         if not roots:
-            self.feature.message("No folders", "No analysis folders to clear.")
+            self.feature.message(tr("No folders"), tr("No analysis folders to clear."))
             return
 
         def yes() -> None:
@@ -731,13 +763,16 @@ class ReportTool(Dialog):
             self._images_for = None
             self._rows_token = None
             if cleared:
-                self.feature.message("Reports cleared", f"Cleared reports for {cleared} folder(s).")
+                self.feature.message(tr("Reports cleared"),
+                                     tr("Cleared reports for {n} folder(s).").format(n=cleared))
             else:
-                self.feature.message("Nothing to clear", "No report folders were found to delete.")
+                self.feature.message(tr("Nothing to clear"),
+                                     tr("No report folders were found to delete."))
 
         count = len(targets) - len(roots) or len(roots)
-        self.feature.ask("Clear Reports", "This will permanently delete report folders for "
-                         f"{count} analysis folder(s). Continue?", yes)
+        self.feature.ask(tr("Clear Reports"),
+                         tr("This will permanently delete report folders for {n} analysis "
+                            "folder(s). Continue?").format(n=count), yes)
 
     def close(self) -> None:
         if self.job is not None:
@@ -807,7 +842,28 @@ class SettingsFeature(Feature):
             "help": self.help,
             "about": self.about,
             "update_app": self.update_app,
+            **{action: (lambda code=code: self.set_language(code))
+               for action, code in LANGUAGE_ACTIONS.items()},
         }
+
+    def fields(self) -> Dict[str, tuple]:
+        """``language_is_<code>`` (and ``language_is_system``): the Language menu's ticks."""
+        return {f"{action.replace('language_', 'language_is_', 1)}":
+                (lambda code=code: self.language_choice() == code, lambda _value: None)
+                for action, code in LANGUAGE_ACTIONS.items()}
+
+    def menu_entries(self) -> List[tuple]:
+        """Settings > Language: the shipped languages by their own names, and the system's."""
+        path = (mark("Settings"), mark("Language"))
+        rows = [(path, {"label": mark("System language"), "action": "language_system",
+                        "checkable": True, "checked": "language_is_system",
+                        "description": mark("Follow the operating system's language.")}),
+                (path, None)]
+        for code, name in LANGUAGES:
+            rows.append((path, {"label": name, "action": f"language_{code}", "checkable": True,
+                                "checked": f"language_is_{code}",
+                                "description": mark("Show ndX in this language.")}))
+        return rows
 
     def available(self, action: str) -> Optional[bool]:
         if action not in self.actions():
@@ -849,6 +905,24 @@ class SettingsFeature(Feature):
     def ask(self, title: str, text: str, on_yes: Callable[[], None]) -> None:
         self.question = Confirm(self, title, text, on_yes)
 
+    # ------------------------------------------------------------ Language
+    @staticmethod
+    def language_choice() -> str:
+        """The language picked in Settings > Language; ``""`` follows the system."""
+        from ...i18n import saved_language
+
+        return saved_language()
+
+    def set_language(self, code: str) -> None:
+        """Settings > Language: remember *code* and show ndX in it from the next frame."""
+        from ...i18n import save_language
+
+        try:
+            save_language(code)
+        except OSError as exc:
+            self.message(tr("Language"),
+                         tr("Could not save the language: {error}").format(error=exc))
+
     def _io(self):
         return self.app.io_service
 
@@ -867,8 +941,9 @@ class SettingsFeature(Feature):
 
     def load_settings(self) -> None:
         """Settings > Load settings: a ``*.settings.json`` and the files it names."""
-        self._io().ask_open("ndX settings file",
-                            [("ndX settings", ["*.settings.json"]), ("All files", ["*"])],
+        self._io().ask_open(tr("ndX settings file"),
+                            [(tr("ndX settings"), ["*.settings.json"]),
+                             (tr("All files"), ["*"])],
                             lambda paths: self.apply_settings(paths[0]))
 
     def apply_settings(self, path) -> None:
@@ -911,7 +986,7 @@ class SettingsFeature(Feature):
         for key in ("x", "y", "z"):
             model.remember_axis(key)
         names = self._axis_names()
-        self._io().ask_save("Axis settings file", [("Axis file", ["*.axis.json"])],
+        self._io().ask_save(tr("Axis settings file"), [(tr("Axis file"), ["*.axis.json"])],
                             "mfd.axis.json",
                             lambda path: write_axis_settings(path, model.axis_settings, names))
 
@@ -941,9 +1016,10 @@ class SettingsFeature(Feature):
         try:
             write_constants(path, constants_payload(values, read_json(path)))
         except OSError as exc:
-            self.message("Save constants", f"Could not write {path}:\n{exc}")
+            self.message(tr("Save constants"),
+                         tr("Could not write {path}:\n{error}").format(path=path, error=exc))
             return
-        self.message("Save constants", f"Constants saved to {path}.")
+        self.message(tr("Save constants"), tr("Constants saved to {path}.").format(path=path))
 
     def save_equations(self) -> None:
         """Settings > Save settings > Equations: the equations into a YAML (Qt: not connected)."""
@@ -955,7 +1031,7 @@ class SettingsFeature(Feature):
             return
         equations = list(self.app.model.manager.equations or [])
         name = self.app.model.bundle.settings.get("equations") or "mfd.equations.yaml"
-        self._io().ask_save("Equations file", [("Equations", ["*.yaml", "*.yml"])],
+        self._io().ask_save(tr("Equations file"), [(tr("Equations"), ["*.yaml", "*.yml"])],
                             pathlib.Path(name).name,
                             lambda path: write_equations(path, equations))
 
@@ -972,10 +1048,11 @@ class SettingsFeature(Feature):
                                       fallback=model.bundle.settings,
                                       kind=model.data_kind if model.has_data else "bursts")
         except OSError as exc:
-            self.message("Set default axis", f"Failed to save default axis settings:\n{exc}")
+            self.message(tr("Set default axis"),
+                         tr("Failed to save default axis settings:\n{error}").format(error=exc))
             return
         model.bundle.settings.update(data)
-        self.message("Set default axis", "Default axis settings have been updated.")
+        self.message(tr("Set default axis"), tr("Default axis settings have been updated."))
 
     def save_label_settings(self) -> None:
         """Axis Control's Save: the axis titles and colour into the settings folder."""
@@ -986,10 +1063,12 @@ class SettingsFeature(Feature):
         try:
             write_label_settings(path, self.display.label_settings)
         except OSError as exc:
-            self.message("Axis Control", f"Error saving axis label settings.\nDetails: {exc}")
+            self.message(tr("Axis Control"),
+                         tr("Error saving axis label settings.\nDetails: {error}").format(
+                             error=exc))
             return
-        self.message("Axis Control", "Axis label and font settings saved and applied "
-                     "successfully.")
+        self.message(tr("Axis Control"),
+                     tr("Axis label and font settings saved and applied successfully."))
 
     # --------------------------------------------------------------- View
     def axis_control(self) -> None:
@@ -1001,26 +1080,28 @@ class SettingsFeature(Feature):
 
     # --------------------------------------------------------------- Help
     def help(self) -> None:
-        self.window = TextWindow(self, "ndXplorer Help", HELP_TEXT, height=440.0)
+        self.window = TextWindow(self, tr("ndXplorer Help"), help_text(), height=440.0)
 
     def about(self) -> None:
         rows = "\n".join(f"{name}: {version}" for name, version in _versions())
-        text = ("ndXplorer -- interactive exploration of multidimensional data "
-                "(single-molecule fluorescence, sampling, any table).\n\n"
-                f"{rows}\n\nAuthor: Thomas-Otavio Peulen. License: GPL-2.1.\n{DOCS_URL}")
-        self.window = TextWindow(self, "About ndXplorer", text, height=380.0)
+        text = (tr("ndXplorer -- interactive exploration of multidimensional data "
+                   "(single-molecule fluorescence, sampling, any table).")
+                + f"\n\n{rows}\n\n"
+                + tr("Author: Thomas-Otavio Peulen. License: GPL-2.1.") + f"\n{DOCS_URL}")
+        self.window = TextWindow(self, tr("About ndXplorer"), text, height=380.0)
 
     def update_app(self) -> None:
-        version = dict(_versions()).get("ndxplorer", "unknown")
+        version = dict(_versions()).get("ndxplorer", tr("unknown"))
         if _in_browser():
-            how = "In the browser the page loads the newest published build: reload the page."
+            how = tr("In the browser the page loads the newest published build: reload the page.")
         else:
-            how = ("Update with the package manager that installed ndXplorer:\n"
+            how = (tr("Update with the package manager that installed ndXplorer:") + "\n"
                    "  conda update -c tpeulen ndxplorer\n"
                    "  pip install --upgrade ndxplorer\n"
-                   "Then restart ndXplorer.")
-        self.window = TextWindow(self, "Update", f"Installed: ndXplorer {version}\n\n{how}",
-                                 height=260.0)
+                   + tr("Then restart ndXplorer."))
+        self.window = TextWindow(self, tr("Update"),
+                                 tr("Installed: ndXplorer {version}").format(version=version)
+                                 + f"\n\n{how}", height=260.0)
 
     # ------------------------------------------------------------- capture
     def capture_actions(self) -> Dict[str, str]:

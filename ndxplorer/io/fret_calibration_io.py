@@ -38,6 +38,7 @@ from typing import Any
 
 import tttrlib
 
+from ..i18n import tr
 from .container import open_container, software
 
 __all__ = [
@@ -282,11 +283,12 @@ def save_calibration(
                     "ok": True,
                     "where": "file",
                     "target": path,
-                    "warning": f"could not write into the container ({fallback})",
+                    "warning": tr("could not write into the container ({reason})").format(
+                        reason=fallback),
                 }
 
     if path is None:
-        return {"ok": False, "error": "no container for this window and no path given"}
+        return {"ok": False, "error": tr("no container for this window and no path given")}
     try:
         pathlib.Path(path).write_bytes(data)
     except Exception as exc:  # noqa: BLE001
@@ -408,7 +410,9 @@ def read_payload(data, *, target: str = "") -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
     if not isinstance(doc, dict) or doc.get("format") != FORMAT:
-        return {"ok": False, "error": f"{target or 'this file'} is not a ChiSurf FRET calibration"}
+        return {"ok": False,
+                "error": (tr("{name} is not a ChiSurf FRET calibration").format(name=target)
+                          if target else tr("this file is not a ChiSurf FRET calibration"))}
     return {
         "ok": True,
         "where": "file",
@@ -445,7 +449,7 @@ def load_calibration(*, ndx=None, path: str | None = None, uid: int | None = Non
 
     stored = stored_calibrations(ndx)
     if not stored:
-        return {"ok": False, "error": "this measurement carries no stored calibration"}
+        return {"ok": False, "error": tr("this measurement carries no stored calibration")}
     if uid is not None:
         stored = [d for d in stored if d.get("uid") == int(uid)] or stored
     doc = stored[-1]

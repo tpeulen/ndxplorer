@@ -13,14 +13,16 @@ import os
 from datetime import datetime
 from typing import Optional, Tuple
 
+from ..i18n import mark
+
 __all__ = ["SCREENSHOT_FILTERS", "SCREENSHOT_TITLE", "default_screenshot_name",
            "screenshot_format"]
 
 #: The save dialog's caption.
-SCREENSHOT_TITLE = "Save Screenshot"
+SCREENSHOT_TITLE = mark("Save Screenshot")
 
 #: The save dialog's filters: PNG, JPEG, BMP.
-SCREENSHOT_FILTERS = "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;BMP Image (*.bmp)"
+SCREENSHOT_FILTERS = mark("PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;BMP Image (*.bmp)")
 
 
 def default_screenshot_name(folder: Optional[str] = None, now: Optional[datetime] = None) -> str:

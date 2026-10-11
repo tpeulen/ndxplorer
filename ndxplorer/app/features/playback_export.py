@@ -37,6 +37,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from ...i18n import tr
 from . import Feature
 
 __all__ = ["PlaybackExportFeature", "PublicationExportModel", "frame_runner", "create"]
@@ -187,15 +188,35 @@ def frame_runner(tasks: list, mode: Optional[str] = None):
     return run
 
 
+def help_file(language: Optional[str] = None) -> pathlib.Path:
+    """The ranking help for *language* (emtk's active one by default): its
+    translation ``vizrank_help.<lang>.md`` when it ships, else the English file."""
+    if language is None:
+        from emtk import i18n
+
+        language = i18n.language()
+    code = str(language or "").replace("_", "-").lower()
+    for candidate in dict.fromkeys((code, code.split("-", 1)[0])):
+        if candidate and candidate != "en":
+            path = VIZRANK_HELP.with_name(f"vizrank_help.{candidate}.md")
+            if path.is_file():
+                return path
+    return VIZRANK_HELP
+
+
 def help_lines(columns: int) -> List[str]:
     """``vizrank_help.md`` as plain lines of at most *columns* characters:
-    paragraphs and list items wrapped, emphasis marks dropped."""
+    paragraphs and list items wrapped, emphasis marks dropped.
+
+    In the active language when a translation ships beside it
+    (``vizrank_help.de.md``), else the English text.
+    """
     import textwrap
 
     try:
-        text = VIZRANK_HELP.read_text(encoding="utf-8")
+        text = help_file().read_text(encoding="utf-8")
     except OSError:
-        return ["The help text is not installed."]
+        return [tr("The help text is not installed.")]
     lines: List[str] = []
     for block in re.split(r"\n\s*\n", text):
         items = re.split(r"\n(?=\s*[-*] |\s*\d+\. )", block.strip())
@@ -235,11 +256,12 @@ class RankingPanel:
         self.state = FormState(on_used=self._used)
         feature.app.forms[f"playback_export.rank.{pairs}"] = self.state
         self.model = None
-        title = "Find informative projections" if pairs else "Find informative z parameters"
+        title = (tr("Find informative projections") if pairs
+                 else tr("Find informative z parameters"))
         # Wide enough for two full MFD parameter names ("Number of Photons (fit window) (green)").
         self.window = DialogWindow(title, size=(760.0, 640.0), key=f"rank{int(pairs)}")
         self.show_help = False
-        self._help_window = DialogWindow("Find informative projections - help",
+        self._help_window = DialogWindow(tr("Find informative projections - help"),
                                          size=(560.0, 520.0), key=f"rankhelp{int(pairs)}")
         self._help_top = 0
         self.tour: Optional[int] = None
@@ -393,7 +415,9 @@ class RankingPanel:
             rx, ry, rw, rh = rect
             emtk.get_foreground_draw_list().add_rect((rx - 3, ry - 3), (rx + rw + 3, ry + rh + 3),
                                                      (255, 200, 0, 255), 3.0, 0, 2.5)
-        window = DialogWindow(f"Guide {self.tour + 1}/{len(steps)}: {step.get('title', '')}",
+        window = DialogWindow(tr("Guide {n}/{total}: {title}").format(
+                                  n=self.tour + 1, total=len(steps),
+                                  title=tr(step.get("title", ""))),
                               size=(360.0, 220.0), key=f"ranktour{int(self.pairs)}")
         x, y, w, h = self.window.box
         window.pos = (max(frame_box[0], x - 370.0), y + h - 230.0)
@@ -401,17 +425,17 @@ class RankingPanel:
             self.tour = None
             window.end()
             return
-        emtk.text_wrapped(_plain(step.get("text", "")))
+        emtk.text_wrapped(_plain(tr(step.get("text", ""))))
         waiting = bool(step.get("await")) and not self._awaited
         if waiting:
-            emtk.text_wrapped(_plain(step["await"].get("hint", "")))
-        if self.tour > 0 and emtk.button("Back##tour"):
+            emtk.text_wrapped(_plain(tr(step["await"].get("hint", ""))))
+        if self.tour > 0 and emtk.button(tr("Back") + "##tour"):
             self.tour -= 1
             self._awaited = False
         emtk.same_line()
         last = self.tour == len(steps) - 1
         emtk.begin_disabled(waiting)
-        if emtk.button(("Done" if last else "Next") + "##tour"):
+        if emtk.button((tr("Done") if last else tr("Next")) + "##tour"):
             self.tour = None if last else self.tour + 1
             self._awaited = False
         emtk.end_disabled()
@@ -438,7 +462,8 @@ class PublicationExportModel:
         self._on_cancel = on_cancel
 
     def format_options(self) -> list:
-        return list(self._formats)
+        """``(format, label)``: the format is the key, its label is shown translated."""
+        return [(name, tr(name)) for name in self._formats]
 
     @property
     def suffix(self) -> str:
@@ -478,7 +503,8 @@ def export_figure_bytes(model, options: PublicationExportModel) -> bytes:
     model.update()
     hist = model.histograms
     if hist is None:
-        raise ValueError("No 2D histogram is available yet — load data and update the plot first.")
+        raise ValueError(tr("No 2D histogram is available yet — load data and update the plot "
+                            "first."))
     fig = render_publication_figure(
         hist.H, hist.x_edges, hist.y_edges,
         x_marginal=hist.x, y_marginal=hist.y,
@@ -526,7 +552,8 @@ class PlaybackExportFeature(Feature):
         self.export_spec = load_spec("publication_export")
         self.export_state = FormState()
         app.forms["playback_export.export"] = self.export_state
-        self.export_window = DialogWindow("Publication export", size=(380.0, 210.0), key="export")
+        self.export_window = DialogWindow(tr("Publication export"), size=(380.0, 210.0),
+                                          key="export")
         self.on_data_changed()
 
     # ----------------------------------------------------------------- hooks
@@ -633,12 +660,12 @@ class PlaybackExportFeature(Feature):
             logger.debug("islands as clusters failed", exc_info=True)
             found = None
         if found is None:
-            self.app.show_status(f"{names[0]} vs {names[1]} was not ranked by Separation: "
-                                 "show a ranked view first.")
+            self.app.show_status(tr("{x} vs {y} was not ranked by Separation: show a ranked "
+                                    "view first.").format(x=names[0], y=names[1]))
             return
         if found.count < 2:
-            self.app.show_status(f"One population in {names[0]} vs {names[1]}: "
-                                 "no islands to use as clusters.")
+            self.app.show_status(tr("One population in {x} vs {y}: no islands to use as "
+                                    "clusters.").format(x=names[0], y=names[1]))
             return
         replaced = analysis.labels is not None
         source.set_column(found.column, found.labels)
@@ -692,14 +719,14 @@ class PlaybackExportFeature(Feature):
     def restore_session_state(self, state: dict, context) -> None:
         playback = dict(state.get("playback") or {})
         axis = playback.get("axis") or ""
-        if axis and not context.missing("playback column", [axis]):
+        if axis and not context.missing(tr("playback column"), [axis]):
             self.playback.axis_name = axis
         for key in ("n_steps", "mode", "fps", "position"):
             if key in playback:
                 try:
                     setattr(self.playback, key, playback[key])
                 except Exception as exc:  # noqa: BLE001 - one setting, noted
-                    context.skip(f"playback {key} ({exc})")
+                    context.skip(tr("playback {key} ({error})").format(key=key, error=exc))
         for key, settings in dict(state.get("rankings") or {}).items():
             panel = self.rankings[key == "pairs"]
             if not panel.ensure_model():
@@ -773,7 +800,8 @@ class PlaybackExportFeature(Feature):
     def playback_status(self) -> str:
         model = self.app.model
         if model.has_data and self.controller.gating:
-            self.playback.set_count_text(f"{model.count_current} of {model.count_total} points")
+            self.playback.set_count_text(tr("{current} of {total} points").format(
+                current=model.count_current, total=model.count_total))
         else:
             self.playback.set_count_text("")
         return self.playback.status_text()
@@ -845,8 +873,9 @@ class PlaybackExportFeature(Feature):
     # ---------------------------------------------------------------- export
     def open_export(self) -> None:
         if not self.app.model.ready():
-            self.app.message = ("Publication export", "No 2D histogram is available yet — "
-                                "load data and update the plot first.")
+            self.app.message = (tr("Publication export"),
+                                tr("No 2D histogram is available yet — load data and update "
+                                   "the plot first."))
             return
         if self.export_model is None:
             self.export_model = PublicationExportModel(self._export, self._close_export)
@@ -861,14 +890,15 @@ class PlaybackExportFeature(Feature):
             data = export_figure_bytes(self.app.model, options)
         except Exception as exc:  # noqa: BLE001 - shown, the window goes on
             logger.exception("publication export failed")
-            self.app.message = ("Publication export", f"Export failed:\n{exc}")
+            self.app.message = (tr("Publication export"),
+                                tr("Export failed:\n{error}").format(error=exc))
             return
         service = getattr(self.app, "io_service", None)
         name = f"ndxplorer_figure{options.suffix}"
         if service is None:
-            self.app.message = ("Publication export", "No file service to save with.")
+            self.app.message = (tr("Publication export"), tr("No file service to save with."))
             return
-        service.save_bytes(name, data, options.mime, title="Export publication figure",
+        service.save_bytes(name, data, options.mime, title=tr("Export publication figure"),
                            filters=[(options.format, [f"*{options.suffix}"])])
 
     def _draw_export(self, box) -> bool:

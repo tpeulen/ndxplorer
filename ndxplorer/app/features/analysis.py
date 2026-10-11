@@ -44,6 +44,7 @@ import numpy as np
 
 from . import Feature
 from ...analysis import gaussian_mixture as gm
+from ...i18n import mark, tr
 from ...analysis import structure
 
 __all__ = ["AnalysisFeature", "create", "load_spec"]
@@ -53,7 +54,7 @@ logger = logging.getLogger(__name__)
 SPECS = pathlib.Path(__file__).with_name("analysis")
 
 #: The left dock's tab.
-GAUSSIAN_TAB = "Gaussian Fit"
+GAUSSIAN_TAB = mark("Gaussian Fit")
 #: Registry owner id of the Gaussians (the Qt panel's), so another table can link to them.
 GAUSSIAN_OWNER_ID = "ndxplorer.gaussians"
 #: Line widths of the 1σ/2σ/3σ ellipses, and of the selected Gaussian's.
@@ -93,7 +94,7 @@ class SpecWindow:
         self.spec = load_spec(self.spec_name)
         self.form = FormState()
         feature.app.forms[f"analysis.{self.spec_name}.{id(self)}"] = self.form
-        self.window = DialogWindow(self.title, size=self.size, pos=pos,
+        self.window = DialogWindow(tr(self.title), size=self.size, pos=pos,
                                    key=f"analysis-{self.spec_name}")
 
     @property
@@ -136,8 +137,8 @@ class Question(SpecWindow):
     modal = True
 
     def __init__(self, feature, title: str, text: str, on_yes: Callable[[], None],
-                 on_no: Optional[Callable[[], None]] = None, yes: str = "Yes",
-                 no: str = "No") -> None:
+                 on_no: Optional[Callable[[], None]] = None, yes: str = mark("Yes"),
+                 no: str = mark("No")) -> None:
         self.title = title
         super().__init__(feature)
         self.text = text
@@ -148,10 +149,10 @@ class Question(SpecWindow):
         return self.text
 
     def yes_label(self) -> str:
-        return self._labels[0]
+        return tr(self._labels[0])
 
     def no_label(self) -> str:
-        return self._labels[1]
+        return tr(self._labels[1])
 
     def yes(self) -> None:
         self.close()
@@ -170,7 +171,7 @@ class ColumnChooser(SpecWindow):
     """*Select Columns for Clustering*: a filter, a check per column, all/none."""
 
     spec_name = "columns"
-    title = "Select Columns for Clustering"
+    title = mark("Select Columns for Clustering")
     size = (460.0, 470.0)
     modal = True
 
@@ -226,8 +227,8 @@ class ProgressWindow(SpecWindow):
     fit_height = False
     AUTO_CLOSE = 3.0
 
-    def __init__(self, feature, title: str, idle_status: str = "Initializing UMAP computation...") \
-            -> None:
+    def __init__(self, feature, title: str,
+                 idle_status: str = mark("Initializing UMAP computation...")) -> None:
         self.title = title
         super().__init__(feature)
         self.task = None
@@ -261,14 +262,14 @@ class ProgressWindow(SpecWindow):
     def status(self) -> str:
         task = self.task
         if task is None:
-            return self.idle_status
+            return tr(self.idle_status)
         if task.running:
-            return task.message or self.idle_status
+            return task.message or tr(self.idle_status)
         if task.succeeded:
-            return "Finished."
+            return tr("Finished.")
         if task.state == "cancelled":
-            return "Cancelled."
-        return f"Error: {task.error}"
+            return tr("Cancelled.")
+        return tr("Error: {error}").format(error=task.error)
 
     def cancel(self) -> None:
         if self.task is not None:
@@ -286,7 +287,7 @@ class GmmSettingsDialog(SpecWindow):
     """*GMM Settings*: the EM's settings and the seeding window, saved per user."""
 
     spec_name = "gmm_settings"
-    title = "GMM Settings"
+    title = mark("GMM Settings")
     size = (430.0, 330.0)
     modal = True
 
@@ -310,9 +311,9 @@ class GmmSettingsDialog(SpecWindow):
         path = gm.save_gmm_settings(self.values)
         self.feature.settings_changed(self.values)
         if path:
-            self.feature.app.show_status("GMM settings saved to your ndX user folder.")
+            self.feature.app.show_status(tr("GMM settings saved to your ndX user folder."))
         else:
-            self.feature.message("GMM Settings", "The settings could not be saved.")
+            self.feature.message(tr("GMM Settings"), tr("The settings could not be saved."))
 
     def ok(self) -> None:
         self.save()
@@ -329,7 +330,8 @@ class ProjectionWindow:
         from emtk.dialog_window import DialogWindow
 
         self.feature = feature
-        self.window = DialogWindow("UMAP Projection", size=(620.0, 540.0), key="umap-projection")
+        self.window = DialogWindow(tr("UMAP Projection"), size=(620.0, 540.0),
+                                   key="umap-projection")
         self.embedding: Optional[np.ndarray] = None
         self.labels: Optional[np.ndarray] = None
 
@@ -347,7 +349,8 @@ class ProjectionWindow:
             embedding = embedding[pick]
             labels = None if labels is None else labels[pick]
         self.embedding, self.labels = embedding, labels
-        self.window.title = "UMAP Projection (3D)" if embedding.shape[1] >= 3 else "UMAP Projection"
+        self.window.title = (tr("UMAP Projection (3D)") if embedding.shape[1] >= 3
+                             else tr("UMAP Projection"))
         self.window.show()
 
     def draw(self, frame) -> None:
@@ -365,11 +368,11 @@ class ProjectionWindow:
         from ...plotting.cluster_overlay import cluster_color
 
         if self.labels is None:
-            yield "Points", np.ones(len(self.embedding), dtype=bool), (90, 150, 220, 255)
+            yield tr("Points"), np.ones(len(self.embedding), dtype=bool), (90, 150, 220, 255)
             return
         for label in np.unique(self.labels):
             rgb = cluster_color(int(label))
-            name = "Noise" if label < 0 else f"Cluster {int(label)}"
+            name = tr("Noise") if label < 0 else tr("Cluster {n}").format(n=int(label))
             yield name, self.labels == label, (int(rgb[0]), int(rgb[1]), int(rgb[2]), 255)
 
     def _draw_2d(self, box) -> None:
@@ -405,7 +408,7 @@ class StructureDialog(SpecWindow):
     """*Find structure*: method, columns, the method's parameters, run."""
 
     spec_name = "structure"
-    title = "Find structure"
+    title = mark("Find structure")
     size = (430.0, 300.0)
 
     def __init__(self, feature) -> None:
@@ -455,11 +458,12 @@ class StructureDialog(SpecWindow):
         return list(structure.UMAP_INITS)
 
     def blurb(self) -> str:
-        return self.descriptor.blurb
+        return tr(self.descriptor.blurb)
 
     def columns_label(self) -> str:
         count = len(self.columns)
-        return f"▦ Columns ({count})" if count else "▦ Columns"
+        return (tr("▦ Columns ({count})").format(count=count) if count
+                else tr("▦ Columns"))
 
     @property
     def umap_advanced_shown(self) -> bool:
@@ -503,12 +507,13 @@ class StructureDialog(SpecWindow):
         if task is None:
             return ""
         if task.running:
-            return "Cancelling…" if task.cancelled else f"Running {self.descriptor.title}…"
-        return "Finished." if task.succeeded else "Cancelled or failed."
+            return (tr("Cancelling…") if task.cancelled
+                    else tr("Running {method}…").format(method=self.descriptor.title))
+        return tr("Finished.") if task.succeeded else tr("Cancelled or failed.")
 
     def cancel_label(self) -> str:
         task = self.feature.label_task
-        return "Cancelling…" if task is not None and task.cancelled else "■ Cancel"
+        return tr("Cancelling…") if task is not None and task.cancelled else tr("■ Cancel")
 
     def enabled(self, name: str) -> bool:
         running = self.running
@@ -608,8 +613,8 @@ class GaussianPanel:
         #: The parameter table (``views/parameter_table.view.json``).
         self.table = ParameterTable(
             feature.app, self.group.rows,
-            name_tooltip="Component parameter: centre x, y, widths σx, σy, correlation ρ "
-                         "and weight w.",
+            name_tooltip=tr("Component parameter: centre x, y, widths σx, σy, "
+                            "correlation ρ and weight w."),
             on_select=self._select_parameter, on_delete=self._delete_parameter)
         self._register()
 
@@ -748,8 +753,9 @@ class GaussianPanel:
         model = self.model
         hist = model.histograms
         if hist is None:
-            self.feature.message("No histogram", "No 2D histogram available. Fit is restricted "
-                                 "to visible data; please update histogram first.")
+            self.feature.message(tr("No histogram"),
+                                 tr("No 2D histogram available. Fit is restricted to visible "
+                                    "data; please update histogram first."))
             return
         x = model._visible_values(model.index_of(model.x.name))
         y = model._visible_values(model.index_of(model.y.name))
@@ -769,12 +775,13 @@ class GaussianPanel:
             self.feature.message(exc.title, exc.text)
             return
         except Exception as exc:  # noqa: BLE001 - the EM failed; say so
-            self.feature.message("Fit failed", str(exc))
+            self.feature.message(tr("Fit failed"), str(exc))
             return
         for index, (mu, cov, w) in enumerate(fitted):
             self.group.write(index, mu, cov, w)
-        self.feature.app.show_status(f"Fitted {len(fitted)} Gaussian"
-                                     + ("s" if len(fitted) != 1 else ""))
+        self.feature.app.show_status(
+            tr("Fitted {n} Gaussian").format(n=len(fitted)) if len(fitted) == 1
+            else tr("Fitted {n} Gaussians").format(n=len(fitted)))
 
     def _fit_populations(self, x, y, hist, log_x, log_y, labels) -> None:
         """Fit the population-wise mixture (:mod:`ndxplorer.analysis.gaussian_populations`)."""
@@ -795,12 +802,14 @@ class GaussianPanel:
             self.feature.message(exc.title, exc.text)
             return
         except Exception as exc:  # noqa: BLE001 - the EM failed; say so
-            self.feature.message("Fit failed", str(exc))
+            self.feature.message(tr("Fit failed"), str(exc))
             return
         gpop.write_population_fit(self.group, fit)
         count = len(self.group)
-        self.feature.app.show_status(f"Fitted {count} Gaussian{'s' if count != 1 else ''} "
-                                     f"per population ({', '.join(labels)})")
+        self.feature.app.show_status(
+            (tr("Fitted {n} Gaussian per population ({populations})") if count == 1
+             else tr("Fitted {n} Gaussians per population ({populations})"))
+            .format(n=count, populations=", ".join(labels)))
 
     def select(self) -> None:
         """The chosen Gaussian (or the only one) as an elliptical gate."""
@@ -810,8 +819,8 @@ class GaussianPanel:
         chosen = self.selected
         if chosen is None or chosen >= len(components):
             if len(components) != 1:
-                self.feature.message("Select Gaussian",
-                                     "Please select one or more Gaussian rows in the table.")
+                self.feature.message(tr("Select Gaussian"),
+                                     tr("Please select one or more Gaussian rows in the table."))
                 return
             chosen = 0
         model = self.model
@@ -847,12 +856,13 @@ class GaussianPanel:
 
     def save(self) -> None:
         if not len(self.group):
-            self.feature.message("Save Gaussians", "There are no Gaussian rows to save.")
+            self.feature.message(tr("Save Gaussians"), tr("There are no Gaussian rows to save."))
             return
         service = self.feature.file_service()
         if service is None:
             return
-        service.ask_save("Save Gaussian Fits", "Gaussian Files (*.json *.csv);;All Files (*)",
+        service.ask_save(tr("Save Gaussian Fits"),
+                         tr("Gaussian Files (*.json *.csv);;All Files (*)"),
                          "gaussians.json", self._save_to)
 
     def _save_to(self, path: str) -> None:
@@ -865,27 +875,29 @@ class GaussianPanel:
                                         None if hist is None else hist.y_edges, log_x, log_y,
                                         state=self.group.get_state())
         except OSError as exc:
-            self.feature.message("Save Error", f"Failed to save:\n{exc}")
+            self.feature.message(tr("Save Error"), tr("Failed to save:\n{error}").format(error=exc))
             return
-        self.feature.message("Saved", "Saved files:\n" + "\n".join(
-            pathlib.Path(p).name for p in written))
+        self.feature.message(tr("Saved"), tr("Saved files:\n{files}").format(
+            files="\n".join(pathlib.Path(p).name for p in written)))
 
     def load(self) -> None:
         service = self.feature.file_service()
         if service is None:
             return
-        service.ask_open("Load Gaussian Fits", "Gaussian Files (*.json *.csv);;All Files (*)",
+        service.ask_open(tr("Load Gaussian Fits"),
+                         tr("Gaussian Files (*.json *.csv);;All Files (*)"),
                          lambda paths: self.load_from(paths[0]) if paths else None)
 
     def load_from(self, path: str) -> None:
         try:
             rows, axes = gm.load_gaussians(path)
         except Exception as exc:  # noqa: BLE001
-            self.feature.message("Load Error", f"Failed to load file:\n{exc}")
+            self.feature.message(tr("Load Error"),
+                                 tr("Failed to load file:\n{error}").format(error=exc))
             return
         if not rows:
-            self.feature.message("Load Gaussians",
-                                 "No valid Gaussian rows found in the selected file.")
+            self.feature.message(tr("Load Gaussians"),
+                                 tr("No valid Gaussian rows found in the selected file."))
             return
         self.group.clear()
         for mu, cov, w, fx, fy, fsx, frho, fsy in rows:
@@ -896,7 +908,7 @@ class GaussianPanel:
             self.group.set_state(state)
         mismatch = gm.axis_mismatch(axes, self.axes_info())
         if mismatch:
-            self.feature.message("Axis Mismatch", mismatch)
+            self.feature.message(tr("Axis Mismatch"), mismatch)
 
     # ------------------------------------------------------------- drawing
     def draw_tab(self, box) -> None:
@@ -962,7 +974,7 @@ class AnalysisFeature(Feature):
     def __init__(self, app) -> None:
         super().__init__(app)
         self.structure = StructureDialog(self)
-        self.progress = ProgressWindow(self, "UMAP Computation Progress")
+        self.progress = ProgressWindow(self, mark("UMAP Computation Progress"))
         self.projection = ProjectionWindow(self)
         self.gaussians = GaussianPanel(self)
         self.modal: List[SpecWindow] = []
@@ -1168,13 +1180,14 @@ class AnalysisFeature(Feature):
         window.show()
         self.modal.append(window)
 
-    def ask(self, title: str, text: str, on_yes, on_no=None, yes="Yes", no="No") -> None:
+    def ask(self, title: str, text: str, on_yes, on_no=None, yes=mark("Yes"),
+            no=mark("No")) -> None:
         self.open_modal(Question(self, title, text, on_yes, on_no, yes, no))
 
     def file_service(self):
         service = getattr(self.app, "io_service", None)
         if service is None:
-            self.message("Files", "No file service is available in this window.")
+            self.message(tr("Files"), tr("No file service is available in this window."))
         return service
 
     def structure_task_running(self) -> bool:
@@ -1190,16 +1203,17 @@ class AnalysisFeature(Feature):
             return
         if len(dialog.columns) < method.min_columns:
             if dialog.columns:
-                self.message(f"{method.title} needs more columns",
-                             f"Select at least {method.min_columns} columns.")
+                self.message(tr("{method} needs more columns").format(method=method.title),
+                             tr("Select at least {n} columns.").format(n=method.min_columns))
                 return
             if method.family == structure.PROJECTION:
-                self.message(f"Select columns for {method.title}",
-                             f"Choose at least {method.min_columns} columns to project.")
+                self.message(tr("Select columns for {method}").format(method=method.title),
+                             tr("Choose at least {n} columns to project.").format(
+                                 n=method.min_columns))
                 return
-            self.ask("Select columns?",
-                     "No columns are selected, so only the current X, Y and Z axes will be "
-                     "used — which rarely groups the data well.\n\nChoose columns now?",
+            self.ask(tr("Select columns?"),
+                     tr("No columns are selected, so only the current X, Y and Z axes will be "
+                        "used — which rarely groups the data well.\n\nChoose columns now?"),
                      on_yes=lambda: dialog.choose_columns(then=lambda: self._start(plot)),
                      on_no=lambda: self._start(plot))
             return
@@ -1220,7 +1234,7 @@ class AnalysisFeature(Feature):
         dialog = self.structure
         data, used = self._data()
         if data is None:
-            self.message("No data", "None of the chosen columns is in the table.")
+            self.message(tr("No data"), tr("None of the chosen columns is in the table."))
             return
         dialog.result = None
         method = dialog.method
@@ -1237,7 +1251,8 @@ class AnalysisFeature(Feature):
         else:
             self.work_task = tasks.start(structure.embed_umap, data, dialog.umap_params(),
                                          name="umap")
-            self.progress.title = self.progress.window.title = "UMAP Computation Progress"
+            self.progress.title = mark("UMAP Computation Progress")
+            self.progress.window.title = tr(self.progress.title)
             self.progress.attach(self.work_task)
             self.work_task.on_done(lambda task: self._umap_done(task, plot))
 
@@ -1247,10 +1262,11 @@ class AnalysisFeature(Feature):
                 and model.has_data:
             labels, probabilities = task.result
             self.set_clusters(labels, probabilities, run,
-                              f"Clustering using {run['method'].upper()} completed "
-                              "successfully.")
+                              tr("Clustering using {method} completed successfully.").format(
+                                  method=run["method"].upper()))
         elif task.state == "failed":
-            self.message(f"{structure.METHODS_BY_KEY[run['method']].title} failed", task.error)
+            self.message(tr("{method} failed").format(
+                method=structure.METHODS_BY_KEY[run["method"]].title), task.error)
 
     def set_clusters(self, labels, probabilities, run: dict, status: str = "") -> None:
         """Make *labels* (one per table row, ``-1`` none) the clusters.
@@ -1275,8 +1291,8 @@ class AnalysisFeature(Feature):
     def _pca_done(self, task) -> None:
         model = self.app.model
         if task.state == "failed" or (task.succeeded and task.result is None):
-            self.message("PCA failed", task.error or
-                         "No components could be computed from the selected columns.")
+            self.message(tr("PCA failed"), task.error or
+                         tr("No components could be computed from the selected columns."))
             return
         if not task.succeeded or not model.has_data:
             return
@@ -1302,24 +1318,25 @@ class AnalysisFeature(Feature):
             return
         names = structure.store_projection(model.source, "UMAP", embedding)
         model.invalidate()
-        self.structure.result = (f"Added {names[0]}…{names[-1]}. "
-                                 "Pick them in the axis controls to plot.")
+        self.structure.result = tr(
+            "Added {first}…{last}. Pick them in the axis controls to plot.").format(
+                first=names[0], last=names[-1])
 
     def _missing_backend(self, method: structure.Method) -> None:
         reason = method.unavailable()
         if structure.in_browser() or not method.installable:
-            self.message(f"{method.title} unavailable", reason)
+            self.message(tr("{method} unavailable").format(method=method.title), reason)
             return
 
         def refused() -> None:
-            self.message(f"{method.title} not installed",
-                         "Installation was cancelled or failed, so this method cannot run.")
+            self.message(tr("{method} not installed").format(method=method.title),
+                         tr("Installation was cancelled or failed, so this method cannot run."))
 
-        self.ask(f"{method.title} not installed",
-                 f"{reason}\n\n{method.blurb}\n\nInstall {method.package} now "
-                 "(conda, conda-forge)?",
+        self.ask(tr("{method} not installed").format(method=method.title),
+                 tr("{reason}\n\n{blurb}\n\nInstall {package} now (conda, conda-forge)?").format(
+                     reason=reason, blurb=tr(method.blurb), package=method.package),
                  on_yes=lambda: self._install(method, refused), on_no=refused,
-                 yes="Install", no="Cancel")
+                 yes=mark("Install"), no=mark("Cancel"))
 
     def _install(self, method: structure.Method, refused) -> None:
         from emtk import tasks
@@ -1329,28 +1346,31 @@ class AnalysisFeature(Feature):
         self.work_task = tasks.start(install_task, [method.package],
                                      ["conda-forge", "defaults"], method.import_name,
                                      name=f"install-{method.package}")
-        self.progress.title = self.progress.window.title = f"Installing {method.package}"
+        self.progress.title = self.progress.window.title = tr("Installing {package}").format(
+            package=method.package)
         self.progress.attach(self.work_task)
 
         def done(task) -> None:
             if not task.succeeded or not task.result:
                 refused()
             elif not method.available():
-                self.message(f"{method.title} installed",
-                             f"{method.package} was installed but could not be imported yet.\n"
-                             "Please restart the application and try again.")
+                self.message(tr("{method} installed").format(method=method.title),
+                             tr("{package} was installed but could not be imported yet.\n"
+                                "Please restart the application and try again.").format(
+                                 package=method.package))
 
         self.work_task.on_done(done)
 
     def save_clustering(self) -> None:
         if self.labels is None or self.label_run is None:
-            self.message("No Clustering Data",
-                         "No clustering data available. Please apply clustering before saving.")
+            self.message(tr("No Clustering Data"),
+                         tr("No clustering data available. Please apply clustering before "
+                            "saving."))
             return
         service = self.file_service()
         if service is None:
             return
-        service.ask_folder("Folder for Clustering Data", self._save_clustering_to)
+        service.ask_folder(tr("Folder for Clustering Data"), self._save_clustering_to)
 
     def _save_clustering_to(self, folder: str) -> None:
         from ...io import writer
@@ -1360,9 +1380,9 @@ class AnalysisFeature(Feature):
                                               self.labels, self.probabilities, run["columns"],
                                               run["parameters"])
         if written is None:
-            self.message("Save Error", "The clustering data could not be written.")
+            self.message(tr("Save Error"), tr("The clustering data could not be written."))
         else:
-            self.app.show_status(f"Clustering data saved to {written}")
+            self.app.show_status(tr("Clustering data saved to {path}").format(path=written))
 
     # --------------------------------------------------------------- frame
     def draw_windows(self) -> bool:
@@ -1493,7 +1513,8 @@ class AnalysisFeature(Feature):
                 dialog.n_clusters = int(line.split("=", 1)[1])
             elif "_create_umap_progress_dialog" in line:
                 self.progress.task = None
-                self.progress.title = self.progress.window.title = "UMAP Computation Progress"
+                self.progress.title = mark("UMAP Computation Progress")
+                self.progress.window.title = tr(self.progress.title)
                 self.progress.show()
             elif "GaussianSettingsDialog" in line and not any(
                     isinstance(w, GmmSettingsDialog) for w in self.modal):
@@ -1557,7 +1578,7 @@ def _pca_work(task, data, columns, n_components, standardize):
     """PCA as a task: one step (the decomposition is a single call)."""
     from ...analysis.pca_helpers import compute_pca
 
-    yield None, "Decomposing"
+    yield None, tr("Decomposing")
     return compute_pca(data, columns, n_components=n_components, standardize=standardize)
 
 

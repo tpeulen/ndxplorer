@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Dict
 
+from ...i18n import tr
+
 __all__ = ["ops", "targets"]
 
 #: Qt widgets of the Draw Mask panel -> the panel model's attributes.
@@ -37,7 +39,7 @@ def _choose(replay, label: str) -> bool:
     if popup is None:
         return False
     for entry, rect in popup._rows:
-        if entry is not None and getattr(entry, "label", "").startswith(label):
+        if entry is not None and getattr(entry, "label", "").startswith(tr(label)):
             replay.click_rect(rect)
             replay.settle()
             return True

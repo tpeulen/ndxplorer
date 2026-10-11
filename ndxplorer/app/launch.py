@@ -66,10 +66,12 @@ def run(path: Optional[str] = None, host: Optional[str] = None,
     """
     import logging
 
+    from ..i18n import select_language
     from .docks import layout_store
     from .frame import NdxApp
     from . import theme
 
+    select_language()  # standalone: the saved choice, else the system's language
     host = host or available_host()
     size = tuple(size) if size else None
     app = NdxApp(layout_store=layout_store(), session_autosave=True)

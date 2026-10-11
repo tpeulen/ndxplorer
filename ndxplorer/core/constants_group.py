@@ -231,8 +231,12 @@ def replace_shared_factors(group, result: Mapping[str, Any]) -> List[str]:
         replaced.append(str(name))
     if replaced and isinstance(result, dict):
         result["replaced_vectors"] = replaced
-        lines = [f"  Replaced population-wise {_SYMBOLS.get(n, n)} with shared "
-                 f"{_SYMBOLS.get(n, n)} = {float(factors[n]):.4f}" for n in replaced]
+        from ..i18n import tr
+
+        lines = ["  " + tr("Replaced population-wise {symbol} with shared {symbol} = "
+                           "{value}").format(symbol=_SYMBOLS.get(n, n),
+                                              value=f"{float(factors[n]):.4f}")
+                 for n in replaced]
         result["report"] = "\n".join([str(result.get("report") or "")] + lines)
     return replaced
 

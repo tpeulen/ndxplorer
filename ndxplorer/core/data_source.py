@@ -21,6 +21,7 @@ from collections import OrderedDict
 import numpy as np
 import tttrlib
 
+from ..i18n import tr
 from ..logging_config import logging
 
 try:
@@ -1026,8 +1027,9 @@ class DataSource:
         if mode == 'columns':
             if self.size != other_source.size and self.n_parameters:
                 _warn(
-                    "Row Count Mismatch",
-                    f"New data has {other_source.size} rows, current has {self.size} rows. Not merging."
+                    tr("Row Count Mismatch"),
+                    tr("New data has {new} rows, current has {current} rows. Not merging.").format(
+                        new=other_source.size, current=self.size)
                 )
                 return False
             new = [n for n in other_names if n not in own_names]
@@ -1046,13 +1048,14 @@ class DataSource:
             new_unique = set(other_names) - set(own_names)
             if new_unique:
                 _warn(
-                    "New Columns Found",
-                    f"New data contains columns not in current data: {', '.join(sorted(new_unique))}. "
-                    f"Only rows of existing columns will be appended."
+                    tr("New Columns Found"),
+                    tr("New data contains columns not in current data: {names}. Only rows of "
+                       "existing columns will be appended.").format(
+                           names=", ".join(sorted(new_unique)))
                 )
             common = sorted(set(own_names).intersection(other_names))
             if not common:
-                _warn("No Common Columns", "No overlapping columns. Cannot append rows.")
+                _warn(tr("No Common Columns"), tr("No overlapping columns. Cannot append rows."))
                 return False
             combined = store_with_columns(self._store, common)
             appended = store_with_columns(other_source.store, common)
@@ -1067,5 +1070,6 @@ class DataSource:
             self.replace_store(combined)
             return True
 
-        _warn("Invalid Merge Mode", f"Invalid mode: {mode}. Must be 'columns' or 'rows'.")
+        _warn(tr("Invalid Merge Mode"),
+              tr("Invalid mode: {mode}. Must be 'columns' or 'rows'.").format(mode=mode))
         return False

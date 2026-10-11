@@ -36,6 +36,7 @@ import pathlib
 import shutil
 from typing import Any, Callable, Dict, Optional
 
+from ...i18n import tr
 from . import Feature
 
 __all__ = ["SessionFeature", "create"]
@@ -148,15 +149,17 @@ class SessionFeature(Feature):
         name = pathlib.Path(container).name
         if result["ok"]:
             self._baseline = self._hash(state)
-            self.app.show_status(f"Session saved in {name}")
+            self.app.show_status(tr("Session saved in {name}").format(name=name))
         else:
-            why = ("it is open for writing in another program" if result.get("locked")
-                   else result.get("error", "unknown error"))
-            self.app.show_status(f"Session not saved in {name}: {why}")
+            why = (tr("it is open for writing in another program") if result.get("locked")
+                   else result.get("error", tr("unknown error")))
+            self.app.show_status(tr("Session not saved in {name}: {reason}").format(
+                name=name, reason=why))
             logger.warning("session not saved in %s: %s", container, result.get("error"))
             if not quiet:
-                self.app.message = ("Save session", f"The session could not be saved in "
-                                    f"{name}: {result.get('error')}")
+                self.app.message = (tr("Save session"),
+                                    tr("The session could not be saved in {name}: {error}")
+                                    .format(name=name, error=result.get("error")))
         return result
 
     def _save_if_changed(self) -> None:
@@ -188,17 +191,19 @@ class SessionFeature(Feature):
         ctx = SessionContext(model.parameter_names, model.source.size, saved, same,
                              newer_calibration=self._calibration_newer(saved))
         if not same:
-            ctx.skip("saved on another table" if ctx.rows_match else
-                     f"saved on {table.get('n_rows')} rows, {model.source.size} now")
+            ctx.skip(tr("saved on another table") if ctx.rows_match else
+                     tr("saved on {saved} rows, {now} now").format(saved=table.get("n_rows"),
+                                                                  now=model.source.size))
         state = dict(saved.get("state") or {})
         apply(self.app, state, ctx)
         self._limits = colour_limits(dict(state.get("view") or {}))
         self._baseline, self._baseline_due = None, True
         self.notes = list(ctx.notes)
         when = str(saved.get("saved_utc", ""))[:16].replace("T", " ")
-        text = f"Restored the session saved {when} UTC"
+        text = tr("Restored the session saved {when} UTC").format(when=when)
         if ctx.notes:
-            text += "; not restored: " + "; ".join(ctx.notes)
+            text = tr("Restored the session saved {when} UTC; not restored: {notes}").format(
+                when=when, notes="; ".join(ctx.notes))
         self.app.show_status(text)
         return self.notes
 
@@ -212,7 +217,7 @@ class SessionFeature(Feature):
     def revert(self) -> None:
         """File > Revert to saved session."""
         if self.restore() is None:
-            self.app.show_status("This measurement holds no saved session")
+            self.app.show_status(tr("This measurement holds no saved session"))
 
     def forget(self) -> None:
         """File > Forget session: remove every stored state from the measurement."""
@@ -223,10 +228,11 @@ class SessionFeature(Feature):
         if result["ok"]:
             # the view on screen is the baseline: closing does not write it back
             self._baseline = self._hash()
-            self.app.show_status(f"Removed {result['removed']} saved session(s) from {name}")
+            self.app.show_status(tr("Removed {n} saved session(s) from {name}").format(
+                n=result["removed"], name=name))
         else:
-            self.app.show_status(f"Could not remove the sessions from {name}: "
-                                 f"{result.get('error')}")
+            self.app.show_status(tr("Could not remove the sessions from {name}: {error}").format(
+                name=name, error=result.get("error")))
 
     # ------------------------------------------------------------- download
     def download(self) -> None:
@@ -246,7 +252,7 @@ class SessionFeature(Feature):
                 service.download(name, handle.read(), "application/octet-stream")
             return
         source = self.container
-        service.ask_save("Save .pto with session", [("Measurement", ["*.pto"])], name,
+        service.ask_save(tr("Save .pto with session"), [(tr("Measurement"), ["*.pto"])], name,
                          lambda path: shutil.copyfile(source, path))
 
 

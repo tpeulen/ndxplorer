@@ -38,6 +38,7 @@ import typing
 
 import numpy as np
 
+from ..i18n import tr
 from ..logging_config import logging
 
 __all__ = [
@@ -420,7 +421,7 @@ class PlaybackController:
     def status_text(self) -> str:
         """One line describing what is on screen, for the panel's readout."""
         if not self.enabled:
-            return "No column to play back"
+            return tr("No column to play back")
         unit = unit_of(self.axis_name)
         unit = f" {unit}" if unit else ""
         # An index axis is reported as the integers it actually holds; its lo/hi
@@ -430,14 +431,16 @@ class PlaybackController:
         if self.mode == MODE_STACK:
             if indexed:
                 first, last = int(round(self.lo + 0.5)), int(round(self.hi - 0.5))
-                return f"All {self.n_steps} · {first}–{last}"
-            return f"All of {self.lo:.4g}–{self.hi:.4g}{unit}"
+                return tr("All {n} · {first}–{last}").format(n=self.n_steps, first=first,
+                                                             last=last)
+            return tr("All of {lo}–{hi}{unit}").format(lo=f"{self.lo:.4g}", hi=f"{self.hi:.4g}",
+                                                        unit=unit)
         lower, upper = self.bounds
         step = f"{self.position + 1}/{self.n_steps}"
         if indexed:
             first = int(round(self.lo + 0.5))
             if self.mode == MODE_INTEGRATE:
                 return f"{step} · {first}–{first + self.position}"
-            return f"{step} · index {first + self.position}"
+            return tr("{step} · index {index}").format(step=step, index=first + self.position)
         width = "" if self.mode == MODE_INTEGRATE else f" · Δ {self.window:.4g}{unit}"
         return f"{step} · {lower:.4g}–{upper:.4g}{unit}{width}"

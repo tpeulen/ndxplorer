@@ -9,7 +9,7 @@
      "type": "choice",
      "attr": "equation_choice",
      "label": "Equation:",
-     "options_source": "equation_options",
+     "options_source": "equation_choices",
      "description": "The curve to add: Custom Equation (type your own) or one of the curves in curve_equations.yaml."
     },
     {

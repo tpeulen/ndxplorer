@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
+from ..i18n import mark
+
 __all__ = ["LEFT", "RIGHT", "PLOT_CONTROLS", "PLOT", "LAYOUT_FILE", "LEFT_ORDER",
            "layout_store", "build", "add_feature_windows", "plot_boxes"]
 
@@ -35,11 +37,11 @@ Rect = Tuple[float, float, float, float]
 #: The two regions, named as ``Feature.windows()`` names them.
 LEFT = "left"
 RIGHT = "right"
-#: The core's two windows.
-PLOT_CONTROLS = "Plot controls"
-PLOT = "Plot"
+#: The core's two windows. A window's key is its English title, shown translated.
+PLOT_CONTROLS = mark("Plot controls")
+PLOT = mark("Plot")
 #: The left region's tab order at first start, as the Qt window's.
-LEFT_ORDER = [PLOT_CONTROLS, "Parameters", "Overlays"]
+LEFT_ORDER = [PLOT_CONTROLS, mark("Parameters"), mark("Overlays")]
 #: Where the layout is kept, in the settings directory.
 LAYOUT_FILE = "ndxplorer_layout.json"
 

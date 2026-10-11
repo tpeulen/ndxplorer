@@ -26,6 +26,7 @@ import logging
 import pathlib
 from typing import Any, Callable, Optional
 
+from ..i18n import mark, tr
 from .vizrank import Batch, Ranker, RunState, ScoreList, run_vizrank
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ class VizRankModel:
         :meth:`auto_select`), or ``None``.
     """
 
-    title = "Score views"
+    title = mark("Score views")
 
     def __init__(self, on_apply: Optional[Callable[[Any], None]] = None,
                  on_change: Optional[Callable[[], None]] = None,
@@ -179,21 +180,21 @@ class VizRankModel:
 
     def ranked_columns(self) -> list:
         """The ``data_table`` columns: the score (as a bar) and the names."""
-        header = ("Score",)
+        header = (mark("Score"),)
         span = (0.0, 1.0)
         if self._run is not None:
             header = tuple(self._run.ranker.header)
             span = tuple(getattr(self._run.ranker, "score_span", span))
         fmt = "%+.3f" if span[0] < 0 else "%.3f"
-        columns = [{"key": "score", "title": header[0], "display": "bar", "range": list(span),
-                    "format": fmt, "width": 90,
-                    "tooltip": "The score; the bar is its share of the range."}]
+        columns = [{"key": "score", "title": tr(header[0]), "display": "bar",
+                    "range": list(span), "format": fmt, "width": 90,
+                    "tooltip": tr("The score; the bar is its share of the range.")}]
         for index, title in enumerate(header[1:]):
             # Sized to the names (the section's fit_columns); a name still cut
             # shows whole as its cell's tooltip.
-            columns.append({"key": f"name{index}", "title": title,
-                            "tooltip": f"The {title} parameter of the view; hover a "
-                                       "shortened name for the whole of it."})
+            columns.append({"key": f"name{index}", "title": tr(title),
+                            "tooltip": tr("The {axis} parameter of the view; hover a shortened "
+                                          "name for the whole of it.").format(axis=tr(title))})
         return columns
 
     def status_text(self) -> str:
@@ -202,17 +203,18 @@ class VizRankModel:
             return self.error
         total = self._run.total if self._run is not None else 0
         if self.run_state == RunState.Initialized:
-            text = "Press Start to rank every view."
+            text = tr("Press Start to rank every view.")
         elif total:
-            text = f"{self.completed}/{total} scored ({self.progress} %)"
+            text = tr("{done}/{total} scored ({percent} %)").format(
+                done=self.completed, total=total, percent=self.progress)
         else:
-            text = f"{self.completed} scored"
+            text = tr("{done} scored").format(done=self.completed)
         if self.run_state == RunState.Paused:
-            text += " · paused"
+            text += " · " + tr("paused")
         elif self.run_state == RunState.Done:
-            text += " · finished"
+            text += " · " + tr("finished")
         if self.failed:
-            text += f" · {self.failed} failed"
+            text += " · " + tr("{n} failed").format(n=self.failed)
         return text
 
     def sample_text(self) -> str:
@@ -237,9 +239,9 @@ class VizRankModel:
     def start_label(self) -> str:
         """What *Start* means right now (for a host that shows it)."""
         if self.restart_offered():
-            return "Restart with new settings"
-        return {RunState.Paused: "Continue", RunState.Hidden: "Continue",
-                RunState.Done: "Finished"}.get(self.run_state, "Start")
+            return tr("Restart with new settings")
+        return tr({RunState.Paused: mark("Continue"), RunState.Hidden: mark("Continue"),
+                   RunState.Done: mark("Finished")}.get(self.run_state, mark("Start")))
 
     @property
     def progress(self) -> int:
@@ -326,7 +328,7 @@ class VizRankModel:
                 self.prepare_run()
             except Exception as exc:  # noqa: BLE001 - say why, do not crash the host
                 logger.debug("vizrank: prepare failed", exc_info=True)
-                self.error = f"Cannot rank: {exc}"
+                self.error = tr("Cannot rank: {error}").format(error=exc)
                 self._changed()
                 return
         if not self.run_state.can_run():
@@ -346,7 +348,7 @@ class VizRankModel:
             from chisurf.gui.task import run_in_background as runner
         run = self._run
         self._task = runner(
-            self, "Scoring views…", self._work, args=(run,), maximum=run.total or 0,
+            self, tr("Scoring views…"), self._work, args=(run,), maximum=run.total or 0,
             on_partial=self.on_partial_result, on_result=self.on_done, on_error=self.on_error,
             on_done=self._on_task_finished, owner=self, cancellable=True,
         )
@@ -355,7 +357,7 @@ class VizRankModel:
     def _work(run: _Run, task) -> Batch:
         """The worker: order the states once, then score them."""
         if run.iterator is None:
-            task.set_text("ordering parameters")
+            task.set_text(tr("ordering parameters"))
             run.total = run.ranker.state_count()
             run.iterator = run.ranker.iterate_states()
             task.set_partial(("prepared", run.generation, run.total))
@@ -447,7 +449,7 @@ class VizRankModel:
     def on_error(self, exc: BaseException) -> None:
         """The ranking itself failed (not one state): say so and stop."""
         logger.error("vizrank failed: %s", exc, exc_info=exc)
-        self.error = f"Ranking failed: {exc}"
+        self.error = tr("Ranking failed: {error}").format(error=exc)
         self.set_run_state(RunState.Paused)
 
     def _on_task_finished(self) -> None:

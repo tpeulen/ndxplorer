@@ -43,6 +43,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from ..i18n import tr
+
 __all__ = ["PopulationFit", "fit_population", "truncation_factor"]
 
 
@@ -137,7 +139,8 @@ def fit_population(
     x_lo, x_hi = sorted(float(v) for v in x_range)
     y_lo, y_hi = sorted(float(v) for v in y_range)
     if not (x_lo <= sx <= x_hi and y_lo <= sy <= y_hi):
-        fit.reason = f"({sx:.4g}, {sy:.4g}) is outside the plotted range"
+        fit.reason = tr("({x}, {y}) is outside the plotted range").format(x=f"{sx:.4g}",
+                                                                         y=f"{sy:.4g}")
         return fit
 
     # Scale both axes to the plotted range, in the space the gate measures in.
@@ -145,16 +148,16 @@ def fit_population(
     hi = np.array([_to_space(x_hi, log_x), _to_space(y_hi, log_y)], dtype=float)
     span = hi - lo
     if not (np.isfinite(span).all() and (span > 0).all()):
-        fit.reason = "the plotted range is empty (or not positive on a log axis)"
+        fit.reason = tr("the plotted range is empty (or not positive on a log axis)")
         return fit
     points = np.stack([_to_space(x, log_x), _to_space(y, log_y)], axis=1)
     points = (points[np.isfinite(points).all(axis=1)] - lo) / span
     centre = (np.array([_to_space(sx, log_x), _to_space(sy, log_y)], dtype=float) - lo) / span
     if not np.isfinite(centre).all():
-        fit.reason = "the click is not on a log axis's positive range"
+        fit.reason = tr("the click is not on a log axis's positive range")
         return fit
     if len(points) == 0:
-        fit.reason = "no points on this plane"
+        fit.reason = tr("no points on this plane")
         return fit
 
     # Bin the points over the plotted range, and smooth: a noisy grid has a
@@ -181,7 +184,7 @@ def fit_population(
         here = best
     peak = smooth[here]
     if peak <= 0.0:
-        fit.reason = "no points near the click; click where the population is"
+        fit.reason = tr("no points near the click; click where the population is")
         return fit
 
     # The population: downhill from the mode, down to `level` of the peak.
@@ -204,14 +207,14 @@ def fit_population(
     n = int(len(members))
     if n < min_points:
         fit.n_points = n
-        fit.reason = f"only {n} point(s) in the population at the click"
+        fit.reason = tr("only {n} point(s) in the population at the click").format(n=n)
         return fit
     centre = members.mean(axis=0)
     cut = math.sqrt(-2.0 * math.log(level))
     cov = np.cov(members.T) / truncation_factor(cut)
     if not np.isfinite(cov).all() or np.linalg.det(cov) <= 0:
         fit.n_points = n
-        fit.reason = "the points are collinear: no ellipse describes them"
+        fit.reason = tr("the points are collinear: no ellipse describes them")
         return fit
 
     scale = np.diag(span)

@@ -31,6 +31,7 @@ import numpy as np
 from ..core.data import DataManager, MaskState
 from ..core.data_source import DataSource
 from ..core.gates import GateList
+from ..i18n import tr
 from ..core.histograms import auto_contrast_limits, colour_limits, display_counts
 from ..logging_config import logging
 from ..utils.axis_helpers import robust_axis_range, settings_for_axis
@@ -202,10 +203,10 @@ class ExplorerModel:
             source = read(path)
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logging.error("Failed to load %s: %s", path, exc)
-            self.error = f"Failed to load data: {exc}"
+            self.error = tr("Failed to load data: {error}").format(error=exc)
             return False
         if source is None or source.empty:
-            self.error = f"No data in {path}"
+            self.error = tr("No data in {path}").format(path=path)
             return False
         self.error = ""
         self.path = str(path)

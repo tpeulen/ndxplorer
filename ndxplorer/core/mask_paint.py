@@ -27,6 +27,7 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import tr
 from ..utils import mask_helpers
 from .data_source import MaskDataSelection
 
@@ -134,11 +135,13 @@ class MaskCanvas:
         Returns ``(selection, "")`` or ``(None, why)``.
         """
         if self.mask is None:
-            return None, "Nothing is painted. Enable drawing and paint on the 2-D plot first."
+            return None, tr("Nothing is painted. Enable drawing and paint on the 2-D plot first.")
         binary = self.mask > 0 if category is None else self.mask == int(category)
         if not binary.any():
-            which = "any category" if category is None else f"category {int(category)}"
-            return None, f"The mask has no bins of {which}."
+            if category is None:
+                return None, tr("The mask has no bins of any category.")
+            return None, tr("The mask has no bins of category {category}.").format(
+                category=int(category))
         selection = MaskDataSelection(int(idx1), int(idx2), binary.copy(), self.x_edges.copy(),
                                       self.y_edges.copy(), name=name or "Bitmap")
         return selection, ""
@@ -156,7 +159,7 @@ class MaskCanvas:
     def save(self, path: str) -> None:
         """Save the labels as an integer TIFF (row 0 at the top, as a picture)."""
         if self.mask is None:
-            raise ValueError("no mask to save")
+            raise ValueError(tr("no mask to save"))
         mask_helpers.save_mask_as_bitmap(np.flipud(self.mask), path, binary=False)
 
     def load(self, path: str) -> str:
@@ -166,12 +169,13 @@ class MaskCanvas:
         from the Qt window at the same binning).
         """
         if self.mask is None:
-            return "Show a 2-D map first: the mask is loaded onto its bins."
+            return tr("Show a 2-D map first: the mask is loaded onto its bins.")
         labels, _classes = mask_helpers.load_mask_from_tiff(path)
         labels = np.flipud(np.asarray(labels))
         if labels.shape != self.mask.shape:
-            return (f"The mask is {labels.shape[1]} x {labels.shape[0]} bins; the map is "
-                    f"{self.mask.shape[1]} x {self.mask.shape[0]}.")
+            return tr("The mask is {mask_x} x {mask_y} bins; the map is {map_x} x {map_y}.").format(
+                mask_x=labels.shape[1], mask_y=labels.shape[0],
+                map_x=self.mask.shape[1], map_y=self.mask.shape[0])
         self.mask[:] = labels.astype(self.mask.dtype)
         self.revision += 1
         return ""

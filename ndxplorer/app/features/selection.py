@@ -38,6 +38,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
+from ...i18n import mark, tr
 from . import Feature
 
 __all__ = ["SelectionFeature", "DrawMaskModel", "create", "ellipse_outline", "in_browser"]
@@ -48,10 +49,10 @@ SPECS = pathlib.Path(__file__).with_name("selection")
 MASK_COLOURS = [(255, 64, 64, 140), (64, 160, 255, 140), (64, 200, 64, 140),
                 (255, 200, 0, 140), (200, 64, 255, 140), (0, 220, 220, 140)]
 
-TABLE_MENU = ("Select All", "Clear", "Delete")
-CANVAS_MENU = ("Copy 2D Histogram (CSV)", "Copy 1D Histograms (CSV)", "Send to Napari",
-               "Fit gate to the population here")
-SEND = "Send selection to"
+TABLE_MENU = (mark("Select All"), mark("Clear"), mark("Delete"))
+CANVAS_MENU = (mark("Copy 2D Histogram (CSV)"), mark("Copy 1D Histograms (CSV)"),
+               mark("Send to Napari"), mark("Fit gate to the population here"))
+SEND = mark("Send selection to")
 
 
 #: Outline of a 2-D Gaussian gate on the map.
@@ -196,7 +197,7 @@ class SelectionFeature(Feature):
             # New bins or axes: the mask is gone, and drawing stops (as in Qt).
             self.mask_model.drawing = False
             self._stroke_last = None
-            self.status("The map changed: the painted mask was cleared and drawing stopped.")
+            self.status(tr("The map changed: the painted mask was cleared and drawing stopped."))
             return False
         self._fitted_once = True
         return True
@@ -280,7 +281,7 @@ class SelectionFeature(Feature):
         model = self.app.model
         category = max(1, int(self.mask_model.category))
         count = model.gates.count("Mask") + 1
-        name = f"Bitmap {count} ({model.x.name}, {model.y.name})"
+        name = tr("Bitmap {n} ({x}, {y})").format(n=count, x=model.x.name, y=model.y.name)
         selection, reason = self.canvas.selection(model.index_of(model.x.name),
                                                   model.index_of(model.y.name), category, name)
         if selection is None:
@@ -288,16 +289,17 @@ class SelectionFeature(Feature):
             return
         model.gates.add_selection(selection)
         model.invalidate()
-        self.status(f"Mask gate added: category {category}, "
-                    f"{int(selection.mask.sum())} bins")
+        self.status(tr("Mask gate added: category {category}, {bins} bins").format(
+            category=category, bins=int(selection.mask.sum())))
 
     # --------------------------------------------------- Load / Save Mask
     def open_mask_dialog(self, mode: str) -> None:
         from emtk.file_dialog import FileDialog
 
         start = self.app.model.working_path or str(pathlib.Path.home())
-        title = "Load Mask" if mode == "open" else "Save Mask"
-        self.dialog = (FileDialog(title, mode=mode, filters=[("TIFF files", ["*.tif", "*.tiff"])],
+        title = tr("Load Mask") if mode == "open" else tr("Save Mask")
+        self.dialog = (FileDialog(title, mode=mode,
+                                  filters=[(tr("TIFF files"), ["*.tif", "*.tiff"])],
                                   directory=start, filename="mask.tif"), mode)
 
     def _draw_dialog(self) -> bool:
@@ -322,12 +324,12 @@ class SelectionFeature(Feature):
                 if mode == "open":
                     self._fit_canvas()
                     reason = self.canvas.load(path)
-                    self.status(reason or f"Mask loaded from {path}")
+                    self.status(reason or tr("Mask loaded from {path}").format(path=path))
                 else:
                     self.canvas.save(path)
-                    self.status(f"Mask saved to {path}")
+                    self.status(tr("Mask saved to {path}").format(path=path))
             except Exception as exc:  # noqa: BLE001 - reported, not raised
-                self.status(f"Mask file failed: {exc}")
+                self.status(tr("Mask file failed: {error}").format(error=exc))
         return self.dialog is not None
 
     # --------------------------------------------------------- the menus
@@ -339,7 +341,7 @@ class SelectionFeature(Feature):
         items = [MenuItem(t.title, enabled=reason is None) for t in targets]
         for item, target in zip(items, targets):
             item.action = ("send", target.key)
-        label = SEND if reason is None else f"{SEND} — {reason.split('.')[0]}"
+        label = tr(SEND) if reason is None else f"{tr(SEND)} — {reason.split('.')[0]}"
         menu = Menu(label, items, enabled=reason is None)
         menu.reason = reason
         return menu
@@ -347,8 +349,8 @@ class SelectionFeature(Feature):
     def send_state(self):
         """``(reason or None, targets)`` for the send submenu."""
         if in_browser():
-            return ("Not in the browser. ChiSurf's RPC needs a native socket; run ndX on "
-                    "the desktop to send a selection"), []
+            return tr("Not in the browser. ChiSurf's RPC needs a native socket; run ndX on "
+                      "the desktop to send a selection"), []
         from ...analysis.burst_bridge import BurstAnalysisBridge, unavailable_reason
 
         model = self.app.model
@@ -362,19 +364,19 @@ class SelectionFeature(Feature):
     def napari_reason(self) -> Optional[str]:
         """Why Send to Napari cannot run here, or ``None``."""
         if in_browser():
-            return "not in the browser"
+            return tr("not in the browser")
         import importlib.util
 
         if importlib.util.find_spec("napari") is None:
-            return "napari is not installed"
+            return tr("napari is not installed")
         if self.app.model.histograms is None:
-            return "no histogram"
+            return tr("no histogram")
         return None
 
     def _open(self, kind: str, entries, x: float, y: float) -> None:
         open_menu = getattr(self.app, "open_menu", None)
         if not callable(open_menu):
-            self.status("This window cannot show context menus yet.")
+            self.status(tr("This window cannot show context menus yet."))
             return
         self.menu_open = kind
         open_menu(entries, x, y, self._chosen)
@@ -383,9 +385,11 @@ class SelectionFeature(Feature):
         from emtk.widgets.menus import MenuItem
 
         has_rows = len(self.app.model.gates) > 0
-        entries = [MenuItem(label, enabled=has_rows) for label in TABLE_MENU]
-        for item in entries:
-            item.action = ("table", item.label)
+        entries = []
+        for label in TABLE_MENU:
+            item = MenuItem(tr(label), enabled=has_rows)
+            item.action = ("table", label)
+            entries.append(item)
         self._open("table", entries + [None, self._send_menu()], x, y)
 
     def open_canvas_menu(self, x: float, y: float) -> None:
@@ -394,11 +398,11 @@ class SelectionFeature(Feature):
         has_map = self.app.model.histograms is not None
         entries = []
         for label in CANVAS_MENU:
-            enabled, text = has_map, label
+            enabled, text = has_map, tr(label)
             if label == "Send to Napari":
                 reason = self.napari_reason()
                 enabled = reason is None
-                text = label if reason is None else f"{label} — {reason}"
+                text = tr(label) if reason is None else f"{tr(label)} — {reason}"
             item = MenuItem(text, enabled=enabled)
             item.action = ("canvas", label)
             entries.append(item)
@@ -447,7 +451,7 @@ class SelectionFeature(Feature):
         if not indices and model.selected_gate is not None:
             indices = [model.selected_gate]
         if not indices:
-            self.status("No row selected.")
+            self.status(tr("No row selected."))
             return
         # The table's rows are keyed by position, so its selection is.
         rows = [int(control.value(i, "row")) if control is not None else i for i in indices]
@@ -467,8 +471,8 @@ class SelectionFeature(Feature):
         hist = self.app.model.histograms
         text = histogram_2d_text(hist.H, hist.x_edges, hist.y_edges)
         ok = clipboard.copy(text)
-        self.status("2-D histogram copied to the clipboard (tab separated)." if ok else
-                    "No clipboard to copy to here.")
+        self.status(tr("2-D histogram copied to the clipboard (tab separated).") if ok else
+                    tr("No clipboard to copy to here."))
 
     def copy_1d(self) -> None:
         from emtk import clipboard
@@ -477,8 +481,8 @@ class SelectionFeature(Feature):
 
         hist = self.app.model.histograms
         ok = clipboard.copy(histograms_1d_text(hist.x, hist.y))
-        self.status("1-D histograms copied to the clipboard (tab separated)." if ok else
-                    "No clipboard to copy to here.")
+        self.status(tr("1-D histograms copied to the clipboard (tab separated).") if ok else
+                    tr("No clipboard to copy to here."))
 
     def send_to_napari(self) -> None:
         """Open the 2-D histogram in napari, in its own process.
@@ -489,7 +493,7 @@ class SelectionFeature(Feature):
         """
         reason = self.napari_reason()
         if reason:
-            self.status(f"Send to Napari: {reason}.")
+            self.status(tr("Send to Napari: {reason}.").format(reason=reason))
             return
         model = self.app.model
         handle, path = tempfile.mkstemp(suffix=".npy", prefix="ndx-hist-")
@@ -500,7 +504,7 @@ class SelectionFeature(Feature):
                 "napari.view_image(numpy.load(sys.argv[1]), name=sys.argv[2], "
                 "colormap='viridis'); napari.run()")
         subprocess.Popen([sys.executable, "-c", code, path, name])  # noqa: S603
-        self.status(f"Opening {name} in napari...")
+        self.status(tr("Opening {name} in napari...").format(name=name))
 
     def pick_population_at(self, x: float, y: float, name: str = "") -> str:
         """Fit a 2-D Gaussian gate to the population at ``(x, y)`` (data units).
@@ -513,7 +517,7 @@ class SelectionFeature(Feature):
         model = self.app.model
         hist = model.histograms
         if hist is None:
-            self.status("No gate: no data on the plot.")
+            self.status(tr("No gate: no data on the plot."))
             return "no data"
         ix, iy = model.index_of(model.x.name), model.index_of(model.y.name)
         fit = fit_population(model._visible_values(ix), model._visible_values(iy), (x, y),
@@ -521,15 +525,15 @@ class SelectionFeature(Feature):
                              (hist.y_edges[0], hist.y_edges[-1]),
                              log_x=model.x.log, log_y=model.y.log)
         if not fit.success:
-            self.status(f"No gate: {fit.reason}")
+            self.status(tr("No gate: {reason}").format(reason=fit.reason))
             return fit.reason
         count = model.gates.count("G2D") + 1
         model.gates.add_gaussian(ix, iy, fit.mu, fit.cov, sigma=2.0,
-                                 name=name or f"Population {count}",
+                                 name=name or tr("Population {n}").format(n=count),
                                  log_x=fit.log_x, log_y=fit.log_y)
         model.invalidate()
-        self.status(f"Gate fitted to the population at ({x:.4g}, {y:.4g}): "
-                    f"{fit.n_points} points")
+        self.status(tr("Gate fitted to the population at ({x}, {y}): {n} points").format(
+            x=f"{x:.4g}", y=f"{y:.4g}", n=fit.n_points))
         return ""
 
     def send(self, target: str) -> None:
@@ -549,7 +553,8 @@ class SelectionFeature(Feature):
         try:
             reply = bridge.send(target, model.gates.selections())
         except (BurstBridgeError, Exception) as exc:  # noqa: BLE001 - reported
-            self.status(f"Could not send to {target}: {exc}")
+            self.status(tr("Could not send to {target}: {error}").format(target=target,
+                                                                        error=exc))
             return
         self.status(outcome_message(reply, target))
 

@@ -49,6 +49,7 @@ from ..core.gaussian_parameters import (
 )
 from ..core.overlay_curves import population_colour, population_labels, population_sources
 from ..core.parameters import is_held
+from ..i18n import tr
 
 __all__ = [
     "labels_of",
@@ -132,7 +133,8 @@ def membership(column: Callable[[str], Optional[np.ndarray]], n: int, axis,
     if cols is None:
         codes = column(axis.column)
         if codes is None:
-            raise ValueError(f"the data has no population column '{axis.column}'")
+            raise ValueError(tr("the data has no population column '{column}'").format(
+                column=axis.column))
         codes = np.asarray(codes, float)
         cols = [(codes == axis.code_of(label, i)).astype(float) for i, label in enumerate(labels)]
     member = np.column_stack(cols + [np.zeros(n)]) if cols else np.zeros((n, 1))
@@ -165,21 +167,24 @@ def fit_population_mixture(group, x, y, column: Callable[[str], Optional[np.ndar
 
     labels = labels_of(group)
     if not len(group):
-        raise gm.GaussianFitError("No Gaussians",
-                                  "Add one or more Gaussians (click on the histogram) before fitting.")
+        raise gm.GaussianFitError(tr("No Gaussians"),
+                                  tr("Add one or more Gaussians (click on the histogram) before "
+                                     "fitting."))
     x, y = np.asarray(x, float).ravel(), np.asarray(y, float).ravel()
     try:
         member = membership(column, x.size, _axis(group), labels)
     except ValueError as exc:
-        raise gm.GaussianFitError("No populations", f"{exc}: the population-wise Gaussians "
-                                  "cannot tell the bursts apart.") from exc
+        raise gm.GaussianFitError(tr("No populations"), tr(
+            "{reason}: the population-wise Gaussians cannot tell the bursts apart.").format(
+                reason=exc)) from exc
     (x0, x1), (y0, y1) = sorted(map(float, x_range)), sorted(map(float, y_range))
     keep = np.isfinite(x) & np.isfinite(y) & (x >= x0) & (x <= x1) & (y >= y0) & (y <= y1)
     keep &= (x > 0) if log_x else True
     keep &= (y > 0) if log_y else True
     X, member = np.column_stack([x, y])[keep], member[keep]
     if not len(X):
-        raise gm.GaussianFitError("No data", "No data within the visible histogram range to fit.")
+        raise gm.GaussianFitError(tr("No data"),
+                                  tr("No data within the visible histogram range to fit."))
     X = np.column_stack([np.log(X[:, 0]) if log_x else X[:, 0],
                          np.log(X[:, 1]) if log_y else X[:, 1]])
     cfg = dict(gm.GMM_DEFAULTS)

@@ -2,6 +2,7 @@ from __future__ import print_function
 from datetime import datetime
 from typing import Callable, List, Dict, Optional, Set
 from pathlib import Path
+from ..i18n import tr
 from ..logging_config import logging
 import numpy as np
 import json
@@ -153,7 +154,7 @@ def save_clustering_data(
     logging.info(f"Saving clustering data to {clustering_folder}")
 
     try:
-        report(1, "Saving clustering parameters...")
+        report(1, tr("Saving clustering parameters..."))
         clustering_info = {
             "method": cluster_method,
             "columns": sorted(cluster_columns),
@@ -165,7 +166,7 @@ def save_clustering_data(
             json.dump(clustering_info, f, indent=4)
         logging.info(f"Saved clustering parameters to {params_file}")
 
-        report(2, "Saving cluster labels...")
+        report(2, tr("Saving cluster labels..."))
         if cluster_labels is not None:
             table = data_source.copy()
             labels = np.asarray(cluster_labels)
@@ -196,7 +197,7 @@ def save_clustering_data(
         else:
             logging.warning("No cluster labels to save")
 
-        report(3, "Clustering data saved successfully!")
+        report(3, tr("Clustering data saved successfully!"))
         logging.info("Clustering data saved successfully")
         return clustering_folder
     except Exception as e:

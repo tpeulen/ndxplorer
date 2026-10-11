@@ -48,6 +48,7 @@ from .curve_fit import (
     ridge_from_values,
 )
 from .curve_fit import _oriented as _oriented_histogram
+from ..i18n import mark, tr
 
 __all__ = [
     "TARGETS",
@@ -71,17 +72,17 @@ __all__ = [
 
 #: What a curve can be fitted to, in the order the dialog offers them.
 TARGETS: Tuple[Tuple[str, str], ...] = (
-    ("2d", "Displayed data (y vs x)"),
-    ("x", "X marginal histogram"),
-    ("y", "Y marginal histogram"),
+    ("2d", mark("Displayed data (y vs x)")),
+    ("x", mark("X marginal histogram")),
+    ("y", mark("Y marginal histogram")),
 )
 
 #: How a column of the displayed distribution is reduced to the point the curve
 #: is fitted through.
 REDUCTIONS: Tuple[Tuple[str, str], ...] = (
-    ("cloud", "the cloud (every populated bin)"),
-    ("population", "the population of each column"),
-    ("mean", "the mean of each column"),
+    ("cloud", mark("the cloud (every populated bin)")),
+    ("population", mark("the population of each column")),
+    ("mean", mark("the mean of each column")),
 )
 
 
@@ -193,8 +194,8 @@ class FitDataReader:
         if members is None:
             codes = column_of(axis.column)
             if codes is None:
-                raise CurveFitError(f"the data has no population column '{axis.column}' "
-                                    "to fit the populations by")
+                raise CurveFitError(tr("the data has no population column '{column}' to fit the "
+                                       "populations by").format(column=axis.column))
             members = [(codes == axis.code_of(label, i)).astype(float)
                        for i, label in enumerate(labels)]
         return [(d1[good], d2[good], base * m) for m in members]
@@ -354,7 +355,7 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
     equation = curve.get_equation()
     parametric = bool(getattr(curve, "is_function", False))
     if not parametric and (not isinstance(equation, str) or not equation.strip()):
-        raise CurveFitError("curve has no equation to fit")
+        raise CurveFitError(tr("curve has no equation to fit"))
     from ..core.overlay_curves import population_labels
 
     group = getattr(curve, "parameter_group", None)
@@ -379,7 +380,7 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
     params = None
     if parametric:
         if group is None:
-            raise CurveFitError("the curve has no parameters to fit")
+            raise CurveFitError(tr("the curve has no parameters to fit"))
         params = list(group.parameters_all)
 
     if target == "2d":
@@ -388,14 +389,15 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
         except CurveFitError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise CurveFitError(f"no 2-D histogram displayed ({exc})") from exc
+            raise CurveFitError(tr("no 2-D histogram displayed ({error})").format(
+                error=exc)) from exc
         keep = populated_columns(counts, x_edges, y_edges, min_counts=min_counts)
         if reduction == "cloud":
             cf = build_cloud_fit(host, curve, x_edges, y_edges, params,
                                  counts=_oriented_histogram(counts, x_edges, y_edges)[0])
         else:
             if int(keep.sum()) < 3:
-                raise CurveFitError("too few populated columns to fit (need 3)")
+                raise CurveFitError(tr("too few populated columns to fit (need 3)"))
             x, y, ey = ridge_from_histogram(counts, x_edges, y_edges, keep=keep,
                                             reduction=reduction)
             if parametric:
@@ -409,7 +411,8 @@ def build_curve_fit_for(host, curve, target="2d", reduction="cloud", min_counts=
         try:
             centers, counts, edges = marginal_points(*host.marginal(target))
         except Exception as exc:  # noqa: BLE001
-            raise CurveFitError(f"no {target} histogram displayed ({exc})") from exc
+            raise CurveFitError(tr("no {target} histogram displayed ({error})").format(
+                target=target, error=exc)) from exc
         if parametric:
             cf = build_function_fit(curve.function, params, centers, counts)
         else:
@@ -435,11 +438,11 @@ def build_cloud_fit(host, curve, x_edges, y_edges, params=None, counts=None):
     """
     group = getattr(curve, "parameter_group", None)
     if group is None:
-        raise CurveFitError("the curve has no parameters to fit")
+        raise CurveFitError(tr("the curve has no parameters to fit"))
     parameters = list(params) if params is not None else list(group.parameters_all)
     px, py, weights = cloud_for_fit(host, x_edges, y_edges, counts=counts)
     if float(np.count_nonzero(weights)) < 3:
-        raise CurveFitError("too little displayed data to fit")
+        raise CurveFitError(tr("too little displayed data to fit"))
     x_edges = np.asarray(x_edges, dtype=float)
     y_edges = np.asarray(y_edges, dtype=float)
     x_bin = float(np.median(np.diff(x_edges)))
@@ -501,6 +504,6 @@ def result_text(result) -> Tuple[str, bool]:
         fitted.update(result.data_params)
         per = dict(getattr(result, "population_chi2r", None) or {})
         pops = ("   ·   " + ", ".join(f"χ²ᵣ[{k}]={v:.4g}" for k, v in per.items())) if per else ""
-        return (f"reduced χ² = {result.chi2r:.4g}{pops}   ·   "
+        return (tr("reduced χ² = {chi2r}").format(chi2r=f"{result.chi2r:.4g}") + pops + "   ·   "
                 + ", ".join(f"{k}={v:.4g}" for k, v in fitted.items())), False
-    return (result.message or "fit failed"), True
+    return (result.message or tr("fit failed")), True

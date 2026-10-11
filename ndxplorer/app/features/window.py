@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
+from ...i18n import tr
 from . import Feature
 
 __all__ = ["WindowFeature", "create", "histograms_text"]
@@ -54,8 +55,8 @@ class WindowFeature(Feature):
             return
         data = histograms_text(hist).encode("utf-8")
         self.app.io_service.save_bytes("histograms.txt", data, "text/tab-separated-values",
-                                       title="Save histograms",
-                                       filters="Text files (*.txt *.tsv)")
+                                       title=tr("Save histograms"),
+                                       filters=tr("Text files (*.txt *.tsv)"))
 
     def print_window(self) -> None:
         self.app.run_action("screenshot")

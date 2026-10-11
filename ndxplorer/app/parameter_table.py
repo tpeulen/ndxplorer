@@ -83,6 +83,7 @@ _NAMES = ("source", "columns_source", "edited_call", "editable_call", "context_c
 #: The shared table's option vocabulary remains in its toolkit reader.
 from emtk.view_form import COMMON_KEYS, TABLE_KEYS
 from ..core.overlay_curves import KINDS
+from ..i18n import tr
 
 PARAMETER_TABLE_KEYS = COMMON_KEYS | TABLE_KEYS | frozenset({
     "table", "hidden_when", "visible_when", "title", *KINDS,
@@ -202,16 +203,20 @@ def vector_records(parameter: Any, name: str) -> List[dict]:
         "value": summary_text([float(e.value) for e in elements]),
         "fixed": all(bool(e.fixed) for e in elements),
         "lo": "", "hi": "", "link": "", "parent": "",
-        "note": (f"{parameter.name}: one value per population, picked per burst by the "
-                 f"column '{column}'" + (" or mixed by the assignment probabilities"
-                                         if state.get("probabilities") else "")
-                 + ". Right-click for the vector's menu."),
+        "note": (tr("{name}: one value per population, picked per burst by the column "
+                    "'{column}' or mixed by the assignment probabilities. Right-click for "
+                    "the vector's menu.") if state.get("probabilities") else
+                 tr("{name}: one value per population, picked per burst by the column "
+                    "'{column}'. Right-click for the vector's menu.")).format(
+                     name=parameter.name, column=column),
     }, parameter_record(parameter, name="(global)", parent=key,
-                        note=f"{parameter.name}: the value of a burst in no population.")]
+                        note=tr("{name}: the value of a burst in no population.").format(
+                            name=parameter.name))]
     for element in elements:
         error = element.uncertainty()
-        note = f"{element.name}: population {element.label}" + (
-            f", {float(element.value):.4g} ± {float(error):.2g}" if error is not None else "")
+        note = tr("{name}: population {label}").format(name=element.name, label=element.label)
+        if error is not None:
+            note += f", {float(element.value):.4g} ± {float(error):.2g}"
         rows.append(parameter_record(element, name=element.label, parent=key, note=note))
     return rows
 
@@ -395,25 +400,25 @@ class ParameterTable:
         """Copy, Paste, Link…, Unlink; a vector's own menu; *Make vector…* on a scalar."""
         vector = self.vector(record)
         if vector is not None:
-            entries = [("Copy values", lambda: copy_text(
+            entries = [(tr("Copy values"), lambda: copy_text(
                            "\t".join(repr(float(e.value)) for e in vector.elements))),
-                       ("Paste values", lambda: self.paste_vector(vector))]
+                       (tr("Paste values"), lambda: self.paste_vector(vector))]
             if self._vector_dialog() is not None:
-                entries.append(("Populations…", lambda: self._vector_dialog()(vector, self)))
-            entries.append(("Make scalar", lambda: self.make_scalar(vector)))
+                entries.append((tr("Populations…"), lambda: self._vector_dialog()(vector, self)))
+            entries.append((tr("Make scalar"), lambda: self.make_scalar(vector)))
             return entries
         parameter = self.parameter(record)
         if parameter is None:
             return []
-        entries = [("Copy", lambda: copy_text(repr(float(parameter.value)))),
-                   ("Paste", lambda: self.paste(parameter))]
+        entries = [(tr("Copy"), lambda: copy_text(repr(float(parameter.value)))),
+                   (tr("Paste"), lambda: self.paste(parameter))]
         if self._linker() is not None:
-            entries.append(("Link…", lambda: self._linker()(parameter, self)))
+            entries.append((tr("Link…"), lambda: self._linker()(parameter, self)))
         if getattr(parameter, "is_linked", False):
-            entries.append(("Unlink", lambda: self.unlink(parameter)))
+            entries.append((tr("Unlink"), lambda: self.unlink(parameter)))
         if not record.get("parent") and hasattr(parameter, "set_vector") \
                 and self._vector_dialog() is not None:
-            entries.append(("Make vector…", lambda: self._vector_dialog()(parameter, self)))
+            entries.append((tr("Make vector…"), lambda: self._vector_dialog()(parameter, self)))
         return entries
 
     def menu(self, record: Any, key: str, where) -> None:
@@ -463,9 +468,10 @@ class ParameterTable:
         elements = parameter.elements
         if len(numbers) != len(elements) or any(n is None or not math.isfinite(n)
                                                 for n in numbers):
-            self.app.message = ("Paste values",
-                                f"{parameter.name} has {len(elements)} populations; the "
-                                f"clipboard holds {len(numbers)} number(s).")
+            self.app.message = (tr("Paste values"),
+                                tr("{name} has {n} populations; the clipboard holds "
+                                   "{count} number(s).").format(
+                                    name=parameter.name, n=len(elements), count=len(numbers)))
             return
         for element, number in zip(elements, numbers):
             if not element.is_linked:

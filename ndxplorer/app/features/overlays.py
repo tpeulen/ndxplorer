@@ -45,6 +45,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ...i18n import mark, tr
 from ..parameter_table import ParameterTable, clipboard_text, copy_text
 from . import Feature
 
@@ -128,8 +129,8 @@ class ConstantsPanel:
         self.table = ParameterTable(
             feature.app, lambda: self.group.parameters_all, changed=self.changed,
             label=lambda p: p.name,
-            name_tooltip="A vector (▸ gamma [2]) holds one value per population; "
-                         "open it for the elements.")
+            name_tooltip=tr("A vector (▸ gamma [2]) holds one value per population; "
+                            "open it for the elements."))
 
     # -- the group ----------------------------------------------------------
     def build(self) -> None:
@@ -258,7 +259,7 @@ class ConstantsPanel:
                 recompute_for_constants(model.source, self.mapping, model.manager.equations,
                                         changed)
             except Exception as exc:  # noqa: BLE001 - shown, the window goes on
-                self.feature.app.show_status(f"Recompute failed: {exc}") \
+                self.feature.app.show_status(tr("Recompute failed: {error}").format(error=exc)) \
                     if hasattr(self.feature.app, "show_status") else None
                 logger.warning("Recompute after a constant changed failed: %s", exc)
             model.invalidate()
@@ -279,9 +280,11 @@ class ConstantsPanel:
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=4)
         except OSError as exc:
-            self.feature.app.message = ("Save parameters", f"Could not write {path}:\n{exc}")
+            self.feature.app.message = (
+                tr("Save parameters"),
+                tr("Could not write {path}:\n{error}").format(path=path, error=exc))
             return
-        self.feature.status(f"Parameters saved to {path}")
+        self.feature.status(tr("Parameters saved to {path}").format(path=path))
 
     def add_parameter(self) -> None:
         self.feature.open_window(AddParameterDialog(self.feature, self))
@@ -293,14 +296,14 @@ class ConstantsPanel:
 
         name = str(name).strip()
         if not name:
-            return "A parameter needs a name."
+            return tr("A parameter needs a name.")
         if name in dict(self.mapping):
-            return f"A parameter named '{name}' already exists."
+            return tr("A parameter named '{name}' already exists.").format(name=name)
         if populations is not None:
             if not populations:
-                return "A vector needs its populations: how many, or their names."
+                return tr("A vector needs its populations: how many, or their names.")
             if split_element(name) is not None:
-                return "A vector's name cannot end in [...]."
+                return tr("A vector's name cannot end in [...].")
             self.set_vector(name, [float(value)] * len(populations), list(populations),
                             default=float(value), column=column)
             return None
@@ -366,7 +369,7 @@ class AddParameterDialog(Dialog):
     size = (380.0, 200.0)
 
     def __init__(self, feature, panel: ConstantsPanel) -> None:
-        super().__init__(feature, "Add parameter")
+        super().__init__(feature, tr("Add parameter"))
         self.panel = panel
         self.step = "name"
         self.name = ""
@@ -384,7 +387,8 @@ class AddParameterDialog(Dialog):
         return self.panel.table.column_options()
 
     def spec(self) -> dict:
-        return _fill(load_spec(self.spec_name), value_label=f"Value for '{self.name}':")
+        return _fill(load_spec(self.spec_name),
+                     value_label=tr("Value for '{name}':").format(name=self.name))
 
     def ok(self) -> None:
         if self.step == "name":
@@ -393,8 +397,9 @@ class AddParameterDialog(Dialog):
                 self.close()          # Qt: an empty name is a cancel
                 return
             if name in dict(self.panel.mapping):
-                self.feature.app.message = ("Add parameter",
-                                            f"A parameter named '{name}' already exists.")
+                self.feature.app.message = (
+                    tr("Add parameter"),
+                    tr("A parameter named '{name}' already exists.").format(name=name))
                 self.close()
                 return
             self.name = name
@@ -405,7 +410,7 @@ class AddParameterDialog(Dialog):
         populations = parse_populations(self.populations) if self.kind == "Vector" else None
         problem = self.panel.add(self.name, float(self.value), populations, self.column)
         if problem:
-            self.feature.app.message = ("Add parameter", problem)
+            self.feature.app.message = (tr("Add parameter"), problem)
         self.close()
 
 
@@ -425,15 +430,16 @@ class VectorDialog(Dialog):
         self.table = table
         self.name = parameter.name
         self.is_vector = bool(parameter.is_vector)
-        super().__init__(feature, f"Populations of {self.name}" if self.is_vector
-                         else f"Make {self.name} a vector")
+        super().__init__(feature, tr("Populations of {name}").format(name=self.name)
+                         if self.is_vector
+                         else tr("Make {name} a vector").format(name=self.name))
         self.populations = ", ".join(parameter.populations) if self.is_vector else "2"
         self.column = str(parameter.vector_state().get("column") or DEFAULT_COLUMN)
 
     @property
     def hint(self) -> str:
-        return (f"One value of {self.name} per population; a burst takes its population's "
-                "value, and a burst in no population the global one.")
+        return tr("One value of {name} per population; a burst takes its population's "
+                  "value, and a burst in no population the global one.").format(name=self.name)
 
     def column_options(self) -> List[str]:
         options = self.table.column_options()
@@ -444,8 +450,8 @@ class VectorDialog(Dialog):
 
         labels = parse_populations(self.populations)
         if not labels:
-            self.feature.app.message = ("Populations", "Give how many populations, or their "
-                                                       "names (HF, LF).")
+            self.feature.app.message = (tr("Populations"),
+                                        tr("Give how many populations, or their names (HF, LF)."))
             return
         self.table.set_populations(self.parameter, labels, self.column)
         self.close()
@@ -479,7 +485,7 @@ class LinkDialog(Dialog):
     size = (520.0, 400.0)
 
     def __init__(self, feature, parameter, table: ParameterTable) -> None:
-        super().__init__(feature, f"Link {parameter.name}")
+        super().__init__(feature, tr("Link {name}").format(name=parameter.name))
         self.parameter = parameter
         self.table = table
         self.picked: Optional[dict] = None
@@ -497,11 +503,13 @@ class LinkDialog(Dialog):
         from ...core import chisurf_binding
 
         if not self._targets:
-            return "No other parameters are open to link to (a curve, the Gaussians or a fit)."
-        fits = "" if chisurf_binding.available() else \
-            " ChiSurf's fits are not listed: ChiSurf is not available here."
-        return (f"{self.parameter.name} will follow the parameter you pick "
-                "(double-click, or select and Link)." + fits)
+            return tr("No other parameters are open to link to (a curve, the Gaussians or a "
+                      "fit).")
+        hint = tr("{name} will follow the parameter you pick (double-click, or select and "
+                  "Link).").format(name=self.parameter.name)
+        if not chisurf_binding.available():
+            hint += " " + tr("ChiSurf's fits are not listed: ChiSurf is not available here.")
+        return hint
 
     def targets(self) -> List[dict]:
         return self._targets
@@ -519,7 +527,7 @@ class LinkDialog(Dialog):
         try:
             self.parameter.link = self.picked["_p"]
         except Exception as exc:  # noqa: BLE001 - a cycle, a type the link refuses
-            self.feature.app.message = ("Link", f"Could not link: {exc}")
+            self.feature.app.message = (tr("Link"), tr("Could not link: {error}").format(error=exc))
             return
         self.table.changed()
         self.close()
@@ -566,7 +574,7 @@ class CurvePanel:
         try:
             return self.curve.filled
         except Exception as exc:  # noqa: BLE001
-            return f"Error: {exc}"
+            return tr("Error: {error}").format(error=exc)
 
     @property
     def color(self) -> str:
@@ -652,8 +660,10 @@ class CurvePanel:
         base = load_spec("curve")
         from ...core.overlay_curves import KINDS
 
-        filled = {"equation": "Filled: y =", "function": "Filled Function:", "data": "Data:"}
-        spec = _fill(base, title=curve.title, filled_label=filled.get(curve.kind, "Filled:"))
+        filled = {"equation": tr("Filled: y ="), "function": tr("Filled Function:"),
+                  "data": tr("Data:")}
+        spec = _fill(base, title=curve.title,
+                     filled_label=filled.get(curve.kind) or tr("Filled:"))
         # A section tagged with kinds is for those kinds only (a parameter
         # table's tags end up in its options when the table is expanded).
         def tags(s):
@@ -689,6 +699,12 @@ class OverlaysPanel:
         from ...core.overlay_curves import CUSTOM_EQUATION
 
         return [CUSTOM_EQUATION] + [str(e["name"]) for e in self.predefined]
+
+    def equation_choices(self) -> List[tuple]:
+        """:meth:`equation_options` as ``(value, label)`` for the combo: the
+        predefined curves' names are data, "Custom Equation" is shown translated."""
+        return [(name, tr(name) if i == 0 else name)
+                for i, name in enumerate(self.equation_options())]
 
     @property
     def curves(self) -> list:
@@ -786,12 +802,13 @@ class OverlaysPanel:
         model = self.feature.app.model
         hist = model.histograms
         if hist is None:
-            self.feature.app.message = ("Save Overlays",
-                                        "No overlay data available yet. Create/update overlays first.")
+            self.feature.app.message = (
+                tr("Save Overlays"),
+                tr("No overlay data available yet. Create/update overlays first."))
             return
         visible = [c for c in self.curves if self.is_drawn(c)]
         if not visible:
-            self.feature.app.message = ("Save Overlays", "No visible curves to save.")
+            self.feature.app.message = (tr("Save Overlays"), tr("No visible curves to save."))
             return
         data = [(name, x, y) for c in visible
                 for name, _colour, x, y in c.drawn_curves(self.num_points, hist.x_edges,
@@ -802,11 +819,12 @@ class OverlaysPanel:
             try:
                 write_curves_csv(path, data)
             except OSError as exc:
-                self.feature.app.message = ("Save Overlays", f"Failed to save CSV:\n{exc}")
+                self.feature.app.message = (tr("Save Overlays"),
+                                            tr("Failed to save CSV:\n{error}").format(error=exc))
                 return
-            self.feature.status(f"Saved overlay curves to {path}")
+            self.feature.status(tr("Saved overlay curves to {path}").format(path=path))
 
-        self.feature.ask_save("Save Overlay Curves", [("CSV Files", ["*.csv"])],
+        self.feature.ask_save(tr("Save Overlay Curves"), [(tr("CSV Files"), ["*.csv"])],
                               "overlays.csv", write)
 
     def _draw_curves(self, _section, _model, _state, _width) -> None:
@@ -829,7 +847,7 @@ class CurveFitDialog(Dialog):
     def __init__(self, feature, curve) -> None:
         from ...analysis.curve_fit_setup import REDUCTIONS, TARGETS
 
-        super().__init__(feature, "Fit curve to data")
+        super().__init__(feature, tr("Fit curve to data"))
         self.curve = curve
         self._target = TARGETS[0][0]
         self._reduction = REDUCTIONS[0][0]
@@ -855,12 +873,12 @@ class CurveFitDialog(Dialog):
     def target_options(self):
         from ...analysis.curve_fit_setup import TARGETS
 
-        return [list(t) for t in TARGETS]
+        return [[value, tr(label)] for value, label in TARGETS]
 
     def reduction_options(self):
         from ...analysis.curve_fit_setup import REDUCTIONS
 
-        return [list(r) for r in REDUCTIONS]
+        return [[value, tr(label)] for value, label in REDUCTIONS]
 
     @property
     def target(self) -> str:
@@ -901,7 +919,7 @@ class CurveFitDialog(Dialog):
         except CurveFitError as exc:
             self.cf, self.status_text_value = None, str(exc)
         except Exception as exc:  # noqa: BLE001
-            self.cf, self.status_text_value = None, f"cannot fit: {exc}"
+            self.cf, self.status_text_value = None, tr("cannot fit: {error}").format(error=exc)
 
     @property
     def has_data_parameters(self) -> bool:
@@ -912,9 +930,10 @@ class CurveFitDialog(Dialog):
         return self.status_text_value
 
     def progress_text(self) -> str:
-        return f"fitting — the data is re-derived at every step… step {self.step_count}" \
-            if self.cf is not None and self.cf.free_data_parameters() else \
-            f"fitting… step {self.step_count}"
+        if self.cf is not None and self.cf.free_data_parameters():
+            return tr("fitting — the data is re-derived at every step… step {n}").format(
+                n=self.step_count)
+        return tr("fitting… step {n}").format(n=self.step_count)
 
     def _step(self, index: int) -> bool:
         self.step_count = int(index)
@@ -968,7 +987,7 @@ class CurveFitDialog(Dialog):
             pass
         result = self._result
         if isinstance(result, Exception):
-            self.status_text_value = f"fit failed: {result}"
+            self.status_text_value = tr("fit failed: {error}").format(error=result)
             return
         if result is None:
             return
@@ -1054,7 +1073,7 @@ class EquationsPanel:
     def preview_text(self) -> str:
         """The selected equation, written out."""
         if self.selected is None or not 0 <= self.selected < len(self.table.rows):
-            return "Select an equation to see it here."
+            return tr("Select an equation to see it here.")
         row = self.table.rows[self.selected]
         return f"{row['output']} = {row['expression']}"
 
@@ -1091,11 +1110,12 @@ class EquationsPanel:
                 model.source.compute_columns(constants=model.manager.constants,
                                              equations=equations)
             except Exception as exc:  # noqa: BLE001
-                self.feature.app.message = ("Equations", f"Recompute failed:\n{exc}")
+                self.feature.app.message = (tr("Equations"),
+                                            tr("Recompute failed:\n{error}").format(error=exc))
                 return
             model.invalidate()
             self.feature.app.data_changed()
-        self.feature.status(self.table.status if bad else "Equations applied")
+        self.feature.status(self.table.status if bad else tr("Equations applied"))
 
     def load_equations(self) -> None:
         def load(paths) -> None:
@@ -1103,27 +1123,29 @@ class EquationsPanel:
             try:
                 self.table.load(path)
             except Exception as exc:  # noqa: BLE001
-                self.feature.app.message = ("Equations", f"Could not load:\n{exc}")
+                self.feature.app.message = (tr("Equations"),
+                                            tr("Could not load:\n{error}").format(error=exc))
                 return
             self.selected = None
             self.validate()
 
-        self.feature.ask_open("Open equations", [("YAML", ["*.yaml", "*.yml"])], load)
+        self.feature.ask_open(tr("Open equations"), [("YAML", ["*.yaml", "*.yml"])], load)
 
     def save_equations_file(self) -> None:
         def save(path: str) -> None:
             try:
                 self.table.save(path)
             except OSError as exc:
-                self.feature.app.message = ("Equations", f"Could not save:\n{exc}")
+                self.feature.app.message = (tr("Equations"),
+                                            tr("Could not save:\n{error}").format(error=exc))
                 return
             from ...settings.defaults import record_seen
 
             # A shipped equation missing now was deleted: the next load leaves it out.
             record_seen(path)
-            self.feature.status(f"Equations saved to {path}")
+            self.feature.status(tr("Equations saved to {path}").format(path=path))
 
-        self.feature.ask_save("Save equations", [("YAML", ["*.yaml", "*.yml"])],
+        self.feature.ask_save(tr("Save equations"), [("YAML", ["*.yaml", "*.yml"])],
                               "mfd.equations.yaml", save)
 
 
@@ -1135,13 +1157,13 @@ class NamesDialog(Dialog):
     modal = False
 
     def __init__(self, feature, panel: EquationsPanel) -> None:
-        super().__init__(feature, "Names & functions")
+        super().__init__(feature, tr("Names & functions"))
         self.panel = panel
         columns, constants = panel._known()
         outputs = [r["output"] for r in panel.table.rows if r.get("output")]
         self._rows = []
         for kind, name in panel.table.names(columns, constants, outputs):
-            label = f"— {name} —" if kind == "header" else (
+            label = f"— {tr(name)} —" if kind == "header" else (
                 f"{name}()" if kind == "function" else name)
             self._rows.append({"label": label, "kind": kind, "name": name})
 
@@ -1163,7 +1185,7 @@ class StoreEditorDialog(Dialog):
     size = (900.0, 600.0)
 
     def __init__(self, feature) -> None:
-        super().__init__(feature, "Table Editor")
+        super().__init__(feature, tr("Table Editor"))
         self.source = feature.app.model.source
         self.working = self.source.copy()
         self.hidden: set = set()
@@ -1205,8 +1227,10 @@ class StoreEditorDialog(Dialog):
         if control is not None:
             shown = len(control.order())
             if shown != total:
-                return f"{shown:,} / {total:,} rows × {shown_cols} columns"
-        return f"{total:,} rows × {shown_cols} columns"
+                return tr("{shown} / {total} rows × {columns} columns").format(
+                    shown=f"{shown:,}", total=f"{total:,}", columns=shown_cols)
+        return tr("{total} rows × {columns} columns").format(total=f"{total:,}",
+                                                             columns=shown_cols)
 
     def _control(self):
         binding = self.form.tables.get("arrays")
@@ -1228,18 +1252,18 @@ class StoreEditorDialog(Dialog):
     # -- the menu --------------------------------------------------------------
     def cell_menu(self, index, key, where) -> None:
         entries = [
-            ("Copy", lambda: self.copy(headers=False)),
-            ("Copy with headers", lambda: self.copy(headers=True)),
-            ("Paste", lambda: self.paste(index, key)),
-            ("Export as CSV…", self.export_csv),
-            ("Select all", self.select_all),
+            (tr("Copy"), lambda: self.copy(headers=False)),
+            (tr("Copy with headers"), lambda: self.copy(headers=True)),
+            (tr("Paste"), lambda: self.paste(index, key)),
+            (tr("Export as CSV…"), self.export_csv),
+            (tr("Select all"), self.select_all),
         ]
         if key is not None:
             entries += [
-                ("Filter this column…", lambda: self.filter_column(key)),
-                ("Hide this column", lambda: self.hidden.add(key)),
+                (tr("Filter this column…"), lambda: self.filter_column(key)),
+                (tr("Hide this column"), lambda: self.hidden.add(key)),
             ]
-        entries.append(("Resize columns to contents", self.fit_columns))
+        entries.append((tr("Resize columns to contents"), self.fit_columns))
         self.feature.open_menu(entries, where)
 
     def _selected_rows(self) -> List[int]:
@@ -1304,8 +1328,9 @@ class StoreEditorDialog(Dialog):
                 else:
                     control.column_filters.pop(key, None)
 
-        self.feature.open_window(PromptDialog(self.feature, "Filter this column",
-                                              f"Rows whose '{key}' contains:", current, apply),
+        self.feature.open_window(PromptDialog(self.feature, tr("Filter this column"),
+                                              tr("Rows whose '{column}' contains:").format(
+                                                  column=key), current, apply),
                                  stack=True)
 
     def fit_columns(self) -> None:
@@ -1324,11 +1349,14 @@ class StoreEditorDialog(Dialog):
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(text + "\n")
             except OSError as exc:
-                self.feature.app.message = ("Export as CSV", f"Could not write {path}:\n{exc}")
+                self.feature.app.message = (
+                    tr("Export as CSV"),
+                    tr("Could not write {path}:\n{error}").format(path=path, error=exc))
                 return
-            self.feature.status(f"Exported to {path}")
+            self.feature.status(tr("Exported to {path}").format(path=path))
 
-        self.feature.ask_save("Export as CSV", [("CSV files", ["*.csv"])], "table.csv", write)
+        self.feature.ask_save(tr("Export as CSV"), [(tr("CSV files"), ["*.csv"])], "table.csv",
+                              write)
 
     def choose_columns(self) -> None:
         self.feature.open_window(ColumnsDialog(self.feature, self), stack=True)
@@ -1347,7 +1375,7 @@ class StoreEditorDialog(Dialog):
             model = self.feature.app.model
             model.invalidate()
             self.feature.app.data_changed()
-            self.feature.status(f"{len(written)} column(s) written")
+            self.feature.status(tr("{n} column(s) written").format(n=len(written)))
 
 
 def _cell_text(value) -> str:
@@ -1363,7 +1391,7 @@ class ColumnsDialog(Dialog):
     size = (360.0, 440.0)
 
     def __init__(self, feature, editor: StoreEditorDialog) -> None:
-        super().__init__(feature, "Columns")
+        super().__init__(feature, tr("Columns"))
         self.editor = editor
         self._rows: List[dict] = []
 
@@ -1508,7 +1536,7 @@ class OverlaysFeature(Feature):
             return
         service = self._file_service()
         if service is None:
-            self.app.message = (title, "Saving files needs the io feature.")
+            self.app.message = (title, tr("Saving files needs the io feature."))
             return
         service.ask_save(title, filters, name, callback)
 
@@ -1518,7 +1546,7 @@ class OverlaysFeature(Feature):
             return
         service = self._file_service()
         if service is None:
-            self.app.message = (title, "Opening files needs the io feature.")
+            self.app.message = (title, tr("Opening files needs the io feature."))
             return
         service.ask_open(title, filters, callback)
 
@@ -1575,7 +1603,7 @@ class OverlaysFeature(Feature):
         """The Data button: the Table Editor over a copy of the data."""
         model = self.app.model
         if not model.has_data:
-            self.app.message = ("No Data", "No data loaded—nothing to show.")
+            self.app.message = (tr("No Data"), tr("No data loaded—nothing to show."))
             return
         self.open_window(StoreEditorDialog(self))
 
@@ -1608,9 +1636,10 @@ class OverlaysFeature(Feature):
     def windows(self) -> List[tuple]:
         # The Qt window's Equations dock exists but cannot be shown; here
         # View > Equations opens it.
-        return [("left", "Parameters", self._draw_parameters),
-                ("left", "Overlays", self._draw_overlays),
-                ("left", "Equations", self._draw_equations, {"visible": False})]
+        # The titles are the dock ids too: marked here, translated where emtk draws them.
+        return [("left", mark("Parameters"), self._draw_parameters),
+                ("left", mark("Overlays"), self._draw_overlays),
+                ("left", mark("Equations"), self._draw_equations, {"visible": False})]
 
     def _draw_parameters(self, _box) -> None:
         from emtk.view_form import draw_form
@@ -1707,8 +1736,11 @@ class OverlaysFeature(Feature):
         """Draw tabulated lines on the map (see :meth:`OverlaysPanel.add_lines`)."""
         titles = self.overlays.add_lines(lines, source)
         if titles:
-            self.status(f"Added {len(titles)} line(s) to the Overlays tab"
-                        + (f" from {source}" if source else ""))
+            if source:
+                self.status(tr("Added {n} line(s) to the Overlays tab from {source}").format(
+                    n=len(titles), source=source))
+            else:
+                self.status(tr("Added {n} line(s) to the Overlays tab").format(n=len(titles)))
         self.app.model.invalidate()
         return titles
 
@@ -1762,8 +1794,8 @@ class OverlaysFeature(Feature):
             self.equations.follow()
         if state.get("constants"):
             if context.newer_calibration:
-                context.skip("constants (a calibration stored after the session holds newer "
-                             "ones)")
+                context.skip(tr("constants (a calibration stored after the session holds "
+                                "newer ones)"))
             else:
                 self.constants.group.set_state(state["constants"])
                 self.constants.poll()

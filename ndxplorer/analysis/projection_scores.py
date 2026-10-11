@@ -46,6 +46,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..i18n import mark, tr
 from ..utils.axis_helpers import robust_axis_range
 from .vizrank import AttrPairRanker, AttrRanker, RankRow
 
@@ -645,23 +646,23 @@ class ColumnSet:
 
 #: Score methods: key -> (caption, needs class labels, ranks pairs, ranks single columns).
 METHODS: Dict[str, Tuple[str, bool, bool, bool]] = {
-    "populations": ("Separation", False, True, True),
-    "correlation": ("Correlation", False, True, False),
-    "separation": ("Classes", True, True, True),
+    "populations": (mark("Separation"), False, True, True),
+    "correlation": (mark("Correlation"), False, True, False),
+    "separation": (mark("Classes"), True, True, True),
 }
 
 #: What each method means, for the panel's tooltip.
 METHOD_HELP = {
-    "populations": "How many bursts fall into clearly separated islands: donor-only, "
-                   "acceptor-only and FRET species in E vs S, a dynamic population off the "
-                   "static FRET line. 0: one population; 0.5: two equal islands with empty "
-                   "space between; 0.67: three.",
-    "correlation": "|Spearman rho| of the pair: parameters that measure related things (E and "
-                   "a lifetime, a rate and its count), not populations. Parameters that are "
-                   "the same quantity are ranked once.",
-    "separation": "Do the bursts of one label (a gate, the clusters) sit together in this "
-                  "view? Share of each burst's 10 nearest neighbours with its label, above "
-                  "chance.",
+    "populations": mark("How many bursts fall into clearly separated islands: donor-only, "
+                        "acceptor-only and FRET species in E vs S, a dynamic population off the "
+                        "static FRET line. 0: one population; 0.5: two equal islands with empty "
+                        "space between; 0.67: three."),
+    "correlation": mark("|Spearman rho| of the pair: parameters that measure related things (E "
+                        "and a lifetime, a rate and its count), not populations. Parameters that "
+                        "are the same quantity are ranked once."),
+    "separation": mark("Do the bursts of one label (a gate, the clusters) sit together in this "
+                       "view? Share of each burst's 10 nearest neighbours with its label, above "
+                       "chance."),
 }
 
 
@@ -774,7 +775,7 @@ class _ScoredRanker:
         if self.columns is None:
             return ""
         same = [a for n in names for a in self.columns.aliases.get(n, ())]
-        return f" Also this view: {', '.join(same)}." if same else ""
+        return " " + tr("Also this view: {names}.").format(names=", ".join(same)) if same else ""
 
     def _row(self, score, names: Sequence[str], payload) -> RankRow:
         views = [self.table.view(n) for n in names]
@@ -784,24 +785,27 @@ class _ScoredRanker:
             found = score[3]
             value = found.score
             if found.count > 1:
-                note = (f"{found.count} islands holding {_percent(found.shares)} of the "
-                        f"{n} sampled bursts; {100 * found.in_islands:.0f} % sit clearly "
-                        f"inside one (not on a bridge or in a tail). Score {value:.3f}: the "
-                        f"chance that two bursts are in two different, clearly separated "
-                        f"populations.")
+                note = tr("{count} islands holding {shares} of the {n} sampled bursts; "
+                          "{inside} % sit clearly inside one (not on a bridge or in a tail). "
+                          "Score {score}: the chance that two bursts are in two different, "
+                          "clearly separated populations.").format(
+                    count=found.count, shares=_percent(found.shares), n=n,
+                    inside=f"{100 * found.in_islands:.0f}", score=f"{value:.3f}")
             else:
-                note = f"One population: no significant density valley over {n} sampled bursts."
+                note = tr("One population: no significant density valley over {n} sampled "
+                          "bursts.").format(n=n)
             return RankRow((f"{value:.3f}",) + labels + (str(found.count),), payload,
                            min(1.0, value / 0.5), value, note + self._aliases(names))
         if self.method == "correlation":
             _, r, p = score
             if math.isnan(r):
                 return RankRow(("N/A",) + labels, payload, None, -math.inf,
-                               "No finite pairs, or a constant column.")
+                               tr("No finite pairs, or a constant column."))
             return RankRow(
                 (f"{r:+.3f}",) + labels, payload, abs(r), abs(r),
-                f"Spearman ρ = {r:+.4f}, p = {p:.3g} over {n} sampled bursts: the two move "
-                f"together, which says nothing about populations." + self._aliases(names),
+                tr("Spearman ρ = {rho}, p = {p} over {n} sampled bursts: the two move "
+                   "together, which says nothing about populations.").format(
+                    rho=f"{r:+.4f}", p=f"{p:.3g}", n=n) + self._aliases(names),
                 POSITIVE_COLOR if r >= 0 else NEGATIVE_COLOR, r)
         value, raw, n_valid = score
         classes = self.table.labels
@@ -809,15 +813,18 @@ class _ScoredRanker:
             kappa = -value
             return RankRow(
                 (f"{kappa:.3f}",) + labels, payload, min(1.0, max(0.0, kappa)), kappa,
-                f"{-raw:.1%} of each burst's {MIN_K} nearest neighbours share its class "
-                f"({classes.name}); κ = {kappa:.3f} above chance, over {n_valid} of {n} sampled rows.",
+                tr("{share} of each burst's {k} nearest neighbours share its class ({classes}); "
+                   "κ = {kappa} above chance, over {valid} of {n} sampled rows.").format(
+                    share=f"{-raw:.1%}", k=MIN_K, classes=tr(classes.name),
+                    kappa=f"{kappa:.3f}", valid=n_valid, n=n),
             )
         r2 = -raw
         return RankRow(
             (f"{r2:.3f}",) + labels, payload, min(1.0, max(0.0, r2)), r2,
-            f"The mean {classes.name} of each burst's {MIN_K} nearest neighbours predicts its own "
-            f"with R² = {r2 / (n_valid / n) if n_valid else 0:.3f}; weighted by the "
-            f"{n_valid / n:.0%} of sampled rows that have values.",
+            tr("The mean {classes} of each burst's {k} nearest neighbours predicts its own with "
+               "R² = {r2}; weighted by the {share} of sampled rows that have values.").format(
+                classes=tr(classes.name), k=MIN_K,
+                r2=f"{r2 / (n_valid / n) if n_valid else 0:.3f}", share=f"{n_valid / n:.0%}"),
         )
 
     def _order_by_single(self) -> List[str]:

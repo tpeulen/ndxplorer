@@ -85,7 +85,10 @@ include = ["ndxplorer*"]
     "*.png", "*.svg",
     "*.csv", "*.npy", "*.dat",
     "*.dll", "*.so", "*.pyd",
-    "*.txt"
+    "*.txt",
+    # ndxplorer.i18n: the de/fr catalogues and the translated help pages.
+    "locale/*.ts",
+    "app/features/playback_export/*.md"
 ]
 "ndxplorer.plotting" = ["*.json"]
 "ndxplorer.analysis" = ["*.json"]

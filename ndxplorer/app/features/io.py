@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from ...i18n import mark, tr
 from . import Feature
 from .io_service import FileService
 
@@ -71,7 +72,7 @@ QT_ACTIONS: Dict[str, str] = {
     "actionSave_Burst_IDs": "save_burst_ids",
 }
 
-SELECTION_FILTERS = "All files (*.selection.json)"
+SELECTION_FILTERS = mark("All files (*.selection.json)")
 
 
 def load_spec(name: str) -> dict:
@@ -134,12 +135,12 @@ class MergeQuestion(_Dialog):
     def prompt(self) -> str:
         from ...io.loading import MERGE_PROMPT
 
-        return MERGE_PROMPT
+        return tr(MERGE_PROMPT)
 
     def choice_options(self) -> list:
         from ...io.loading import MERGE_CHOICES
 
-        return [(i, label) for i, (_mode, label) in enumerate(MERGE_CHOICES)]
+        return [(i, tr(label)) for i, (_mode, label) in enumerate(MERGE_CHOICES)]
 
     def ok(self) -> None:
         from ...io.loading import merge_choice
@@ -163,8 +164,6 @@ class StoreChoice(_Dialog):
 
     def __init__(self, path: str, stores: List[dict], then: Callable[[str], None],
                  kind: str = "cs_project") -> None:
-        from emtk.i18n import tr
-
         super().__init__(tr("Open PTO Container") if kind == "pto" else tr("Open ChiSurf Project"))
         self.kind = kind
         self.path = str(path)
@@ -173,8 +172,6 @@ class StoreChoice(_Dialog):
         self.choice = 0
 
     def prompt(self) -> str:
-        from emtk.i18n import tr
-
         if self.kind == "pto":
             return tr("{name} holds {n} tables. Which one?").format(
                 name=pathlib.Path(self.path).name, n=len(self.stores))
@@ -182,8 +179,6 @@ class StoreChoice(_Dialog):
             name=pathlib.Path(self.path).name, n=len(self.stores))
 
     def store_options(self) -> list:
-        from emtk.i18n import tr
-
         if self.kind == "pto":
             return [(i, tr("{name} ({rows} rows, {columns} columns)").format(
                         name=store["name"], rows=store["rows"], columns=len(store["columns"])))
@@ -208,7 +203,7 @@ class BurstIdQuestion(_Dialog):
     width, height = 470.0, 175.0
 
     def __init__(self, folder: str, then: Callable[["BurstIdQuestion"], None]) -> None:
-        super().__init__("Process Burst IDs")
+        super().__init__(tr("Process Burst IDs"))
         self.folder = folder
         self.then = then
         self.microtime_histogram = True
@@ -259,7 +254,7 @@ class Task(_Dialog):
 
     def cancel(self) -> None:
         self.cancelled = True
-        self.detail_text = "Cancelling…"
+        self.detail_text = tr("Cancelling…")
 
     def _run(self) -> None:
         try:
@@ -385,7 +380,7 @@ class IoFeature(Feature):
         importer = IMPORTERS[kind]
         if self.app.model.has_data:
             self.dialog = MergeQuestion(
-                importer.merge_title,
+                tr(importer.merge_title),
                 lambda append, mode: self._ask_paths(importer, append, mode))
         else:
             self._ask_paths(importer, False, "columns")
@@ -402,9 +397,10 @@ class IoFeature(Feature):
             self.load(paths, importer.kind, append=append, merge_mode=mode)
 
         if importer.mode == "folder":
-            self.service.ask_folder(importer.title, chosen)
+            self.service.ask_folder(tr(importer.title), chosen)
         else:
-            self.service.ask_open(importer.title, list(importer.filters), chosen,
+            filters = [(tr(label), patterns) for label, patterns in importer.filters]
+            self.service.ask_open(tr(importer.title), filters, chosen,
                                   multiple=importer.multiple)
         self._answer_from_queue()
 
@@ -437,8 +433,6 @@ class IoFeature(Feature):
         Returns the load (``None`` while the choice is on screen, or when the
         project holds nothing to open -- said in a message box).
         """
-        from emtk.i18n import tr
-
         from ...io.project_reader import list_stores
 
         try:
@@ -476,31 +470,25 @@ class IoFeature(Feature):
             return loading.load(paths, kind, merge_mode, equations=equations,
                                 constants=constants, store=store)
 
-        from emtk.i18n import tr
-
         self.app.show_status(tr("Loading {names}…").format(names=names))
-        return self._run("Loading", f"Loading {names}…", work,
+        return self._run(tr("Loading"), tr("Loading {names}…").format(names=names), work,
                          lambda source: self._loaded(paths, source, append, merge_mode),
                          lambda exc: self._load_failed(paths, exc))
 
     def _load_failed(self, paths, exc: BaseException) -> None:
-        from emtk.i18n import tr
-
         logger.error("Failed to load %s: %s", paths, exc)
-        self.app.model.error = f"Failed to load data: {exc}"
+        self.app.model.error = tr("Failed to load data: {error}").format(error=exc)
         self.app.show_status(tr("Loading failed: {error}").format(error=exc))
-        self._report("Data Load Error", self.app.model.error)
+        self._report(tr("Data Load Error"), self.app.model.error)
 
     def _loaded(self, paths: List[str], source, append: bool, merge_mode: str) -> None:
         from ...io import loading
 
-        from emtk.i18n import tr
-
         model = self.app.model
         if source is None or source.empty:
-            model.error = f"No data in {', '.join(paths)}"
-            self.app.show_status(tr("No data in {paths}").format(paths=", ".join(paths)))
-            self._report("Data Load Error", model.error)
+            model.error = tr("No data in {paths}").format(paths=", ".join(paths))
+            self.app.show_status(model.error)
+            self._report(tr("Data Load Error"), model.error)
             return
         self.app.show_status(tr("Loaded {rows} rows from {name}").format(
             rows=source.size, name=pathlib.Path(paths[0]).name))
@@ -551,7 +539,7 @@ class IoFeature(Feature):
         def chosen(path: str) -> None:
             self.app.model.working_path = str(path)
 
-        self.service.ask_folder("Select current path", chosen)
+        self.service.ask_folder(tr("Select current path"), chosen)
         self._answer_from_queue()
 
     # ----------------------------------------------------------- burst IDs
@@ -564,7 +552,7 @@ class IoFeature(Feature):
 
     def save_burst_ids(self) -> None:
         """Save > Burst IDs / *BID*: a folder, the ``.bst`` files, then what next."""
-        self.service.ask_folder("Folder for Burst IDs", self._write_burst_ids)
+        self.service.ask_folder(tr("Folder for Burst IDs"), self._write_burst_ids)
         self._answer_from_queue()
 
     def _write_burst_ids(self, folder: str) -> None:
@@ -575,7 +563,7 @@ class IoFeature(Feature):
 
         def work(task: Task):
             def progress(done: int, total: int) -> bool:
-                task.detail_text = f"{done} / {total} files"
+                task.detail_text = tr("{done} / {total} files").format(done=done, total=total)
                 return not task.cancelled
 
             return save_burst_ids_headless(folder, selections, source, progress=progress)
@@ -586,9 +574,10 @@ class IoFeature(Feature):
             self.dialog = BurstIdQuestion(folder, self._process_burst_ids)
 
         def fail(exc: BaseException) -> None:
-            self._report("Save Burst IDs", f"Could not save the burst IDs: {exc}")
+            self._report(tr("Save Burst IDs"),
+                         tr("Could not save the burst IDs: {error}").format(error=exc))
 
-        self._run("Saving Files", "Saving Burst ID files...", work, finish, fail)
+        self._run(tr("Saving Files"), tr("Saving Burst ID files..."), work, finish, fail)
 
     def _record_burst_ids(self, folder: str, written, selections, source, recorder) -> None:
         """Hand the saved selection to the recorder captured with its source.
@@ -613,7 +602,7 @@ class IoFeature(Feature):
             })
         except Exception as exc:  # noqa: BLE001 - the files are saved; say what was not
             logger.exception("recording the burst IDs failed")
-            line = f"Burst IDs saved; recording them failed: {exc}"
+            line = tr("Burst IDs saved; recording them failed: {error}").format(error=exc)
         if line:
             self.app.show_status(str(line))
 
@@ -622,19 +611,20 @@ class IoFeature(Feature):
         from ...io.writer import find_bst_files
 
         if question.microtime_histogram:
-            self._report("Plugin Not Available",
-                         "The Microtime Histogram plugin (chisurf) is not available in this "
-                         "standalone build.")
+            self._report(tr("Plugin Not Available"),
+                         tr("The Microtime Histogram plugin (chisurf) is not available in this "
+                            "standalone build."))
         if question.correlate:
             files = find_bst_files(question.folder)
             if not files:
-                self._report("No BST Files Found",
-                             "No .bst files were found in the selected folder.")
+                self._report(tr("No BST Files Found"),
+                             tr("No .bst files were found in the selected folder."))
             else:
-                self._report("Plugin Not Available",
-                             "The FCS Correlator Wizard is a ChiSurf plugin and does not run in "
-                             f"this window. Open the {len(files)} .bst file(s) in "
-                             f"{question.folder} with ChiSurf's FCS correlator.")
+                self._report(tr("Plugin Not Available"),
+                             tr("The FCS Correlator Wizard is a ChiSurf plugin and does not run "
+                                "in this window. Open the {n} .bst file(s) in {folder} with "
+                                "ChiSurf's FCS correlator.").format(n=len(files),
+                                                                   folder=question.folder))
 
     # --------------------------------------------------------- selections
     def _selection_axes(self) -> tuple:
@@ -651,7 +641,7 @@ class IoFeature(Feature):
             save_selections(self._selections(), path, axes=self._selection_axes())
             logger.info("gates saved to %s", path)
 
-        self.service.ask_save("Selection JSON", SELECTION_FILTERS, "", chosen)
+        self.service.ask_save(tr("Selection JSON"), tr(SELECTION_FILTERS), "", chosen)
         self._answer_from_queue()
 
     def load_gates(self) -> None:
@@ -669,7 +659,7 @@ class IoFeature(Feature):
                 model.gates.add_selection(selection)
             model.invalidate()
 
-        self.service.ask_open("Selection JSON", SELECTION_FILTERS, chosen)
+        self.service.ask_open(tr("Selection JSON"), tr(SELECTION_FILTERS), chosen)
         self._answer_from_queue()
 
     # ---------------------------------------------------------- screenshot
@@ -716,7 +706,7 @@ class IoFeature(Feature):
             (image.convert("RGB") if fmt != "PNG" else image).save(filename, fmt)
             logger.info("Saved screenshot to %s", filename)
 
-        self.service.ask_save(SCREENSHOT_TITLE, SCREENSHOT_FILTERS,
+        self.service.ask_save(tr(SCREENSHOT_TITLE), tr(SCREENSHOT_FILTERS),
                               default_screenshot_name(), chosen)
         self._answer_from_queue()
 
@@ -774,7 +764,7 @@ class IoFeature(Feature):
         if step.get("expect_error"):
             if self.app.message is None:
                 raise Unsupported("expected a load error, the file opened")
-        elif self.app.message is not None and self.app.message[0] == "Data Load Error":
+        elif self.app.message is not None and self.app.message[0] == tr("Data Load Error"):
             raise Unsupported(f"could not open {step['path']}: {self.app.message[1]}")
         return True
 

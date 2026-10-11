@@ -48,6 +48,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..core.parameters import is_held
+from ..i18n import tr
 
 
 class CurveFitError(RuntimeError):
@@ -107,7 +108,7 @@ def _oriented(
     xe = np.asarray(x_edges, dtype=float)
     ye = np.asarray(y_edges, dtype=float)
     if h.ndim != 2 or h.size == 0:
-        raise CurveFitError("no 2-D histogram to fit")
+        raise CurveFitError(tr("no 2-D histogram to fit"))
     if h.shape[0] == ye.size - 1 and h.shape[1] == xe.size - 1:
         # Producers hand back (ny, nx) — ndX's own ``Histogram2D.H`` does — so
         # orient it x-first. Note this branch also matches a square histogram
@@ -115,7 +116,7 @@ def _oriented(
         # (ny, nx) orientation ``plot_histogram`` returns.
         h = h.T
     if h.shape[0] != xe.size - 1 or h.shape[1] != ye.size - 1:
-        raise CurveFitError("histogram does not match its bin edges")
+        raise CurveFitError(tr("histogram does not match its bin edges"))
     return h, xe, ye
 
 
@@ -293,11 +294,11 @@ def ridge_from_values(
     if keep is None:
         mask = n >= float(min_counts)
         if int(mask.sum()) < 3:
-            raise CurveFitError("too few populated columns to fit (need 3)")
+            raise CurveFitError(tr("too few populated columns to fit (need 3)"))
     else:
         mask = np.asarray(keep, dtype=bool)
         if mask.size != n_cols:
-            raise CurveFitError("column mask does not match the bin edges")
+            raise CurveFitError(tr("column mask does not match the bin edges"))
 
     floor = 1.0
     ye = None if y_edges is None else np.asarray(y_edges, dtype=float)
@@ -812,7 +813,7 @@ class CurveFit(_DataParameterHost):
         free = [p for p in self._parameters if not getattr(p, "fixed", False)]
         free_data = self.free_data_parameters()
         if not free and not free_data:
-            return CurveFitResult(False, message="all parameters are fixed")
+            return CurveFitResult(False, message=tr("all parameters are fixed"))
         if scan is None:
             scan = bool(free_data)
         variables = list(free) + list(free_data)
@@ -831,7 +832,8 @@ class CurveFit(_DataParameterHost):
                     self._set_data(*self._refresh_data(names)[1:3])
                 except Exception:  # noqa: BLE001
                     pass
-            message = "stopped" if isinstance(exc, CurveFitAborted) else f"fit failed: {exc}"
+            message = (tr("stopped") if isinstance(exc, CurveFitAborted)
+                       else tr("fit failed: {error}").format(error=exc))
             return CurveFitResult(False, message=message)
         _apply(variables, solution.x)
         if names:
@@ -1052,7 +1054,7 @@ class ParametricCurveFit(_DataParameterHost):
         free = [p for p in self._parameters if not getattr(p, "fixed", False)]
         free_data = self.free_data_parameters()
         if not free and not free_data:
-            return CurveFitResult(False, message="all parameters are fixed")
+            return CurveFitResult(False, message=tr("all parameters are fixed"))
         if scan is None:
             scan = bool(free_data)
 
@@ -1076,7 +1078,7 @@ class ParametricCurveFit(_DataParameterHost):
                 param.value = float(value)
             if data_names:
                 self._set_data(self._refresh_data(data_names))
-            return CurveFitResult(False, message="stopped")
+            return CurveFitResult(False, message=tr("stopped"))
         except Exception as exc:
             for param, value in zip(variables, start):  # leave things as they were
                 param.value = float(value)
@@ -1085,7 +1087,7 @@ class ParametricCurveFit(_DataParameterHost):
                     self._set_data(self._refresh_data(data_names))
                 except Exception:
                     pass
-            return CurveFitResult(False, message=f"fit failed: {exc}")
+            return CurveFitResult(False, message=tr("fit failed: {error}").format(error=exc))
 
         for param, value in zip(variables, fit.x):
             param.value = float(value)
@@ -1120,13 +1122,13 @@ def build_function_fit(
         If the function has no parameters to fit or the data is too short.
     """
     if not callable(function):
-        raise CurveFitError("curve has no function to fit")
+        raise CurveFitError(tr("curve has no function to fit"))
     if len(parameters) == 0:
-        raise CurveFitError("curve has no parameters to fit")
+        raise CurveFitError(tr("curve has no parameters to fit"))
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     if x.size < 3 or y.size != x.size:
-        raise CurveFitError("need at least 3 matching data points")
+        raise CurveFitError(tr("need at least 3 matching data points"))
     for p in parameters:
         if getattr(p, "name", None) in RESOLUTION_PARAMETERS:
             p.fixed = True
@@ -1192,7 +1194,7 @@ def build_curve_fit(
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     if x.size < 3 or y.size != x.size:
-        raise CurveFitError("need at least 3 matching data points")
+        raise CurveFitError(tr("need at least 3 matching data points"))
     reserved_set = {str(r) for r in reserved}
     held = {str(c) for c in constant_names} | {str(f) for f in fixed}
     initial = initial or {}
@@ -1203,14 +1205,14 @@ def build_curve_fit(
     names = sorted((n for n in equation_parameter_names(str(equation)) if n not in reserved_set),
                    key=lambda n: first.get(n, 0))
     if not names:
-        raise CurveFitError("equation has no free parameters")
+        raise CurveFitError(tr("equation has no free parameters"))
     parameters = [Parameter(n, float(initial.get(n, 1.0)), fixed=n in held) for n in names]
     cf = CurveFit(str(equation), x, y, None if ey is None else np.asarray(ey, dtype=float),
                   parameters)
     try:
         cf.evaluate()
     except Exception as exc:
-        raise CurveFitError(f"cannot evaluate equation: {exc}") from exc
+        raise CurveFitError(tr("cannot evaluate equation: {error}").format(error=exc)) from exc
     return cf
 
 

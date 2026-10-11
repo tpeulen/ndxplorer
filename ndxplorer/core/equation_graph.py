@@ -129,13 +129,15 @@ def validate_equation(
     constant, or another equation output. Returns ``(ok, message)`` — ``message``
     is a short human-readable reason when ``ok`` is False, else ``None``.
     """
+    from ..i18n import tr
+
     text = "" if expr is None else str(expr).strip()
     if not text:
-        return False, "empty expression"
+        return False, tr("empty expression")
     try:
         _code, refs = _parse_expression(text)
     except SyntaxError as exc:
-        return False, f"syntax error: {exc.msg}"
+        return False, tr("syntax error: {error}").format(error=exc.msg)
     except Exception as exc:  # disallowed node / function
         return False, str(exc)
 
@@ -165,7 +167,8 @@ def validate_equation(
         unresolved.append(ref)
     if unresolved:
         seen = sorted(dict.fromkeys(unresolved))  # de-dup, keep order-ish
-        return False, "unknown name(s): " + ", ".join(repr(u) for u in seen)
+        return False, tr("unknown name(s): {names}").format(
+            names=", ".join(repr(u) for u in seen))
     return True, None
 
 

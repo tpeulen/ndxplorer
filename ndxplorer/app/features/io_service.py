@@ -36,6 +36,8 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Sequence, Union
 
+from ...i18n import tr
+
 __all__ = ["FileService", "Request"]
 
 logger = logging.getLogger(__name__)
@@ -121,7 +123,7 @@ class FileService:
              filename: str = "", action: Optional[str] = None) -> Request:
         from emtk.file_dialog import FileDialog
 
-        dialog = FileDialog(title, mode=kind, filters=filters or (("All files", ("*",)),),
+        dialog = FileDialog(title, mode=kind, filters=filters or ((tr("All files"), ("*",)),),
                             directory=self.start_directory(), filename=filename,
                             multiselect=bool(multiple), action=action)
         request = Request(dialog, callback, kind, bool(multiple))
@@ -156,10 +158,10 @@ class FileService:
 
     def ask_folder(self, title: str, callback: Callable[[str], None]) -> Request:
         """Ask for a folder; ``callback(path)`` unless cancelled."""
-        return self._ask("folder", title, [("Folders", ["*"])], callback)
+        return self._ask("folder", title, [(tr("Folders"), ["*"])], callback)
 
     def save_bytes(self, name: str, data: bytes, mime: str = "application/octet-stream",
-                   title: str = "Save", filters: Filters = "") -> Optional[Request]:
+                   title: str = "", filters: Filters = "") -> Optional[Request]:
         """Save *data* as a file the user gets: a path on a desktop, a download in a page.
 
         Parameters
@@ -185,15 +187,16 @@ class FileService:
             return None
         if not filters:
             suffix = pathlib.Path(name).suffix
-            filters = ([(f"{suffix[1:].upper()} files", [f"*{suffix}"]), ("All files", ["*"])]
-                       if suffix else [("All files", ["*"])])
+            filters = ([(tr("{ext} files").format(ext=suffix[1:].upper()), [f"*{suffix}"]),
+                        (tr("All files"), ["*"])]
+                       if suffix else [(tr("All files"), ["*"])])
 
         def write(path: str) -> None:
             with open(path, "wb") as handle:
                 handle.write(data)
             logger.info("saved %s", path)
 
-        return self._ask("save", title, filters, write, filename=name)
+        return self._ask("save", title or tr("Save"), filters, write, filename=name)
 
     def download(self, name: str, data: bytes, mime: Optional[str] = None) -> None:
         """Hand *data* to the browser (a page only)."""

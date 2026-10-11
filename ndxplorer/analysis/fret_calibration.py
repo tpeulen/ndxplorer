@@ -31,6 +31,8 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 
+from ..i18n import mark, tr
+
 __all__ = [
     "CalibrationOptions",
     "FACTOR_ATTRS",
@@ -202,8 +204,8 @@ Backend = Callable[..., dict]
 _BACKEND: Dict[str, Any] = {"fn": None}
 
 #: Why no calibration can run, when no backend is installed.
-NO_BACKEND = ("Accurate FRET needs tttrlib's FRET calibration (tttrlib.auto_calibrate), "
-              "which this tttrlib does not have.")
+NO_BACKEND = mark("Accurate FRET needs tttrlib's FRET calibration (tttrlib.auto_calibrate), "
+                  "which this tttrlib does not have.")
 
 
 def set_backend(fn: Optional[Backend]) -> None:
@@ -370,32 +372,34 @@ def population_summary(result: Mapping[str, Any]) -> List[str]:
     mode = result.get("species_mode")
     if mode is None:
         return []
-    labels = {"off": "off (one global factor set)", "auto": "auto (the BIC decides)",
-              "on": "on (per population whenever identifiable)"}
+    labels = {"off": tr("off (one global factor set)"), "auto": tr("auto (the BIC decides)"),
+              "on": tr("on (per population whenever identifiable)")}
     dims = list(result.get("dimensions") or [])
-    lines = [f"Mode: {labels.get(str(mode), mode)}",
-             "Gating dimensions: " + (", ".join(dims) if dims else "S (stoichiometry gating)")
-             + (" — populations found by HDBSCAN"
-                if str(result.get("population_method", "gmm")) == "hdbscan" else "")]
+    gating = tr("Gating dimensions: {dims}").format(
+        dims=", ".join(dims) if dims else tr("S (stoichiometry gating)"))
+    if str(result.get("population_method", "gmm")) == "hdbscan":
+        gating += " — " + tr("populations found by HDBSCAN")
+    lines = [tr("Mode: {mode}").format(mode=labels.get(str(mode), mode)), gating]
     ms = dict(result.get("model_selection") or {})
     if mode == "off":
-        lines.append("Model selection: not run — scalar factors only")
+        lines.append(tr("Model selection: not run — scalar factors only"))
     elif not ms:
-        lines.append("Model selection: not run (no acceptor-excitation channel or no FRET "
-                     "population)")
+        lines.append(tr("Model selection: not run (no acceptor-excitation channel or no FRET "
+                        "population)"))
     else:
-        selected = "per population" if ms.get("selected") == "species" else "shared"
+        selected = tr("per population") if ms.get("selected") == "species" else tr("shared")
         if ms.get("forced"):
-            selected = "per population (forced; the BIC preferred shared)"
-        lines.append(f"Model selection: {selected} — BIC shared {_bic(ms.get('bic_shared'))}, "
-                     f"per population {_bic(ms.get('bic_species'))}")
-        lines.append("Identifiable: " + ("yes" if ms.get("identifiable") else
-                                         "no — per-population γ needs, for every FRET "
-                                         "population, a donor lifetime that puts it on the "
-                                         "static FRET line (0.05 < E < 0.95), and at least "
-                                         "two populations"))
+            selected = tr("per population (forced; the BIC preferred shared)")
+        lines.append(tr("Model selection: {selected} — BIC shared {bic_shared}, per population "
+                        "{bic_species}").format(selected=selected,
+                                                bic_shared=_bic(ms.get("bic_shared")),
+                                                bic_species=_bic(ms.get("bic_species"))))
+        lines.append(tr("Identifiable: yes") if ms.get("identifiable") else
+                     tr("Identifiable: no — per-population γ needs, for every FRET population, "
+                        "a donor lifetime that puts it on the static FRET line "
+                        "(0.05 < E < 0.95), and at least two populations"))
         if ms.get("held"):
-            lines.append("γ is held fixed: no per-population γ was written")
+            lines.append(tr("γ is held fixed: no per-population γ was written"))
     vectors = dict(result.get("vectors") or {})
     if vectors:
         written = []
@@ -408,11 +412,11 @@ def population_summary(result: Mapping[str, Any]) -> List[str]:
                 if sigma is not None and np.isfinite(float(sigma)):
                     text += f" ± {float(sigma):.4f}"
                 written.append(text)
-        lines.append("Vector constants written: " + ", ".join(written))
-        lines.append("(Parameters tab; right-click a vector > Make scalar to go back to "
-                     "one value)")
+        lines.append(tr("Vector constants written: {vectors}").format(vectors=", ".join(written)))
+        lines.append(tr("(Parameters tab; right-click a vector > Make scalar to go back to "
+                        "one value)"))
     elif mode != "off":
-        lines.append("Vector constants written: none — scalar factors only")
+        lines.append(tr("Vector constants written: none — scalar factors only"))
     return lines
 
 
@@ -424,7 +428,7 @@ def report_text(result: Mapping[str, Any]) -> str:
     backgrounds came from, and the columns added.
     """
     before = dict(result.get("before") or {})
-    lines = [str(result.get("report") or ""), "", "ndX constants:"]
+    lines = [str(result.get("report") or ""), "", tr("ndX constants:")]
     lines += [
         f"  {name}: {before.get(name)!s} → {float(value):.4f}"
         for name, value in dict(result.get("constants") or {}).items()
@@ -435,11 +439,11 @@ def report_text(result: Mapping[str, Any]) -> str:
     held = dict(result.get("held") or {})
     if held:
         determined = dict(result.get("determined") or {})
-        lines += ["", "Held fixed (not calibrated):"]
+        lines += ["", tr("Held fixed (not calibrated):")]
         lines += [
-            f"  {name}: kept {float(value):.4f}"
-            + (f" — this measurement would have given {float(determined[name]):.4f}"
-               if name in determined else "")
+            "  " + tr("{name}: kept {value}").format(name=name, value=f"{float(value):.4f}")
+            + (" — " + tr("this measurement would have given {value}").format(
+                value=f"{float(determined[name]):.4f}") if name in determined else "")
             for name, value in held.items()
         ]
     per_burst = list(result.get("background_per_burst") or [])
@@ -448,26 +452,26 @@ def report_text(result: Mapping[str, Any]) -> str:
     if source == "fit":
         lines += [
             "",
-            ("Background, fitted from the reference populations: "
-             + ", ".join(f"{k} = {float(v):.2f}" for k, v in fitted.items()))
+            tr("Background, fitted from the reference populations: {values}").format(
+                values=", ".join(f"{k} = {float(v):.2f}" for k, v in fitted.items()))
             if fitted else
-            ("Background: the reference populations were too small to fit one — the "
-             "window's constants were used"),
+            tr("Background: the reference populations were too small to fit one — the "
+               "window's constants were used"),
         ]
     elif source == "measurement":
         lines += [
             "",
-            (f"Background: per burst, from this measurement's own estimate "
-             f"({', '.join(per_burst)})")
+            tr("Background: per burst, from this measurement's own estimate "
+               "({columns})").format(columns=", ".join(per_burst))
             if per_burst else
-            ("Background: the container has no stored estimate — the window's own "
-             "constants were used"),
+            tr("Background: the container has no stored estimate — the window's own "
+               "constants were used"),
         ]
     elif source == "none":
-        lines += ["", "Background: none (set to zero)"]
+        lines += ["", tr("Background: none (set to zero)")]
     summary = population_summary(result)
     if summary:
-        lines += ["", "Population-wise factors:"] + [f"  {line}" for line in summary]
+        lines += ["", tr("Population-wise factors:")] + [f"  {line}" for line in summary]
     if result.get("injected"):
-        lines += ["", "New columns: " + ", ".join(result["injected"])]
+        lines += ["", tr("New columns: {columns}").format(columns=", ".join(result["injected"]))]
     return "\n".join(lines)

@@ -34,6 +34,8 @@ def validate_rows(rows: Sequence[dict], columns: Iterable[str] = (),
 
     An output may reference any other output: the engine orders them.
     """
+    from ..i18n import tr
+
     columns, constants = list(columns), list(constants)
     outputs = [str(r.get("output", "")).strip() for r in rows]
     outputs = [o for o in outputs if o]
@@ -43,9 +45,9 @@ def validate_rows(rows: Sequence[dict], columns: Iterable[str] = (),
         ok, message = validate_equation(str(row.get("expression", "")).strip(), columns,
                                         constants, outputs)
         if not name:
-            ok, message = False, "missing output name"
+            ok, message = False, tr("missing output name")
         row["ok"] = bool(ok)
-        row["message"] = "" if ok else (message or "invalid")
+        row["message"] = "" if ok else (message or tr("invalid"))
         row["status"] = OK_MARK if ok else BAD_MARK
         bad += 0 if ok else 1
     return bad
@@ -53,9 +55,11 @@ def validate_rows(rows: Sequence[dict], columns: Iterable[str] = (),
 
 def summary(total: int, bad: int) -> str:
     """``"N equation(s), all valid"`` or ``"N equation(s), M with problems"``."""
+    from ..i18n import tr
+
     if bad:
-        return f"{total} equation(s), {bad} with problems"
-    return f"{total} equation(s), all valid"
+        return tr("{total} equation(s), {bad} with problems").format(total=total, bad=bad)
+    return tr("{total} equation(s), all valid").format(total=total)
 
 
 class EquationTable:
@@ -152,15 +156,18 @@ class EquationTable:
         """The Names & functions list: ``(kind, name)`` with ``kind`` a header.
 
         ``("header", "Constants")`` starts a group; ``("name", n)`` inserts
-        ``'n'``, ``("function", "abs")`` inserts ``abs(``.
+        ``'n'``, ``("function", "abs")`` inserts ``abs(``. A header's title is
+        marked for translation and translated where it is shown.
         """
+        from ..i18n import mark
+
         rows: List[Tuple[str, str]] = []
-        groups = (("Constants", list(constants)),
-                  ("Columns", list(dict.fromkeys(list(columns) + list(outputs)))))
+        groups = ((mark("Constants"), list(constants)),
+                  (mark("Columns"), list(dict.fromkeys(list(columns) + list(outputs)))))
         for title, names in groups:
             if names:
                 rows.append(("header", title))
                 rows.extend(("name", str(n)) for n in names)
-        rows.append(("header", "Functions"))
+        rows.append(("header", mark("Functions")))
         rows.extend(("function", f) for f in allowed_functions())
         return rows

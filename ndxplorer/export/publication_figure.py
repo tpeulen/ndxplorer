@@ -17,14 +17,17 @@ from typing import Optional, Tuple
 import numpy as np
 from emtk.figure import Figure, colorbar_space
 
+from ..i18n import mark
+
 Marginal = Optional[Tuple[np.ndarray, np.ndarray]]  # (edges, counts)
 
 #: What the export offers: label -> (file suffix, is vector, media type). The
-#: Qt dialog and the emtk app's dialog both list these.
+#: Qt dialog and the emtk app's dialog both list these. The labels are the
+#: keys; whoever lists them translates them where they are shown.
 EXPORT_FORMATS = {
-    "PDF (vector)": (".pdf", True, "application/pdf"),
-    "SVG (vector)": (".svg", True, "image/svg+xml"),
-    "PNG (raster)": (".png", False, "image/png"),
+    mark("PDF (vector)"): (".pdf", True, "application/pdf"),
+    mark("SVG (vector)"): (".svg", True, "image/svg+xml"),
+    mark("PNG (raster)"): (".png", False, "image/png"),
 }
 
 #: Logical pixels per inch of ``figsize`` (the CSS pixel; emtk's vector files

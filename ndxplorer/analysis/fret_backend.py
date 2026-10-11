@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 import numpy as np
 import tttrlib
 
+from ..i18n import mark, tr
 from .fret_background import (ROLE_TO_BG, burst_durations_ms, fitted_background,
                               measured_background)
 
@@ -50,10 +51,10 @@ DIMENSION_HINTS = {
 
 #: What each dimension needs, for a user who does not have it.
 DIMENSION_NEEDS = {
-    "tau_d": "donor lifetime column (e.g. 'Tau (green)')",
-    "tau_a": "acceptor lifetime column (e.g. 'Tau (yellow)' or 'Tau (red)')",
-    "r_d": "donor anisotropy column (e.g. 'r Scatter (green)')",
-    "r_a": "acceptor anisotropy column (e.g. 'r Scatter (yellow)' or 'r Scatter (red)')",
+    "tau_d": mark("donor lifetime column (e.g. 'Tau (green)')"),
+    "tau_a": mark("acceptor lifetime column (e.g. 'Tau (yellow)' or 'Tau (red)')"),
+    "r_d": mark("donor anisotropy column (e.g. 'r Scatter (green)')"),
+    "r_a": mark("acceptor anisotropy column (e.g. 'r Scatter (yellow)' or 'r Scatter (red)')"),
 }
 
 
@@ -68,8 +69,8 @@ def population_method_reason() -> str:
             tttrlib.AutoCalibrateOptions(), "population_method")
     except Exception:  # noqa: BLE001 - a tttrlib without the calibration
         known = False
-    return "" if known else ("this tttrlib's calibration has no population_method option "
-                             "(only the Gaussian mixture)")
+    return "" if known else mark("this tttrlib's calibration has no population_method option "
+                                 "(only the Gaussian mixture)")
 
 
 def dimension_columns(names, overrides: Optional[Mapping[str, str]] = None
@@ -211,8 +212,9 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
                **{k: v for k, v in dict(opts.get("columns") or {}).items() if v}}
     for role in ("i_dd", "i_da"):
         if mapping.get(role) not in table:
-            return {"ok": False, "error": f"could not identify the {role} column among "
-                                          f"{', '.join(list(table)[:12])}…; pass it explicitly"}
+            return {"ok": False, "error": tr("could not identify the {role} column among "
+                                             "{columns}…; pass it explicitly").format(
+                                                 role=role, columns=", ".join(list(table)[:12]))}
     pick = lambda role: table.get(mapping.get(role, ""))  # noqa: E731
     background = str(opts.get("background", "constants"))
     notes: List[str] = []
@@ -232,8 +234,8 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
     dimensions: List[str] = []
     for dim in list(opts.get("dimensions") or []):
         if available.get(dim) is None:
-            notes.append(f"gating dimension {dim} left out: this table has no "
-                         f"{DIMENSION_NEEDS.get(dim, 'column for it')}")
+            notes.append(tr("gating dimension {dim} left out: this table has no {need}").format(
+                dim=dim, need=tr(DIMENSION_NEEDS.get(dim, mark("column for it")))))
         elif dim not in dimensions:
             dimensions.append(dim)
     if dimensions == ["S"]:
@@ -243,8 +245,9 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
     method = str(opts.get("population_method") or "hdbscan").lower()
     method_supported = not population_method_reason()
     if method != "gmm" and not method_supported:
-        notes.append(f"population finder {method!r} not available ({population_method_reason()}); "
-                     f"the Gaussian mixture was used")
+        notes.append(tr("population finder {method} not available ({reason}); the Gaussian "
+                        "mixture was used").format(method=repr(method),
+                                                   reason=tr(population_method_reason())))
         method = "gmm"
     tau_d0 = opts.get("donor_lifetime")
     if tau_d0 is None:
@@ -254,9 +257,9 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
     if tau_f is not None:
         line = _static_line(tau_d0, start["r0"], float(opts.get("linker_sigma", 6.0)))
         if line is None:
-            notes.append(f"ChiSurf is not available: the lifetime route used the no-linker line "
-                         f"E = 1 - tau/tau_D(0) instead of the static FRET line "
-                         f"(tau_D(0) = {float(tau_d0):.2f} ns)")
+            notes.append(tr("ChiSurf is not available: the lifetime route used the no-linker "
+                            "line E = 1 - tau/tau_D(0) instead of the static FRET line "
+                            "(tau_D(0) = {tau} ns)").format(tau=f"{float(tau_d0):.2f}"))
 
     def counts(role):
         values = pick(role)
@@ -291,7 +294,7 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
 
     fitted: Dict[str, float] = {}
     if background == "fit":
-        first = run(0, "pass 1 of 2 (backgrounds): ")
+        first = run(0, tr("pass 1 of 2 (backgrounds): "))
         fitted = fitted_background(pick("i_dd"), pick("i_da"), pick("i_aa"), first["split"],
                                    durations=burst_durations_ms(table, "green"),
                                    min_population=int(opts.get("min_population", 20)))
@@ -300,7 +303,8 @@ def calibrate_columns(columns: Mapping[str, np.ndarray], constants: Mapping[str,
             if rate is not None and durations is not None:
                 per_burst[role] = np.clip(rate * durations, 0.0, None)
         rates = dict(fitted)
-    result = run(int(opts.get("n_bootstrap", 50)), "pass 2 of 2: " if background == "fit" else "")
+    result = run(int(opts.get("n_bootstrap", 50)),
+                 tr("pass 2 of 2: ") if background == "fit" else "")
     return finish(result, start=start, kept=kept, constants=constants, opts=opts,
                   mapping=mapping, counts=counts, tau_f=tau_f, line=line, rates=rates,
                   per_burst=per_burst, fitted=fitted, notes=notes, background=background,

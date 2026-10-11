@@ -26,6 +26,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from ..i18n import mark
 from ..logging_config import logging
 
 __all__ = [
@@ -79,34 +80,38 @@ class Importer:
 IMPORTERS: Dict[str, Importer] = {
     importer.kind: importer
     for importer in (
-        Importer("csv", "Comma separated value files", "open",
-                 (("Text files", ("*.csv", "*.dat", "*.er4", "*.txt")), ("All files", ("*.*",))),
-                 "Open CSV Files", multiple=True),
-        Importer("burst_dir", "Burst analysis folder", "folder", (), "Open SmFRET Files"),
-        Importer("mfd_hdf5", "MFD HDF5 files", "open",
-                 (("HDF5 files", ("*.h5", "*.hdf5")), ("ZIP files", ("*.zip",)),
-                  ("All Files", ("*.*",))),
-                 "Open MFD HDF5 Files", multiple=True),
-        Importer("cs_sampling", "Open sampling folder", "folder", (), "Open Sampling Files"),
-        Importer("er4", "ChiSurf sampling files", "open",
-                 (("Sampling files", ("*.er4",)), ("All files", ("*.*",))),
-                 "Open Sampling Files", multiple=True),
-        Importer("pto", "PTO Measurement Containers", "open",
-                 (("PTO files", ("*.pto",)), ("All Files", ("*.*",))), "Open PTO Container"),
-        Importer("cs_project", "ChiSurf project", "open",
-                 (("ChiSurf projects", ("*.cs.pto",)),), "Open ChiSurf Project"),
+        Importer("csv", mark("Comma separated value files"), "open",
+                 ((mark("Text files"), ("*.csv", "*.dat", "*.er4", "*.txt")),
+                  (mark("All files"), ("*.*",))),
+                 mark("Open CSV Files"), multiple=True),
+        Importer("burst_dir", mark("Burst analysis folder"), "folder", (),
+                 mark("Open SmFRET Files")),
+        Importer("mfd_hdf5", mark("MFD HDF5 files"), "open",
+                 ((mark("HDF5 files"), ("*.h5", "*.hdf5")), (mark("ZIP files"), ("*.zip",)),
+                  (mark("All Files"), ("*.*",))),
+                 mark("Open MFD HDF5 Files"), multiple=True),
+        Importer("cs_sampling", mark("Open sampling folder"), "folder", (),
+                 mark("Open Sampling Files")),
+        Importer("er4", mark("ChiSurf sampling files"), "open",
+                 ((mark("Sampling files"), ("*.er4",)), (mark("All files"), ("*.*",))),
+                 mark("Open Sampling Files"), multiple=True),
+        Importer("pto", mark("PTO Measurement Containers"), "open",
+                 ((mark("PTO files"), ("*.pto",)), (mark("All Files"), ("*.*",))),
+                 mark("Open PTO Container")),
+        Importer("cs_project", mark("ChiSurf project"), "open",
+                 ((mark("ChiSurf projects"), ("*.cs.pto",)),), mark("Open ChiSurf Project")),
     )
 }
 
 #: The merge question, as the Qt window asks it.
-MERGE_PROMPT = "How do you want to merge the new data?"
+MERGE_PROMPT = mark("How do you want to merge the new data?")
 
 #: ``(merge mode or None for replace, label)``, in the order they are offered;
 #: the first is the default.
 MERGE_CHOICES: Tuple[Tuple[Optional[str], str], ...] = (
-    (None, "Replace existing data"),
-    ("columns", "Append as columns (add new columns, rows must match)"),
-    ("rows", "Append as rows (add new rows of existing columns)"),
+    (None, mark("Replace existing data")),
+    ("columns", mark("Append as columns (add new columns, rows must match)")),
+    ("rows", mark("Append as rows (add new rows of existing columns)")),
 )
 
 
