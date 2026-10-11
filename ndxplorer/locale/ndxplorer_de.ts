@@ -4543,7 +4543,7 @@ Populationsweises γ ist nur mit Lebensdauern identifizierbar: Jede FRET-Populat
         <message>
             <location filename="ndxplorer/export/screenshots.py" line="22" />
             <source>Save Screenshot</source>
-            <translation>Screenshot speichern</translation>
+            <translation>Bildschirmfoto speichern</translation>
         </message>
         <message>
             <location filename="ndxplorer/app/views/plot_corner.view.json" line="0" />
@@ -4780,7 +4780,7 @@ Populationsweises γ ist nur mit Lebensdauern identifizierbar: Jede FRET-Populat
         <message>
             <location filename="ndxplorer/app/views/plot_corner.view.json" line="0" />
             <source>Screenshot</source>
-            <translation>Screenshot</translation>
+            <translation>Bildschirmfoto</translation>
         </message>
         <message>
             <location filename="ndxplorer/app/features/analysis/gaussian_fit.view.json" line="0" />

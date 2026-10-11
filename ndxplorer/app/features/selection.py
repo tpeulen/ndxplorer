@@ -92,7 +92,7 @@ class DrawMaskModel:
     def __init__(self, feature: "SelectionFeature") -> None:
         self.feature = feature
         self.drawing = False
-        self.mode = "draw"
+        self.brush_mode = "draw"
         self.category = 1
         self.brush = 5
 
@@ -223,7 +223,7 @@ class SelectionFeature(Feature):
         width, height = implot.get_plot_size()
         ny, nx = self.canvas.shape
         px_per_bin = (max(width, 1.0) / max(nx, 1), max(height, 1.0) / max(ny, 1))
-        erase = self.mask_model.mode == "erase"
+        erase = self.mask_model.brush_mode == "erase"
         category = max(1, int(self.mask_model.category))
         if hovered and io.mouse_clicked[0]:
             self._stroke_last = here
