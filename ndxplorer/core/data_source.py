@@ -555,6 +555,10 @@ class DataSource:
                  is_computed: bool = False):
         self._store = store if store is not None else tttrlib.DataStore()
         self.is_computed = is_computed
+        #: Where the table was read from (files and folders as chosen, absolute),
+        #: so a bare file name in a ``First File`` column can be found again.
+        #: Empty for a table that was built in memory.
+        self.source_paths: List[str] = []
         self._data_version = 0
         self._parameter_names: Optional[List[str]] = None
         self._cached_values_array: Optional[np.ndarray] = None

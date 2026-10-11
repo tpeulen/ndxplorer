@@ -257,3 +257,20 @@ def test_in_the_browser_the_rpc_and_napari_say_why_not(app, monkeypatch):
     reason, targets = f.send_state()
     assert "browser" in reason and targets == []
     assert f.napari_reason() == "not in the browser"
+
+
+def test_a_send_shows_what_the_analysis_returned(app):
+    """The reply is kept, handed to a host that can open it, else shown in a box."""
+    f = feature(app)
+    reply = {"target": "tcspc", "n_bursts": 3, "n_files": 1, "provenance": None,
+             "result": {"decays": [{"name": "green", "counts": [1, 2, 3], "n_photons": 6}],
+                        "n_photons": 6}}
+    f.show_result("tcspc", reply)
+    title, text = app.message
+    assert app.last_send is reply and "tcspc" in title
+    assert "decay green" in text and "3 bins" in text and "n_photons: 6" in text
+
+    app.message = None
+    app.send_result_opener = lambda target, got: f"Opened {target}"
+    f.show_result("tcspc", reply)
+    assert app.message is None and app.status == "Opened tcspc"

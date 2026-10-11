@@ -217,6 +217,12 @@ class NdxApp:
         #: selection to" talks to. (Phasor geometry needs no ChiSurf: it is
         #: overlay curves and equations.)
         self.chisurf_rpc = None
+        #: The newest "Send selection to" reply (``{"target", "result", ...}``).
+        self.last_send = None
+        #: What opens a send's result as data: set by a host that can (called
+        #: with ``(target, reply)``; returns a status line, or ``None`` when it
+        #: did not take it). ``None`` here: the result is shown in a message box.
+        self.send_result_opener: Optional[Callable[[str, dict], Optional[str]]] = None
         #: What File > Import > From MMFDB runs: set by a host that has an MMFDB
         #: client (ChiSurf's ndX window); ``None`` keeps the entry disabled.
         self.mmfdb_opener: Optional[Callable[[], None]] = None

@@ -557,6 +557,28 @@ class SelectionFeature(Feature):
                                                                         error=exc))
             return
         self.status(outcome_message(reply, target))
+        self.show_result(target, reply)
+
+    def show_result(self, target: str, reply) -> None:
+        """Put what the analysis sent back where the user can see it.
+
+        The reply is kept as ``app.last_send``. A host that can open a result
+        as data (``app.send_result_opener(target, reply)``, returning a status
+        line or ``None`` when it did not take it) gets it first; without one
+        the result is reported in a message box, so a send is never a silent
+        handoff.
+        """
+        from ...analysis.burst_bridge import result_report
+
+        app = self.app
+        app.last_send = reply
+        opener = getattr(app, "send_result_opener", None)
+        if opener is not None:
+            line = opener(target, reply)
+            if line:
+                self.status(line)
+                return
+        app.message = (tr("Result from {target}").format(target=target), result_report(reply))
 
     # ------------------------------------------------------------ frames
     def draw_windows(self) -> bool:

@@ -204,7 +204,14 @@ def read(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",
          store: Optional[str] = None):
     """Read *paths* with the reader for *kind*; the raw table, no equation columns."""
     data_reader, argument = reader_for(kind, paths, merge_mode, store)
-    return data_reader(argument)
+    source = data_reader(argument)
+    if source is not None and hasattr(source, "source_paths"):
+        # Remembered on the table itself: "Send selection to" must find the
+        # measurement files a bare ``First File`` name stands for, and the
+        # process's working directory is not where they are.
+        source.source_paths = [str(pathlib.Path(p).expanduser().resolve())
+                               for p in _as_list(paths)]
+    return source
 
 
 def load(paths: Paths, kind: Optional[str] = None, merge_mode: str = "columns",

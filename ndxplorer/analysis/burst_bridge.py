@@ -196,10 +196,57 @@ def selection_to_burst_slices(
     rows = np.flatnonzero(keep)
     firsts = np.asarray(data_source.column_items(names.index(first_col))[rows], dtype=np.int64)
     lasts = np.asarray(data_source.column_items(names.index(last_col))[rows], dtype=np.int64)
+    roots = [str(p) for p in getattr(data_source, "source_paths", ()) or ()]
+    resolved: Dict[str, str] = {}
     slices: "OrderedDict[str, List[Tuple[int, int]]]" = OrderedDict()
     for filename, a, b in zip(first_files[rows], firsts, lasts):
-        slices.setdefault(str(filename), []).append((int(a), int(b)))
+        name = str(filename)
+        if name not in resolved:
+            resolved[name] = resolve_source_file(name, roots)
+        slices.setdefault(resolved[name], []).append((int(a), int(b)))
     return slices
+
+
+def resolve_source_file(name: str, roots: Sequence[str]) -> str:
+    """The path a burst table's ``First File`` entry stands for.
+
+    A table names its measurement files by leaf (``m000.spc``): the process's
+    working directory is not where they are. They sit where the table was read
+    from -- beside the analysis folder, or one or two levels above it (a
+    ``<measurement>/burstwise_*/bi4_bur`` layout keeps them next to the
+    ``burstwise_*`` folder) -- or, for a measurement container, in the
+    container itself, which holds the photons it found its bursts in.
+
+    Parameters
+    ----------
+    name : str
+        The table's entry; used as given when it already is an existing path.
+    roots : sequence of str
+        What the table was read from (:attr:`DataSource.source_paths`).
+
+    Returns
+    -------
+    str
+        The existing file's absolute path; *name* unchanged when nothing
+        resolves it (the receiving service then says which file is missing).
+    """
+    import pathlib
+
+    direct = pathlib.Path(name)
+    if direct.is_absolute() or not roots:
+        return name
+    for root in roots:
+        base = pathlib.Path(root)
+        folder = base if base.is_dir() else base.parent
+        for level in (folder, *list(folder.parents)[:2]):
+            candidate = level / name
+            if candidate.is_file():
+                return str(candidate)
+    for root in roots:
+        base = pathlib.Path(root)
+        if base.is_file() and base.suffix.lower() == ".pto":
+            return str(base)
+    return name
 
 
 
@@ -662,6 +709,48 @@ def outcome_message(reply: Mapping[str, Any], target: str) -> str:
 
 
 
+def result_report(reply: Mapping[str, Any]) -> str:
+    """What an analysis handed back, as text a person can read.
+
+    The status line says how much *went*; this says what *came back* -- the
+    shape of the answer, per file when the analysis runs per file -- so a send
+    is not a silent handoff. The numbers themselves stay in ``reply["result"]``
+    (the app keeps it as ``last_send``).
+    """
+    result = reply.get("result")
+    lines = [outcome_message(reply, str(reply.get("target", "")))]
+
+    def describe(block: Any, indent: str) -> None:
+        if not isinstance(block, Mapping):
+            lines.append(f"{indent}{block!r}"[:200])
+            return
+        for key, value in block.items():
+            if key in ("decays", "curves") and isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Mapping):
+                        extra = ", ".join(f"{k} {item[k]}" for k in ("shape", "n_photons")
+                                          if item.get(k) is not None)
+                        n = len(item.get("counts", ())) or None
+                        lines.append(f"{indent}{key[:-1]} {item.get('name', '')}: "
+                                     + ", ".join(x for x in (extra, f"{n} bins" if n else "")
+                                                 if x))
+            elif isinstance(value, (int, float, str, bool)) or value is None:
+                lines.append(f"{indent}{key}: {value}")
+            elif isinstance(value, (list, tuple)):
+                lines.append(f"{indent}{key}: {len(value)} values")
+            elif isinstance(value, Mapping):
+                lines.append(f"{indent}{key}: {len(value)} entries")
+
+    if isinstance(result, list):
+        for entry in result:
+            if isinstance(entry, Mapping):
+                lines.append(str(entry.get("file", "")))
+                describe(entry.get("result"), "  ")
+    elif result is not None:
+        describe(result, "")
+    return "\n".join(lines)
+
+
 __all__ = [
     "BurstAnalysisBridge",
     "Target",
@@ -670,6 +759,8 @@ __all__ = [
     "summarise_result",
     "BurstBridgeError",
     "selection_to_burst_slices",
+    "resolve_source_file",
+    "result_report",
     "unavailable_reason",
     "outcome_message",
     "FILE_COL",

@@ -172,3 +172,49 @@ def test_matches_save_burst_ids_writer(tmp_path):
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
+
+
+# -- the table's own source paths ---------------------------------------------
+
+def test_bare_file_names_resolve_against_where_the_table_was_read_from(tmp_path):
+    """`m000.spc` is beside the analysis folder, not in the working directory."""
+    measurement = tmp_path / "meas"
+    folder = measurement / "burstwise_All"
+    (folder / "bi4_bur").mkdir(parents=True)
+    (measurement / "a.ptu").write_bytes(b"")
+    ds = _FakeDataSource(_burst_columns())
+    ds.source_paths = [str(folder)]
+    slices = selection_to_burst_slices(ds, ())
+    assert list(slices) == [str(measurement / "a.ptu"), "b.ptu"]
+
+
+def test_a_container_stands_for_its_own_photons(tmp_path):
+    container = tmp_path / "run.mmfdb.pto"
+    container.write_bytes(b"")
+    ds = _FakeDataSource(_burst_columns())
+    ds.source_paths = [str(container)]
+    assert set(selection_to_burst_slices(ds, ())) == {str(container)}
+
+
+def test_loading_remembers_where_the_table_came_from(tmp_path):
+    from ndxplorer.io import loading
+
+    csv = tmp_path / "bursts.csv"
+    csv.write_text("First File,Last File,First Photon,Last Photon\nm0.spc,m0.spc,0,9\n")
+    source = loading.load(str(csv), kind="csv")
+    assert source.source_paths == [str(csv.resolve())]
+
+
+def test_send_sends_resolved_paths_and_reports_the_result(tmp_path):
+    from ndxplorer.analysis.burst_bridge import result_report
+
+    (tmp_path / "a.ptu").write_bytes(b"")
+    (tmp_path / "b.ptu").write_bytes(b"")
+    ds = _FakeDataSource(_burst_columns())
+    ds.source_paths = [str(tmp_path / "bursts.csv")]
+    rpc = _FakeRpc()
+    reply = BurstAnalysisBridge(rpc, ds).send("pda", ())
+    sent = rpc.calls[0][1]["burst_slices"]
+    assert set(sent) == {str(tmp_path / "a.ptu"), str(tmp_path / "b.ptu")}
+    text = result_report(reply)
+    assert text.startswith("Sent 5 bursts") and "echo" in text
