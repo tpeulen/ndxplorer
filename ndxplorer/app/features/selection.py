@@ -344,6 +344,9 @@ class SelectionFeature(Feature):
         label = tr(SEND) if reason is None else f"{tr(SEND)} — {reason.split('.')[0]}"
         menu = Menu(label, items, enabled=reason is None)
         menu.reason = reason
+        # The row shows the reason's first sentence (cut to the menu's width);
+        # the whole of it is the row's tooltip.
+        menu.tooltip = reason
         return menu
 
     def send_state(self):
@@ -398,12 +401,13 @@ class SelectionFeature(Feature):
         has_map = self.app.model.histograms is not None
         entries = []
         for label in CANVAS_MENU:
-            enabled, text = has_map, tr(label)
+            enabled, text, tip = has_map, tr(label), None
             if label == "Send to Napari":
                 reason = self.napari_reason()
                 enabled = reason is None
                 text = tr(label) if reason is None else f"{tr(label)} — {reason}"
-            item = MenuItem(text, enabled=enabled)
+                tip = reason
+            item = MenuItem(text, enabled=enabled, tooltip=tip)
             item.action = ("canvas", label)
             entries.append(item)
         entries = entries[:3] + [None, entries[3], None, self._send_menu()]
