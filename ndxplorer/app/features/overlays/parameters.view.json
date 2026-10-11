@@ -15,8 +15,7 @@
   {
    "type": "parameter_table",
    "table": "table",
-   "expand": true,
-   "reserve": 64
+   "expand": true
   },
   {
    "type": "info",

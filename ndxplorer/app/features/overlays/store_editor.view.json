@@ -13,7 +13,7 @@
   {"type": "custom", "key": "data_table",
    "options": {"source": "arrays", "columns_source": "columns", "editable": true, "filter": true,
     "edited_call": "edit_cell", "context_call": "cell_menu", "colour_source": "colour_mode",
-    "min_column_width": 96, "expand": true, "reserve": 64, "height": 380}, "description": "Arrays held by the overlay store; edit cells to change parameter values."},
+    "min_column_width": 96, "expand": true, "height": 380}, "description": "Arrays held by the overlay store; edit cells to change parameter values."},
   {"type": "info", "source": "status_text"},
   {"type": "button_row", "buttons": [
    {"label": "↺ Reset", "action": "reset", "description": "Discard every change made in this dialog"},

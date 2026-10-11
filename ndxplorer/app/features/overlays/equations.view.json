@@ -10,7 +10,7 @@
    {"label": "Apply", "action": "apply_equations", "description": "Validate all equations and recompute the derived columns"}]},
   {"type": "custom", "key": "data_table",
    "options": {"source": "rows", "editable": true, "edited_call": "edit_row", "selected_call": "select_row",
-    "delete_call": "delete_row", "tooltip_key": "message", "expand": true, "reserve": 52, "height": 480,
+    "delete_call": "delete_row", "tooltip_key": "message", "expand": true, "height": 480,
     "columns": [
      {"key": "output", "title": "Output", "width": 130, "tooltip": "Name of the column that the equation writes."},
      {"key": "expression", "title": "Expression", "tooltip": "Expression evaluated per burst; may use other column names."},
