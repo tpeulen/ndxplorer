@@ -7417,5 +7417,10 @@ Installer {package} maintenant (conda, conda-forge) ?</translation>
             <source>Custom Equation</source>
             <translation>Équation personnalisée</translation>
         </message>
+        <message>
+            <location filename="ndxplorer/app/features/selection.py" line="585" />
+            <source>Result from {target}</source>
+            <translation>Résultat de {target}</translation>
+        </message>
     </context>
 </TS>

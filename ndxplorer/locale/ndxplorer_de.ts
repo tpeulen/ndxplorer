@@ -7417,5 +7417,10 @@ Install {package} now (conda, conda-forge)?</source>
             <source>Custom Equation</source>
             <translation>Eigene Gleichung</translation>
         </message>
+        <message>
+            <location filename="ndxplorer/app/features/selection.py" line="585" />
+            <source>Result from {target}</source>
+            <translation>Ergebnis von {target}</translation>
+        </message>
     </context>
 </TS>
