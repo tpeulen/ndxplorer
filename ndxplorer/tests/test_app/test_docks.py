@@ -90,11 +90,13 @@ def test_the_view_ticks_follow_the_windows(home):
 def test_closing_with_the_cross_hides_and_view_reopens(home):
     app = make()
     draw(app)
-    x, y, w, _h = app.docks.region_boxes["left"]
-    th = app.docks._title_h
-    app.pointer_press(x + w - th / 2.0, y + th / 2.0, 1, 0, 1)
+    # Each tab carries its own cross, a title-height square at its right end
+    # (emtk.docking draws no region-wide close button any more).
+    x, y, w, h = app.docks.tab_rect("Plot controls")
+    cx, cy = x + w - app.docks._title_h / 2.0, y + h / 2.0
+    app.pointer_press(cx, cy, 1, 0, 1)
     draw(app, 1)
-    app.pointer_release(x + w - th / 2.0, y + th / 2.0, 1, 0)
+    app.pointer_release(cx, cy, 1, 0)
     draw(app)
     assert not app.docks.is_visible("Plot controls")
     assert app.run_action("toggle_plot_controls")
