@@ -300,3 +300,18 @@ def test_nothing_under_the_app_imports_qt():
             "for m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+
+def test_a_load_finishes_while_the_window_is_not_drawn(app, tmp_path):
+    """A host that does not draw the window (its tab behind another) calls poll():
+    a container opened before loads then -- in the background, as ever -- not when the
+    window is next shown."""
+    from ndxplorer.tests.test_app.test_session import make_pto
+
+    assert app.open_path(str(make_pto(tmp_path / "m.pto")))
+    task = io_feature(app).task
+    assert task is not None and not app.model.has_data, "a container loads in the background"
+    assert task.finished.wait(30)
+    app.poll()
+    assert app.model.has_data and io_feature(app).task is None

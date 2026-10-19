@@ -345,6 +345,11 @@ class IoFeature(Feature):
     def animating(self) -> bool:
         return self.task is not None
 
+    def poll(self) -> None:
+        """A load that finished while the window was not drawn (a tab behind another) lands."""
+        if self.task is not None and self.task.finished.is_set() and self.task.poll():
+            self.task = None
+
     def draw_windows(self) -> bool:
         if self._rendering:
             return False

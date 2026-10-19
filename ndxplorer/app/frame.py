@@ -928,6 +928,17 @@ class NdxApp:
 
         return window_title(self.model.path if self.model.has_data else [])
 
+    def poll(self) -> None:
+        """Collect finished background work without drawing a frame.
+
+        A host that does not draw this window (its tab is behind another, it is
+        minimised) calls this instead, so a file opened before the window was hidden
+        finishes loading then -- not when the window is next shown.
+        """
+        for feature in self.features:
+            feature.poll()
+        self.model.update()
+
     def animating(self) -> bool:
         """Whether the host should keep drawing without input: a feature is
         playing back or streaming results -- or the last frame changed the data

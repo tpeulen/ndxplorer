@@ -197,6 +197,9 @@ class Feature:
     def animating(self) -> bool:
         return False
 
+    def poll(self) -> None:
+        """Collect background work that finished, without drawing (:meth:`NdxApp.poll`)."""
+
     @property
     def session_key(self) -> str:
         """The key of this feature's part in a session state."""
