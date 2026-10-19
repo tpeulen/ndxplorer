@@ -594,7 +594,7 @@ class BurstAnalysisBridge:
                 ],
                 "software_version": _software_version(),
             }
-            reply = client.call("ndxplorer.record_analysis", payload)
+            reply = client.call("mmfdb.analysis.record", payload)
             if isinstance(reply, Mapping) and not (
                 reply.get("ok") or (isinstance(reply.get("result"), Mapping)
                                     and reply["result"].get("ok"))
