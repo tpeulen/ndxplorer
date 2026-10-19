@@ -734,15 +734,15 @@ class NdxApp:
     def _draw_message(self, x, y, w, h) -> None:
         """A message box: the title, the text, OK."""
         import emtk
-
-        from emtk import style
+        from emtk.backdrop import draw_modal_backdrop
 
         title, text = self.message
         dw, dh = min(520.0, w - 40.0), 150.0
         box = (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
         self.message_box = box
-        # Modal: the window behind is dimmed, the box itself is opaque.
-        emtk.get_window_draw_list().add_rect_filled((x, y), (x + w, y + h), style.MODAL_DIM_BG)
+        # Modal: the window behind is washed and blurred (emtk's backdrop, the user's
+        # setting), the box itself is opaque.
+        draw_modal_backdrop(emtk.get_current_context().p, x, y, w, h)
         emtk.begin(f"{title}##message", box)
         emtk.text(title)
         emtk.separator()
