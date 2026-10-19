@@ -49,6 +49,21 @@ def _axis_property(key: str, field: str, cast: Callable[[Any], Any]):
     return property(get, set_)
 
 
+def _log_property(key: str):
+    """The log check box of axis *key*: :meth:`ExplorerModel.set_log`, told in the status bar."""
+
+    def get(self):
+        return self.model.axis(key).log
+
+    def set_(self, value):
+        message = self.model.set_log(key, bool(value))
+        app = getattr(self.model, "app", None)
+        if message and app is not None and hasattr(app, "show_status"):
+            app.show_status(message)
+
+    return property(get, set_)
+
+
 class PanelModel:
     """AutoForm's view of an :class:`ExplorerModel`.
 
@@ -137,9 +152,9 @@ class PanelModel:
     y_bins_2d = _axis_property("y", "bins_2d", lambda v: max(1, int(v)))
     z_bins_1d = _axis_property("z", "bins_1d", lambda v: max(1, int(v)))
     z_bins_2d = _axis_property("z", "bins_2d", lambda v: int(v))
-    x_log = _axis_property("x", "log", bool)
-    y_log = _axis_property("y", "log", bool)
-    z_log = _axis_property("z", "log", bool)
+    x_log = _log_property("x")
+    y_log = _log_property("y")
+    z_log = _log_property("z")
     x_norm = _axis_property("x", "norm", bool)
     y_norm = _axis_property("y", "norm", bool)
     z_norm = _axis_property("z", "norm", bool)

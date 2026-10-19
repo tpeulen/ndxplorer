@@ -351,6 +351,36 @@ class ExplorerModel:
             self._fit_z_range(force=True)
         self.invalidate()
 
+    def set_log(self, key: str, on: bool) -> Optional[str]:
+        """Turn axis *key*'s log scale on or off; returns what the user must be told.
+
+        A log axis cannot start at or below zero. Turned on over such a range, the
+        axis re-ranges to the parameter's positive values: the plot (which draws
+        log only above zero) and the bins then agree, instead of a ticked box over
+        an unchanged linear plot. A parameter with no positive value stays linear
+        and the returned message says why.
+        """
+        axis = self.axis(key)
+        on = bool(on)
+        if on == axis.log:
+            return None
+        message = None
+        axis.log = on
+        if on and not axis.lo > 0.0:
+            lo, hi = self._auto_range(axis)
+            if hi > lo > 0.0:
+                axis.lo, axis.hi = lo, hi
+                message = tr("{name}: log scale, range set to its positive values "
+                             "({lo:.4g} to {hi:.4g})").format(name=axis.name, lo=lo, hi=hi)
+            else:
+                axis.log = False
+                message = tr("{name} has no positive values: a log scale is not "
+                             "possible").format(name=axis.name)
+        if key == "z":
+            self._fit_z_range()
+        self.invalidate()
+        return message
+
     def remember_axis(self, key: str) -> None:
         """The "Set" button: this axis's settings become the parameter's default."""
         axis = self.axis(key)
