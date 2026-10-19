@@ -265,7 +265,14 @@ class Task(_Dialog):
             self.finished.set()
 
     def poll(self) -> bool:
-        """Run (unthreaded) or collect (threaded) the work; ``True`` once handled."""
+        """Run (unthreaded) or collect (threaded) the work; ``True`` once handled.
+
+        The callbacks run once: a task waited for (:meth:`wait`) and then polled
+        by the next frame is already handled -- run again, a load would replace
+        the table a second time and save the view it just left into the new file.
+        """
+        if self.done:
+            return True
         if self.thread is None and not self.finished.is_set():
             self._run()
         if not self.finished.is_set():

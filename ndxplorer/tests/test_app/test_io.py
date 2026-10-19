@@ -315,3 +315,15 @@ def test_a_load_finishes_while_the_window_is_not_drawn(app, tmp_path):
     assert task.finished.wait(30)
     app.poll()
     assert app.model.has_data and io_feature(app).task is None
+
+
+def test_a_task_hands_its_result_over_once():
+    """Waited for, then polled by the next frame: the finish runs once, not twice
+    (a second run replaced the table again and saved the view it left into the new file)."""
+    from ndxplorer.app.features.io import Task
+
+    landed = []
+    task = Task("t", "", lambda t: 7, landed.append, lambda exc: landed.append(exc))
+    assert task.wait(10.0)
+    assert task.poll() and task.poll()
+    assert landed == [7]

@@ -56,6 +56,19 @@ def open_app(path, autosave=True):
     return app
 
 
+def landed(app):
+    """Let the load an ``open_path`` of a ``.pto`` started land, and draw it.
+
+    A container is read by the io feature's background load: the table on
+    screen is left -- and its view saved -- when the new one arrives, not when
+    ``open_path`` returns.
+    """
+    task = feature(app, "io").task
+    if task is not None:
+        assert task.wait(120.0)
+    draw(app)
+
+
 def feature(app, name):
     return next(f for f in app.features if f.name == name)
 
@@ -147,6 +160,7 @@ def test_leaving_a_file_saves_its_view_and_history_is_bounded(tmp_path):
     app = open_app(first)
     app.model.set_parameter("x", "Duration (ms)")
     assert app.open_path(str(second))                    # switching saves the first
+    landed(app)
     assert names_in(first).count("ndx_session") == 1
     for i in range(SESSION_HISTORY + 2):
         app.model.x.bins_1d = 40 + i
