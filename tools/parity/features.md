@@ -137,7 +137,7 @@ behaviour in the port or drop it deliberately with `[-]`; do not copy the bug.
 
 ## menu_help — Help menu
 
-- [x] Help > "Help" (Qt: disabled in the .ui, not connected) -- works: a help window (what ndX does, the five steps, the project URL)
+- [x] Help > "Help" (Qt: disabled, not connected) -- works: a help window (what ndX does, the five steps, the project URL)
 - [-] Help > "Fix Report Tool" (Qt: broken, see fix_report_tool) -- dropped, justification under fix_report_tool
 - [x] Help > "About" (Qt: not connected) -- works: ndXplorer, tttrlib, emtk, numpy, matplotlib and Python versions, author, licence, URL
 - [~] Help > "Update" (Qt: not connected) -- an "Update" window with the installed version and how to update (conda / pip, restart; in a browser: reload the page). It installs nothing itself: an app that rewrites its own environment is what deps_installer warns about

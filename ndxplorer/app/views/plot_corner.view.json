@@ -1,5 +1,5 @@
 {
- "_comment": "The corner between the x and the y marginal (plot_main.ui widget_6, less its colour controls, which are on the toolbar): the points shown / loaded, the inf and NaN masks, and Screenshot, Data, Export… and Clear two by two. When the user drags the marginals too small to hold it, the app draws it at the end of the toolbar instead.",
+ "_comment": "The corner between the x and the y marginal (the retired Qt window's corner panel, less its colour controls, which are on the toolbar): the points shown / loaded, the inf and NaN masks, and Screenshot, Data, Export… and Clear two by two. When the user drags the marginals too small to hold it, the app draws it at the end of the toolbar instead.",
  "sections": [
   {
    "type": "row",

@@ -1,5 +1,5 @@
 {
- "_comment": "The toolbar over the plots in the emtk app: the working path and Browse, then the 2-D map's colours (colormap, log counts, colour limits, Contrast, Update) -- plot_main.ui's first row and the colour controls of its widget_6 corner. One line when the window is wide enough; a narrow one wraps it before the colours, each line starting at the left edge. The rest of widget_6 is in the corner between the marginals (plot_corner).",
+ "_comment": "The toolbar over the plots in the emtk app: the working path and Browse, then the 2-D map's colours (colormap, log counts, colour limits, Contrast, Update) -- the retired Qt window's first toolbar row and the colour controls of its plot corner. One line when the window is wide enough; a narrow one wraps it before the colours, each line starting at the left edge. The rest of widget_6 is in the corner between the marginals (plot_corner).",
  "sections": [
   {
    "type": "row",

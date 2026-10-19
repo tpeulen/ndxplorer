@@ -84,8 +84,10 @@ def test_no_source_file_imports_qt():
 
 
 def test_the_qt_gui_is_gone():
-    for gone in ("core/plot_main.py", "plotting/plot_main.ui",
-                 "plotting/pg_image_widget.py", "plotting/curve_overlay.py"):
+    for gone in ("core/plot_main.py", "plotting/pg_image_widget.py",
+                 "plotting/curve_overlay.py"):
         assert not (PACKAGE / gone).exists(), gone
+    designer_files = sorted(str(p.relative_to(PACKAGE)) for p in PACKAGE.rglob("*.ui"))
+    assert not designer_files, designer_files
     for package in ("ui", "widgets"):  # a stale __pycache__ may stay behind
         assert not list((PACKAGE / package).glob("*.py")), package

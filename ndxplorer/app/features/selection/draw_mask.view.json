@@ -1,5 +1,5 @@
 {
- "_comment": "The Draw Mask panel of the emtk app, drawn by emtk.view_form over ndxplorer.app.features.selection.DrawMaskModel inside the plot-control dock's 'draw_mask' custom section. The same controls as the Qt window's widgetMaskDrawing (plot_control.ui): Enable drawing, Draw/Erase, Cat, Clear, Load Mask, Save Mask, Brush, Apply.",
+ "_comment": "The Draw Mask panel of the emtk app, drawn by emtk.view_form over ndxplorer.app.features.selection.DrawMaskModel inside the plot-control dock's 'draw_mask' custom section. The same controls as the Qt window's mask-drawing panel: Enable drawing, Draw/Erase, Cat, Clear, Load Mask, Save Mask, Brush, Apply.",
  "sections": [
   {
    "type": "toggle",

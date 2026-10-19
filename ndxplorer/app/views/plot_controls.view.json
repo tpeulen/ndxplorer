@@ -1,5 +1,5 @@
 {
- "_comment": "The ndXplorer 'Plot controls' dock of the emtk app (ndxplorer.app), drawn by emtk.view_form over ndxplorer.app.view_model.PanelModel. The same panels, in the same order and with the same fold defaults, as plotting/plot_panels.view.json + plot_control.ui in the Qt window. The z marginal is a host-drawn custom section (z_plot); the gate table is a data_table.",
+ "_comment": "The ndXplorer 'Plot controls' dock of the emtk app (ndxplorer.app), drawn by emtk.view_form over ndxplorer.app.view_model.PanelModel. The same panels, in the same order and with the same fold defaults, as the plot-control panels of the retired Qt window. The z marginal is a host-drawn custom section (z_plot); the gate table is a data_table.",
  "sections": [
   {
    "type": "panel",

@@ -1,7 +1,7 @@
 """The main menu, as data.
 
-The same four menus and entries as the Qt window's menu bar
-(``plotting/plot_main.ui``), in the same order with the same shortcuts. An
+The same four menus and entries as the retired Qt window's menu bar, in the
+same order with the same shortcuts. An
 entry names the *action* the app runs; an action the app does not have yet is
 shown disabled rather than left out, so what is still to be ported is visible
 in the app itself.
