@@ -115,12 +115,6 @@ class PlotArea:
                     break
             if rgba is None:
                 rgba = apply_colormap(np.flipud(values), self.model.colormap, vmin, vmax)
-                # An empty bin is background, not the colormap's lowest colour: with a map
-                # whose low end is a colour (CET-R3's blue) the whole plot was filled with it.
-                empty = np.flipud(np.asarray(hist.H) <= 0)
-                if empty.shape == rgba.shape[:2] and empty.any():
-                    rgba = np.array(rgba, copy=True)
-                    rgba[empty] = 0
             ny, nx = values.shape
             self._texture = Texture(max(nx, 1), max(ny, 1), np.ascontiguousarray(rgba).tobytes(),
                                     filter="nearest")
