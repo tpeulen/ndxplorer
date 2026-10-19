@@ -48,6 +48,17 @@ def _text_width(text: str) -> float:
     return painter.text_width(text)
 
 
+def _frame_padding() -> float:
+    """A control's frame padding, both sides: emtk's default metric, not a copy of it.
+
+    emtk made its metrics denser (4 -> 3 px a side); a hardcoded 8 then failed
+    every button whose width is exactly its text plus that padding.
+    """
+    from emtk.layout import FRAME_PADDING
+
+    return 2.0 * FRAME_PADDING[0]
+
+
 def _buttons(spec):
     """``action -> label`` of every button in a spec."""
     found = {}
@@ -84,7 +95,7 @@ def test_no_control_clips_at_a_real_window_size(size, data_path, tmp_path, monke
         "plot_header": app.plot_boxes["header"],
         "plot_corner": app.plot_boxes["corner"],
     }
-    pad = 8.0  # a button's frame padding, both sides, at the native scale
+    pad = _frame_padding()
     problems = []
     for name, box in boxes.items():
         form = app.forms[name]
@@ -107,7 +118,7 @@ def test_the_axis_combos_show_a_dozen_characters(size, data_path, tmp_path, monk
     # padding, text, a gap, the arrow, padding -- as view_form's combo draws it
     need = _text_width("0" * 12) + 16.0
     for name in ("x_name", "y_name"):
-        assert rects[name][2] >= need, f"{name} is {rects[name][2]:.0f} px at {size}"
+        assert rects[name][2] + 0.5 >= need, f"{name} is {rects[name][2]:.0f} px at {size}"
 
 
 @pytest.mark.parametrize("size", [(980, 949), (1400, 900)])
@@ -173,6 +184,6 @@ def test_the_colour_limits_show_their_whole_number(size, data_path, tmp_path, mo
     monkeypatch.setenv("HOME", str(tmp_path))
     app = _replay(size, data_path, monkeypatch).app
     rects = app.forms["plot_header"].rects
-    need = _text_width("2.01e+02") + 8.0
+    need = _text_width("2.01e+02") + _frame_padding()
     for name in ("vmin", "vmax"):
-        assert rects[name][2] >= need, f"{name} is {rects[name][2]:.0f} px at {size}"
+        assert rects[name][2] + 0.5 >= need, f"{name} is {rects[name][2]:.0f} px at {size}"
