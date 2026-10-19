@@ -273,6 +273,9 @@ def test_the_frame_that_makes_gates_asks_for_the_next(app, source):
     app.model.set_source(source)
     app.model.set_parameter("y", "S")
     draw(app)
+    # The first frame lays out the panels' fills before it knows the rows after
+    # them (emtk Layout.settle_fills) and rightly asks for one more to settle.
+    draw(app)
     assert not app.animating()
     x, y, w, h = app.plots.rects["map"]
     p0, p1 = (x + 0.1 * w, y + 0.2 * h), (x + 0.6 * w, y + 0.7 * h)
