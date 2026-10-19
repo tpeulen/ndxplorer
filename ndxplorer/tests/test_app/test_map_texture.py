@@ -91,3 +91,28 @@ def test_the_pto_map_holds_every_burst_inside_both_ranges():
     iy, ix = np.unravel_index(np.argmax(H), H.shape)
     assert 0.75 < model.histograms.y_edges[iy] < 0.95
     assert 0.45 < model.histograms.x_edges[ix] < 0.65
+
+
+@pytest.mark.parametrize("colormap", ["CET-R3", "viridis", "gist_earth"])
+def test_an_empty_bin_is_background_whatever_the_colormap(colormap):
+    """CET-R3's lowest colour is blue: every empty bin was painted with it and the map
+    was a solid blue sheet with the data as a thin stripe. Empty bins are transparent."""
+    from ndxplorer.app.model import ExplorerModel
+    from ndxplorer.app.plots import PlotArea
+
+    rng = np.random.default_rng(1)
+    model = ExplorerModel()
+    model.set_source(DataSource.from_columns({
+        "E": rng.normal(0.9, 0.02, 2000), "D": rng.lognormal(1.0, 0.4, 2000)}))
+    model.set_parameter("x", "E")
+    model.set_parameter("y", "D")
+    model.x.lo, model.x.hi = -0.1, 1.1
+    model.invalidate()
+    model.colormap = colormap
+    model.update()
+    texture = PlotArea(model).texture()
+    rgba = np.frombuffer(bytes(texture.px), np.uint8).reshape(texture.height, texture.width, 4)
+    empty = np.flipud(model.histograms.H <= 0)
+    assert empty.any() and (~empty).any()
+    assert (rgba[empty] == 0).all()
+    assert (rgba[~empty][:, 3] == 255).all()
