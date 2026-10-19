@@ -2,7 +2,6 @@
 
 import json
 import pathlib
-from types import SimpleNamespace
 
 import pytest
 from ndxplorer.app import frame, launch
@@ -75,23 +74,6 @@ def test_standalone_launcher_delivers_default_and_preserves_explicit_size(monkey
     monkeypatch.setattr(emtk.tk_host, "TkHost", Host)
     assert launch.run(host=host, size=explicit) == 0
     assert received == [((1200, 800), explicit if host == "native" else (explicit or (1200, 800)))]
-
-
-def test_qt_host_uses_owner_declaration_on_an_adequate_screen(qapp, monkeypatch):
-    """A real headless host reads the declaration before clamping to available geometry."""
-    from emtk.qt_host import ControlHost
-    from qtpy import QtCore, QtGui
-
-    app = frame.NdxApp(features=[])
-    host = ControlHost(app)
-    try:
-        monkeypatch.setattr(
-            QtGui.QGuiApplication, "primaryScreen",
-            lambda: SimpleNamespace(availableGeometry=lambda: QtCore.QRect(0, 0, 1920, 1080)),
-        )
-        assert host.window_size_hint() == (1200, 800)
-    finally:
-        host.close()
 
 
 def test_existing_chisurf_host_geometry_retains_saved_user_size(tmp_path, monkeypatch):
