@@ -345,11 +345,9 @@ class RankingTable:
             eligible = np.sort(rng.choice(eligible, size=self.max_rows, replace=False))
         self.index = eligible.astype(np.int64)
 
-        self._all_raw: Dict[str, np.ndarray] = {}
         for name, column in self.columns.items():
             # Gather first, then widen: a float32 view of a large table stays as it is.
             raw = np.asarray(np.asarray(column)[self.index], dtype=np.float64)
-            self._all_raw[name] = raw
             coords = display_coordinates(raw, self.view(name))
             finite = coords[np.isfinite(coords)]
             if finite.size < 2 or np.all(finite == finite[0]):
@@ -375,13 +373,14 @@ class RankingTable:
         finite in both and only with at least :data:`MIN_K` of them.
         """
         self.prepare()
-        present = [s for s in sources if s in getattr(self, "_all_raw", {})]
+        # Only sources that survived the sample: a dropped one has no rank correlation.
+        present = [s for s in sources if s in self.raw]
         out = []
         for name in self._names:
             if name in sources:
                 continue
             for source in present:
-                rho = _abs_spearman(self.raw[name], self._all_raw[source], MIN_K)
+                rho = _abs_spearman(self.raw[name], self.raw[source], MIN_K)
                 if rho is not None and rho >= threshold:
                     out.append(name)
                     break
@@ -902,9 +901,16 @@ class ColumnSet:
         return heads
 
     def _fold_out(self, heads: List[str]) -> None:
-        """Set aside heads that are a many-to-one function of another head."""
+        """Set aside heads that are a many-to-one function of another head.
+
+        One pass: every head is tested against every other head (in table
+        order, the first match names the reason), folds included -- being a
+        function of another column is a property of the data.
+        """
+        position = {name: i for i, name in enumerate(self.table.names)}
+        in_table_order = sorted(heads, key=position.get)
         for name in heads:
-            for other in heads:
+            for other in in_table_order:
                 if other == name:
                     continue
                 if self.eta(name, other) >= FUNCTION_ETA and \
@@ -934,9 +940,10 @@ class _ScoredViews:
       keeps equal scores in scoring order and keeps two ``found`` objects
       from ever being compared;
     * correlation: ``(-|rho|, p, arrival, rho)``;
-    * separation, class ids: ``(-kappa, -p_o, n_valid)`` with kappa weighted
-      by the share of rows the view draws;
-    * separation, a quantity: ``(-R2c, -R2c, n_valid)``, R2c the
+    * separation, class ids: ``(-kappa_c, -p_o, -n_valid)`` with kappa_c
+      weighted by the share of rows the view draws; equal agreement goes to
+      the view more bursts support;
+    * separation, a quantity: ``(-R2c, -R2c, -n_valid)``, R2c the
       coverage-weighted R^2.
     """
 
@@ -1011,9 +1018,9 @@ class _ScoredViews:
             kappa = chance_corrected_agreement(statistic, valid_labels)
             if kappa is None:
                 return None
-            return (-kappa * coverage, -statistic, n_valid)
+            return (-kappa * coverage, -statistic, -n_valid)
         weighted = statistic * coverage
-        return (-weighted, -weighted, n_valid)
+        return (-weighted, -weighted, -n_valid)
 
     def compute_score(self, state: Tuple[str, ...]):
         """The score of the view *state* (lower is better), ``None`` to leave it out."""
@@ -1073,7 +1080,7 @@ class _ScoredViews:
                            bar_color=POSITIVE_BAR if rho >= 0 else NEGATIVE_BAR, value=rho)
         table_labels = self.table.labels
         classes = tr(table_labels.name)
-        n_valid = int(score[2])
+        n_valid = -int(score[2])
         coverage = n_valid / max(n, 1)
         if table_labels.discrete:
             weighted = -float(score[0])
@@ -1100,7 +1107,7 @@ class _ScoredViews:
     @property
     def header(self) -> Tuple[str, ...]:
         if self.method == "populations":
-            return (mark("Separation"),) + self._name_headers() + ("Islands",)
+            return (mark("Separation"),) + self._name_headers() + (mark("Islands"),)
         if self.method == "correlation":
             return ("ρ",) + self._name_headers()
         discrete = self.table.labels is None or self.table.labels.discrete

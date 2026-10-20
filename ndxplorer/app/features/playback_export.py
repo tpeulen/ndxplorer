@@ -327,8 +327,9 @@ class RankingPanel:
             fx, fy, fw, _fh = frame_box
             self.window.pos = (fx + fw - min(self.window.size[0], fw - 20.0) - 24.0, fy + 40.0)
         pressed = self.window.begin(frame_box, buttons=("Guide", "?"))
+        # The table draws the selected row's note under its rows (its
+        # selection note, from ``tooltip_key``); the panel adds nothing below.
         draw_form(self.spec, self.model, self.state, titles=False)
-        self._draw_note()
         self.window.end()
         binding = self.state.tables.get("ranked_rows")
         request = self.model.select_request
@@ -347,17 +348,6 @@ class RankingPanel:
             self._draw_help(frame_box)
         if self.tour is not None:
             self._draw_tour(frame_box)
-
-    def _draw_note(self) -> None:
-        """What the selected row's score means (the Qt window's line under the table)."""
-        import emtk
-
-        binding = self.state.tables.get("ranked_rows")
-        record = None
-        if binding is not None:
-            record = binding.record(binding.control.selected_index())
-        if isinstance(record, dict) and record.get("note"):
-            emtk.text_wrapped(str(record["note"]))
 
     def _draw_help(self, frame_box) -> None:
         """The panel's long help (``vizrank_help.md``), wrapped and scrolled by the wheel."""

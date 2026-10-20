@@ -483,3 +483,54 @@ def test_pairs_are_ordered_by_their_columns_alone():
     assert ranker.attrs[0] == "split"
     first = next(iter(ranker.iterate_states()))
     assert "split" in first
+
+
+def test_equal_agreement_goes_to_the_view_more_bursts_support():
+    """The class key ends in -n_valid: with equal kappa_c and p_o, more rows rank first."""
+    rng = np.random.default_rng(13)
+    n = 300
+    y = (np.arange(n) < n // 2).astype(float)
+    x = y + rng.normal(0, 0.05, n)
+    sparse = x.copy()
+    sparse[:30] = NAN
+    for discrete in (True, False):
+        table = RankingTable({"x": x, "sparse": sparse},
+                             labels=ClassLabels(y, discrete, "c"))
+        ranker = ParameterRanker(table, "separation")
+        ranker.prepare()
+        scores = {s[0]: ranker.compute_score(s) for s in ranker.iterate_states()}
+        assert scores["x"][2] == -n and scores["sparse"][2] == -(n - 30)
+        row = ranker.row_for_state(scores["sparse"], ("sparse",))
+        if discrete:
+            assert f"over {n - 30} of {n} sampled rows" in row.tooltip
+    assert (-0.5, -0.9, -100) < (-0.5, -0.9, -50)
+
+
+def test_the_islands_header_is_translated():
+    """'Islands' is marked for extraction and drawn through the translator."""
+    from emtk.i18n.extract import collect
+
+    from ndxplorer.analysis.vizrank_model import VizRankModel
+    from ndxplorer.i18n import DOMAIN
+
+    package = pathlib.Path(__file__).resolve().parents[1]
+    assert "Islands" in {source for _context, source in collect(package, DOMAIN)}
+
+    class Model(VizRankModel):
+        def make_ranker(self):
+            rng = np.random.default_rng(14)
+            return ProjectionRanker(RankingTable({"a": rng.normal(size=500),
+                                                  "b": rng.normal(size=500)}), "populations")
+
+    seen = []
+    import ndxplorer.analysis.vizrank_model as model_module
+
+    original = model_module.tr
+    model_module.tr = lambda text: seen.append(text) or original(text)
+    try:
+        model = Model()
+        model.start()
+        titles = [c["title"] for c in model.ranked_columns()]
+    finally:
+        model_module.tr = original
+    assert titles[-1] == "Islands" and "Islands" in seen
