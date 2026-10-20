@@ -856,3 +856,87 @@ Row tooltips:
 "The mean {classes} of each burst's {k} nearest neighbours predicts its own with R² = {r2}; weighted by the {share} of sampled rows that have values.",
 "No finite pairs, or a constant column." (unused after D8; it may be dropped).
 `{classes}` is the translated `ClassLabels.name`.
+
+---
+
+## Clarifications (2026-10-20)
+
+These answer the implementer's questions after the first rewrite (ndxplorer
+0a66a36). Each answer is functional. "Specified" marks where the answer fixes a
+choice that this spec left open or that differs from the earlier behaviour.
+
+1. **D6 and what the discrete row shows.** Yes, that is correct. The score
+   cell, the bar and the sort order all use the coverage-weighted value
+   κ_c = κ · n_v/n_tot. The tooltip reports the **unweighted** κ, together
+   with "over {valid} of {n} sampled rows". The reader then sees both parts of
+   the product: how well the view separates the rows it can draw, and what
+   share of rows that is. The tooltip string stays verbatim (Appendix A).
+   `{share}` there is p_o, the unweighted same-class fraction.
+
+2. **Tie-break on the number of valid rows.** Specified: **−n_v**. The full
+   key is (−κ_c, −p_o, −n_v), and after that, scoring order. When the
+   agreement is equal, the view supported by more bursts is better evidence,
+   so it ranks first. The continuous key gets the same last element:
+   (−R²_c, −R²_c, −n_v).
+
+3. **`uniform` from 0-based average ranks.** Yes, that is correct, and
+   0-based is required. Average ranks run from 0 to n_f − 1 over the n_f finite
+   values. Tied values share the mean of the positions they span. Dividing by
+   max(n_f − 1, 1) puts the values on [0, 1], which is the domain that
+   `correlation_ratio`'s 32 bins assume. With 1-based ranks the top value
+   would fall outside [0, 1] and be clipped into the last bin.
+
+4. **Spearman inside `ColumnSet` (alias test) and in the correlation score.**
+   Yes. Specified as the exact Spearman ρ under pairwise deletion: take the
+   rows finite in **both** columns, rank each column **over that joint subset**
+   with average ranks, and compute Pearson's r on those ranks. Ranks computed
+   per column over each column's own finite rows are not used for ρ. The
+   per-column ranks described in 4.6 serve only to build `uniform` for the η²
+   tests. The minimum of 2·MIN_K joint rows still applies to the alias test.
+   Below it, ρ counts as 0, which means "not an alias".
+
+5. **Column tooltips.** Yes, that is correct. The "The {axis} parameter of the
+   view; …" tooltip goes on the parameter-name columns only (x, y, or
+   Parameter). The Islands column carries no parameter tooltip. A tooltip that
+   names it is optional. If you add one, it is a new string and falls under
+   item 10.
+
+6. **Phase text.** Yes, that is correct. Use the existing translated strings:
+   "ordering parameters" while the columns are being selected and ordered,
+   then "Scoring views…" while scoring. No phase text may go out untranslated.
+
+7. **`derived_from` and sources dropped in `prepare()`.** Specified: only
+   sources that **survived** `prepare()` count. A source that was dropped as
+   constant or undrawable over the sample has no defined rank correlation with
+   anything, so it cannot make another column "derived". Treating it as
+   present must give the same result, because its ρ is undefined and so never
+   reaches the threshold. Skipping it explicitly is the specified behaviour.
+   Note the difference from the exclusion list: a source that is listed in
+   `labels.exclude` is still excluded from ranking whether or not it survived.
+
+8. **Folds against heads that are themselves folds.** Yes. Specified as one
+   pass over the alias heads. Each head is tested against **every** other head
+   by the data relation alone, regardless of whether that other head is itself
+   marked as a fold. Being a many-to-one function of another column is a
+   property of the data and does not depend on which columns end up shown. A
+   function of a fold is also a function of what that fold folds, so the
+   result does not depend on the visiting order. The first matching "other"
+   (in table order) names the reason.
+
+9. **Automatic display range from the sample.** Yes, that is correct. The
+   automatic range (a `None` bound in `ColumnView`) is the robust range of the
+   **sampled** rows. Those are the bursts being ranked, and the robust range
+   is quantile-based, so the sample estimates it well. The full column is not
+   read after `prepare()`. Fixed bounds from the axis settings are used as
+   given.
+
+10. **The "Islands" header and i18n.** Specified: mark it for translation (the
+    same marking as "Separation" and "Parameter") and render it through the
+    translator. ndX's interface must be multilingual, so an unmarked string is
+    a defect, not a workaround. Until the de/fr catalogues carry the entry, the
+    translator falls back to English, so marking it is safe now. Adding the
+    catalogue entries ("Islands": de "Inseln", fr "Îlots") belongs to the
+    queued i18n catalogue job, not to this rewrite. Record it as an open item
+    there. The same applies to any other new user-visible string, such as an
+    optional tooltip from item 5. The headers "x", "y", "ρ", "κ" and "R²" are
+    symbols and stay unmarked.
