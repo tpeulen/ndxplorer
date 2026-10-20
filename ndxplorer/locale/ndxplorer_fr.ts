@@ -465,8 +465,8 @@ C'est la correction dont l'erreur est la plus difficile à voir : elle déplace 
         </message>
         <message>
             <location filename="ndxplorer/app/features/settings.py" line="1090" />
-            <source>Author: Thomas-Otavio Peulen. License: GPL-2.1.</source>
-            <translation>Auteur : Thomas-Otavio Peulen. Licence : GPL-2.1.</translation>
+            <source>Author: Thomas-Otavio Peulen. License: {license}.</source>
+            <translation>Auteur : Thomas-Otavio Peulen. Licence : {license}.</translation>
         </message>
         <message>
             <location filename="ndxplorer/analysis/fret_calibration_options.view.json" line="0" />
@@ -7421,6 +7421,16 @@ Installer {package} maintenant (conda, conda-forge) ?</translation>
             <location filename="ndxplorer/app/features/selection.py" line="585" />
             <source>Result from {target}</source>
             <translation>Résultat de {target}</translation>
+        </message>
+        <message>
+            <location filename="ndxplorer/app/model.py" line="377" />
+            <source>{name} has no positive values: a log scale is not possible</source>
+            <translation>{name} n’a aucune valeur positive : une échelle logarithmique est impossible</translation>
+        </message>
+        <message>
+            <location filename="ndxplorer/app/model.py" line="373" />
+            <source>{name}: log scale, range set to its positive values ({lo:.4g} to {hi:.4g})</source>
+            <translation>{name} : échelle logarithmique, plage réglée sur ses valeurs positives ({lo:.4g} à {hi:.4g})</translation>
         </message>
     </context>
 </TS>

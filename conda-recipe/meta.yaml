@@ -55,7 +55,7 @@ test:
 
 about:
   home: {{ project.get('urls', {}).get('Homepage', '') }}
-  license: {{ project.get('license', {}).get('text', '') }}
+  license: {{ project['license'] }}
   license_file: LICENSE
   summary: "{{ project.get('description') }}"
   description: |

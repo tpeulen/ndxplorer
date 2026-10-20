@@ -30,6 +30,7 @@ import pathlib
 from typing import Any, Callable, Dict, List, Optional
 
 from . import Feature
+from ... import __license__
 from ...i18n import LANGUAGES, mark, tr
 
 __all__ = ["SettingsFeature", "create", "HELP_TEXT", "help_text"]
@@ -1087,7 +1088,8 @@ class SettingsFeature(Feature):
         text = (tr("ndXplorer -- interactive exploration of multidimensional data "
                    "(single-molecule fluorescence, sampling, any table).")
                 + f"\n\n{rows}\n\n"
-                + tr("Author: Thomas-Otavio Peulen. License: GPL-2.1.") + f"\n{DOCS_URL}")
+                + tr("Author: Thomas-Otavio Peulen. License: {license}.").format(license=__license__)
+                + f"\n{DOCS_URL}")
         self.window = TextWindow(self, tr("About ndXplorer"), text, height=380.0)
 
     def update_app(self) -> None:
