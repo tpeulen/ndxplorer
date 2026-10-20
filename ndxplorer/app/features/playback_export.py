@@ -74,7 +74,7 @@ class _Handle:
     handle): cancellation, partial batches, progress, a status text.
 
     ``is_cancelled`` also turns true when the current *slice* is spent, which
-    makes :func:`~ndxplorer.analysis.vizrank.run_vizrank` hand back its batch
+    makes :func:`~ndxplorer.analysis.vizrank.score_states` hand back its batch
     and return; the next slice continues from the shared state iterator.
     """
 
@@ -858,7 +858,7 @@ class PlaybackExportFeature(Feature):
             self._applying = False
 
     def follow_axes(self, force: bool = False) -> None:
-        """Select the row of a view picked by hand (Orange's auto-select)."""
+        """Select the ranked row that shows the view the user picked by hand."""
         model = self.app.model
         seen = (model.x.name, model.y.name, model.z.name)
         if not force and (seen == self._axes_seen or self._applying):

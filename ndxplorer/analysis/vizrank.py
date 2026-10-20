@@ -1,134 +1,119 @@
-"""Rank candidate views of a table, best first, while the user watches.
+"""Ranking candidate views: enumerate, score, keep the best first.
 
-A table with forty columns has 780 scatter plots in it, and ndX used to leave
-the user to find the one that shows something. This module is the Qt-free half
-of the answer: a *ranker* enumerates candidate configurations (a column, a pair
-of columns), scores each one, and says how a scored configuration reads as a
-table row. :class:`ndxplorer.analysis.vizrank_model.VizRankModel` runs a ranker in the
-background and streams its rows into a table declared in a ``view.json`` and
-drawn by emtk; clicking a row applies that configuration to the plot.
+A *ranking* walks through candidate configurations of a plot -- one column,
+or a pair of columns -- gives each a score and keeps the scored candidates
+sorted while scoring runs, so a table of views fills from the top while the
+rest is still being computed. The idea of ranking projections of a data set by
+a quality measure and showing the best first is that of VizRank (Leban, Zupan,
+Vidmar & Bratko 2006, doi:10.1007/s10618-005-0031-5); what makes a view good
+is decided by the concrete rankers in
+:mod:`ndxplorer.analysis.projection_scores`.
 
-The design is Orange3's VizRank (Bioinformatics Lab, University of Ljubljana,
-GPL-3.0; ``Orange/widgets/visualize/utils/vizrank.py``), reimplemented against
-ndX's own seams. What crossed over:
+This module is the GUI-free half of the machinery:
 
-* the subclass contract — :meth:`Ranker.state_count`,
-  :meth:`Ranker.iterate_states`, :meth:`Ranker.compute_score` (**lower is
-  better**, ``None`` skips the state) and :meth:`Ranker.row_for_state`;
-* the run states and their button labels (:class:`RunState`), including the
-  difference between *paused* and *hidden*;
-* the worker loop (:func:`run_vizrank`): every state taken from the iterator is
-  scored before the interruption check, so pausing and continuing loses none,
-  and partial results are throttled so a cheap score cannot flood the GUI;
-* the attribute and attribute-pair enumerations (:class:`AttrRanker`,
-  :class:`AttrPairRanker`), in Orange's order.
+* :class:`RunState` -- where a ranking stands (prepared, running, paused by
+  the user, stopped because its window closed, finished);
+* :class:`RankRow` -- how one scored candidate appears in the table;
+* :class:`Ranker`, :class:`ColumnRanker`, :class:`PairRanker` -- the contract
+  a concrete ranker fulfils, with the enumeration of single columns and of
+  column pairs;
+* :func:`score_states` -- the cooperative scoring loop that hands its results
+  over in throttled batches, and :func:`insertion_index` -- where a newly
+  scored row goes on the receiving side.
 
-Where it departs, and why:
-
-* **The insert position is computed where the table lives, not in the worker.**
-  Orange's worker bisects into a copy of the score list it was started with. A
-  pause followed quickly by *Continue* can start the next run before the last
-  batch of the previous one has arrived, so the copy is stale and rows land in
-  the wrong place. Here the worker only produces ``(state, score)`` pairs and
-  :class:`ScoreList` bisects on arrival, which cannot race.
-* **Throttling is a clock comparison, not a ``threading.Timer`` per batch.**
-* **Rows are plain values** (:class:`RankRow`), so every ranker — and its tests
-  — is Qt-free; the panel turns them into the records its ``data_table``
-  section reads.
-
-The background-task machinery itself is **not** ported: ChiSurf already adopted
-Orange's ``ConcurrentMixin`` as :func:`chisurf.gui.task.run_in_background`, and
-the panel runs on that. :func:`run_vizrank` takes the handle that function
-passes (``is_cancelled``, ``set_partial``, ``set_progress``).
+Conventions: a *state* is a tuple of column names; a *score* is any totally
+ordered value (usually a tuple compared lexicographically) where **lower is
+better**; ``None`` means "no view to show" -- the state is counted as scored
+but gets no row.
 """
 
 from __future__ import annotations
 
+import bisect
+import enum
 import logging
 import time
-from bisect import bisect_left
 from dataclasses import dataclass, field
-from enum import IntEnum
-from typing import Any, Callable, Iterable, Iterator, List, Optional, Sequence, Tuple
-
-from ..i18n import mark
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "RunState",
     "RankRow",
-    "ScoreList",
-    "Batch",
-    "run_vizrank",
+    "ScoreBatch",
+    "StateTotal",
     "Ranker",
-    "AttrRanker",
-    "AttrPairRanker",
+    "ColumnRanker",
+    "PairRanker",
+    "pair_indices",
+    "score_states",
+    "insertion_index",
+    "BATCH_INTERVAL",
 ]
 
+#: Seconds between two batches handed to the GUI side.
+BATCH_INTERVAL = 0.05
 
-class RunState(IntEnum):
-    """Where a ranking is in its life.
 
-    ``Paused`` and ``Hidden`` both hold a half-finished ranking that can
-    continue without starting over. They differ in what reopening the dialog
-    does: a ranking the user *paused* stays paused, one that stopped because the
-    dialog was *closed* resumes.
+class RunState(enum.IntEnum):
+    """Where a ranking stands.
+
+    ``Initialized``
+        There is data, and no ranking has been prepared yet.
+    ``Ready``
+        A ranking is prepared and has not started.
+    ``Running``
+        Scoring is in progress.
+    ``Paused``
+        The user stopped it; reopening the window does not resume it.
+    ``Hidden``
+        It stopped because its window closed; reopening resumes it.
+    ``Done``
+        Every state has been scored.
+    ``NoData``
+        Nothing to rank.
     """
 
-    Invalid = 0      #: never valid for a live dialog; the initial value only
-    Initialized = 1  #: has data; :meth:`VizRankDialog.prepare_run` not called yet
-    Ready = 2        #: iterator built and the state count known; not started
-    Running = 3      #: the worker is scoring
-    Paused = 4       #: stopped by the user; Continue picks up where it was
-    Hidden = 5       #: stopped because the dialog closed; reopening resumes
-    Done = 6         #: every state scored
+    NoData = 0
+    Initialized = 1
+    Ready = 2
+    Running = 3
+    Paused = 4
+    Hidden = 5
+    Done = 6
 
     def can_run(self) -> bool:
-        """Whether *Start*/*Continue* may start a worker from this state."""
+        """Whether scoring may (re)start from here: a prepared, paused or hidden ranking."""
         return self in (RunState.Ready, RunState.Paused, RunState.Hidden)
 
 
-#: The button caption for each state. ``Done`` disables the button.
-BUTTON_LABELS = {
-    RunState.Invalid: mark("Start"),
-    RunState.Initialized: mark("Start"),
-    RunState.Ready: mark("Start"),
-    RunState.Running: mark("Pause"),
-    RunState.Paused: mark("Continue"),
-    RunState.Hidden: mark("Continue"),
-    RunState.Done: mark("Finished"),
-}
-
-
-@dataclass
+@dataclass(frozen=True)
 class RankRow:
-    """One scored configuration, as the table shows it.
+    """One scored state as the ranking table shows it.
 
     Attributes
     ----------
     cells : tuple of str
-        Display text, one per column of :attr:`Ranker.header`.
-    payload : object
-        What applying the row means (column names, scales, …). Handed to the
-        dialog's ``selectionChanged`` signal unchanged.
+        Display text: the score first, then the column labels, then any extra
+        cells (an island count).
+    payload : dict
+        What choosing the row sets (axis names and scales).
     bar : float or None
-        Length of the in-cell bar drawn under the first cell, in ``[0, 1]``;
-        ``None`` for no bar.
+        Bar length in ``[0, 1]``.
     sort_value : float
-        Higher is better. What the table sorts the first column by, because the
-        displayed text ("+0.41", "κ 0.83") does not sort numerically.
+        The row's number, higher is better.
     tooltip : str
-        Longer explanation shown on hover.
-    bar_color : tuple or None
-        ``(r, g, b)`` for the bar; ``None`` uses the default.
+        What the score means for this row, in words.
+    bar_color : tuple of int or None
+        RGB of the bar, when the row has its own.
     value : float or None
-        The number the score column shows (a signed ``r``, where
-        :attr:`sort_value` is ``|r|``); ``sort_value`` when ``None``.
+        The number the score column shows when it differs from
+        :attr:`sort_value` (a signed correlation whose magnitude ranks).
     """
 
     cells: Tuple[str, ...]
-    payload: Any
+    payload: Dict[str, Any] = field(default_factory=dict)
     bar: Optional[float] = None
     sort_value: float = 0.0
     tooltip: str = ""
@@ -136,222 +121,210 @@ class RankRow:
     value: Optional[float] = None
 
 
-class ScoreList:
-    """Scores kept in ascending order; :meth:`insert` returns the row position.
-
-    Orange keeps the same list inside its worker. It lives beside the table
-    here — see the module docstring for the race that avoids.
-    """
-
-    def __init__(self, scores: Iterable = ()):
-        self._scores: List[Any] = sorted(scores)
-
-    def insert(self, score) -> int:
-        """Add *score* and return the position it went to (ties go first)."""
-        position = bisect_left(self._scores, score)
-        self._scores.insert(position, score)
-        return position
-
-    def clear(self) -> None:
-        """Forget every score."""
-        self._scores.clear()
-
-    def __len__(self) -> int:
-        return len(self._scores)
-
-    def __iter__(self):
-        return iter(self._scores)
-
-    def as_list(self) -> list:
-        """A copy of the scores, ascending."""
-        return list(self._scores)
-
-
 @dataclass
-class Batch:
-    """What the worker hands the GUI thread in one partial result.
+class ScoreBatch:
+    """Scored states on their way to the GUI side.
 
-    Attributes
-    ----------
-    generation : int
-        The run it belongs to. A batch from a superseded run is dropped on
-        arrival instead of being inserted into the new run's table.
-    items : list of (state, score)
-        Every state scored since the previous batch, including the ones whose
-        score was ``None`` — they are counted as completed, not shown.
-    completed : int
-        States scored so far in this ranking, across pauses.
-    failed : int
-        States in :attr:`items` whose scoring raised.
+    ``items`` holds ``(state, score)`` pairs in scoring order; a state whose
+    scoring raised appears with score ``None`` and is also counted in
+    ``failed``. ``generation`` names the ranking the batch belongs to, so a
+    batch of a superseded ranking can be dropped.
     """
 
     generation: int
-    items: List[Tuple[Any, Any]] = field(default_factory=list)
-    completed: int = 0
+    items: List[Tuple[Tuple[str, ...], Any]] = field(default_factory=list)
     failed: int = 0
 
 
-def run_vizrank(
-    compute_score: Callable[[Any], Any],
-    states: Iterator,
-    generation: int,
-    completed: int,
-    task,
-    *,
-    interval: float = 0.05,
-    clock: Callable[[], float] = time.monotonic,
-    progress: bool = True,
-) -> Batch:
-    """Score *states* one at a time, streaming batches through *task*.
+@dataclass
+class StateTotal:
+    """How many states the ranking ``generation`` will score (known once its
+    columns are chosen)."""
 
-    Runs in the worker thread. Every state taken from the iterator is scored
-    before cancellation is checked, so the shared iterator stops exactly after
-    the last state accounted for and *Continue* resumes with the next one.
+    generation: int
+    total: int
+
+
+def pair_indices(m: int) -> Iterator[Tuple[int, int]]:
+    """Every unordered pair of ``m`` positions once, as ``(j, i)`` with ``j < i``.
+
+    The order is *prefix-complete*: all pairs among the first ``p`` positions
+    come before any pair that involves position ``p``, so when the most
+    promising columns are put first the top of the ranking fills early. For
+    ``m = 4``: ``(0,1), (0,2), (1,2), (0,3), (1,3), (2,3)``. There are
+    ``m (m - 1) / 2`` pairs, none for ``m < 2``.
+    """
+    for i in range(1, m):
+        for j in range(i):
+            yield (j, i)
+
+
+def insertion_index(keys: Sequence[Any], key: Any) -> int:
+    """Where *key* goes in the ascending list *keys* so that equal keys keep
+    the order they arrived in (after every key equal to it)."""
+    return bisect.bisect_right(keys, key)
+
+
+def score_states(states: Iterator, score: Callable[[Any], Any], handle, generation: int,
+                 interval: float = BATCH_INTERVAL,
+                 clock: Callable[[], float] = time.monotonic) -> int:
+    """Score states from the shared iterator *states* until it ends or the run is cancelled.
+
+    Each state is scored and accounted for **before** ``handle.is_cancelled``
+    is polled, so stopping never loses or repeats a state: a later call with
+    the same iterator continues with the next one. A state whose scoring
+    raises is passed on with score ``None`` and counted as failed; the
+    ranking goes on. Results reach ``handle.set_partial`` as
+    :class:`ScoreBatch` objects at most once per *interval* seconds of
+    *clock*, and whatever is still held is delivered before returning.
 
     Parameters
     ----------
-    compute_score : callable
-        ``state -> score``; lower is better, ``None`` skips the state. A state
-        whose scoring raises is skipped and counted in :attr:`Batch.failed` —
-        one degenerate column pair must not end a ranking of seven hundred.
     states : iterator
-        The states still to score. Consumed, not copied.
+        The ranking's enumeration, shared across calls.
+    score : callable
+        ``score(state)`` -> score or ``None``.
+    handle : object
+        The runner's handle (``is_cancelled``, ``set_partial``).
     generation : int
-        Stamped on every batch; see :class:`Batch`.
-    completed : int
-        States already scored in earlier runs of this ranking, so progress
-        continues rather than restarting at zero after a pause.
-    task : object
-        The handle :func:`chisurf.gui.task.run_in_background` passes:
-        ``is_cancelled``, ``set_partial(value)``, ``set_progress(value)``.
+        The ranking the batches belong to.
     interval : float
-        Minimum seconds between two partial results. Cheap scores (a
-        correlation) would otherwise post one event per state and make the GUI
-        less responsive than a frozen one.
+        Minimum seconds between two batches.
     clock : callable
-        Time source; injectable so the throttle is testable.
-    progress : bool
-        Report :attr:`Batch.completed` through ``task.set_progress``. The dialog
-        passes ``False`` and counts on arrival instead, because a run continued
-        after a pause may start before the previous run's last batch has been
-        counted.
+        Monotonic time source.
 
     Returns
     -------
-    Batch
-        The last batch (possibly empty), also delivered through
-        ``set_partial`` so nothing scored is lost when the run was cancelled.
+    int
+        States scored by this call.
     """
-    batch = Batch(generation=generation, completed=completed)
-    last_emit = clock()
-    for state in states:
-        try:
-            score = compute_score(state)
-        except Exception:  # noqa: BLE001 - one bad state must not end the run
-            logger.debug("vizrank: scoring %r failed", state, exc_info=True)
-            score = None
-            batch.failed += 1
-        batch.items.append((state, score))
-        batch.completed += 1
-        now = clock()
-        if now - last_emit >= interval:
-            task.set_partial(batch)
-            if progress:
-                task.set_progress(batch.completed)
-            batch = Batch(generation=generation, completed=batch.completed)
-            last_emit = now
-        if task.is_cancelled:
-            break
-    task.set_partial(batch)
-    if progress:
-        task.set_progress(batch.completed)
-    return batch
+    batch = ScoreBatch(generation)
+    last = clock()
+    count = 0
+    try:
+        for state in states:
+            try:
+                value = score(state)
+            except Exception:  # noqa: BLE001 - one bad view must not end the ranking
+                logger.debug("scoring %r failed", state, exc_info=True)
+                value = None
+                batch.failed += 1
+            batch.items.append((state, value))
+            count += 1
+            now = clock()
+            if now - last >= interval:
+                handle.set_partial(batch)
+                batch = ScoreBatch(generation)
+                last = now
+            if handle.is_cancelled:
+                break
+    finally:
+        if batch.items or batch.failed:
+            handle.set_partial(batch)
+    return count
 
 
 class Ranker:
-    """What a ranking needs to know; subclasses fill in the scoring.
+    """What a concrete ranking provides to the panel model.
 
-    The constructor should only *store* what the ranking needs: a ranker is
-    built whenever the data or the settings change, whether or not anyone runs
-    it. The work belongs in :meth:`prepare`, which the dialog calls once before
-    the first state is scored (and which may run in the worker thread).
+    The life cycle: :meth:`prepare` on the GUI thread (it may read the live
+    table); then, in the worker, :meth:`state_count` and
+    :meth:`iterate_states` (the first of them chooses the columns, once),
+    :meth:`compute_score` per state; back on the GUI side
+    :meth:`row_for_state` turns a score into a :class:`RankRow`.
+
+    Subclasses implement :meth:`select_columns` and :meth:`compute_score`,
+    :meth:`row_for_state`, and set :attr:`header` and :attr:`score_span`.
     """
 
-    #: Column captions, first one being the score.
-    header: Tuple[str, ...] = (mark("Score"),)
+    #: Columns per state.
+    dimension = 1
 
+    def __init__(self) -> None:
+        self.attrs: List[str] = []
+        self._columns_ready = False
+
+    # ---- hooks -------------------------------------------------------------------------
     def prepare(self) -> None:
-        """Do the one-off work (subsampling, transforms) before scoring."""
+        """Get ready for a run on the GUI thread; forget any earlier column choice."""
+        self.attrs = []
+        self._columns_ready = False
 
-    def state_count(self) -> int:
-        """How many states :meth:`iterate_states` yields; for the progress bar."""
-        return 1
-
-    def iterate_states(self) -> Iterator:
-        """Yield every candidate configuration."""
+    def select_columns(self) -> List[str]:
+        """The columns to rank, in enumeration order (called once per run, in the worker)."""
         raise NotImplementedError
 
-    def compute_score(self, state) -> Any:
-        """Score one state. Lower is better; ``None`` leaves it out of the table."""
+    def compute_score(self, state: Tuple[str, ...]) -> Any:
+        """The score of *state* (lower is better), or ``None`` to leave it out."""
         raise NotImplementedError
 
-    def row_for_state(self, score, state) -> RankRow:
-        """How a scored state reads in the table."""
+    def row_for_state(self, score: Any, state: Tuple[str, ...]) -> RankRow:
+        """How the scored *state* appears in the table."""
         raise NotImplementedError
 
-    def matches(self, payload, wanted) -> bool:
-        """Whether a row's *payload* is the configuration *wanted*.
-
-        Used to select the row that corresponds to what the user set by hand.
-        """
-        return payload == wanted
-
-
-class AttrRanker(Ranker):
-    """Rank single columns. A state is an index into :attr:`attr_order`."""
-
-    header = (mark("Score"), mark("Parameter"))
-
-    def __init__(self, attrs: Sequence[str]):
-        self.attrs: List[str] = list(attrs)
-        self._attr_order: Optional[List[str]] = None
+    def matches(self, payload: dict, wanted: dict) -> bool:
+        """Whether a row's *payload* shows the view *wanted* (a hand-picked one)."""
+        return all(payload.get(k) == v for k, v in wanted.items())
 
     @property
-    def attr_order(self) -> List[str]:
-        """The columns in the order states refer to them (computed once)."""
-        if self._attr_order is None:
-            self._attr_order = list(self.score_attributes())
-        return self._attr_order
+    def header(self) -> Tuple[str, ...]:
+        """Column titles of the table: the score's name, then one per cell."""
+        return ("Score",)
 
-    def score_attributes(self) -> Sequence[str]:
-        """Order the columns so promising ones are scored first.
+    @property
+    def score_span(self) -> Tuple[float, float]:
+        """The range the score column's bar spans."""
+        return (0.0, 1.0)
 
-        States are indices into this order, so the table fills with good rows
-        early. The default keeps the given order.
-        """
-        return self.attrs
+    # ---- enumeration -------------------------------------------------------------------
+    def _ensure_columns(self) -> None:
+        if not self._columns_ready:
+            self.attrs = list(self.select_columns())
+            self._columns_ready = True
 
     def state_count(self) -> int:
+        """How many states the ranking scores."""
+        raise NotImplementedError
+
+    def iterate_states(self) -> Iterator[Tuple[str, ...]]:
+        """The states in scoring order."""
+        raise NotImplementedError
+
+
+class ColumnRanker(Ranker):
+    """A ranker of single columns: one state per selected column, in selection order."""
+
+    dimension = 1
+
+    def state_count(self) -> int:
+        self._ensure_columns()
         return len(self.attrs)
 
-    def iterate_states(self) -> Iterator[int]:
-        return iter(range(len(self.attr_order)))
+    def iterate_states(self) -> Iterator[Tuple[str, ...]]:
+        self._ensure_columns()
+        return iter([(name,) for name in self.attrs])
+
+    def matches(self, payload: dict, wanted: dict) -> bool:
+        return payload.get("z") == wanted.get("z")
 
 
-class AttrPairRanker(AttrRanker):
-    """Rank pairs of columns. A state is ``(j, i)`` with ``j < i``.
+class PairRanker(Ranker):
+    """A ranker of column pairs, enumerated prefix-complete (:func:`pair_indices`)
+    over the selected columns in the order :meth:`select_columns` returns."""
 
-    The order is Orange's: every pair among the first ``i + 1`` columns before
-    any pair involving column ``i + 1``, which is what makes a good
-    :meth:`score_attributes` order pay off early.
-    """
-
-    header = (mark("Score"), "x", "y")
+    dimension = 2
 
     def state_count(self) -> int:
-        n = len(self.attrs)
-        return n * (n - 1) // 2
+        self._ensure_columns()
+        m = len(self.attrs)
+        return m * (m - 1) // 2
 
-    def iterate_states(self) -> Iterator[Tuple[int, int]]:
-        n = len(self.attr_order)
-        return ((j, i) for i in range(n) for j in range(i))
+    def iterate_states(self) -> Iterator[Tuple[str, ...]]:
+        self._ensure_columns()
+        names = list(self.attrs)
+        return ((names[j], names[i]) for j, i in pair_indices(len(names)))
+
+    def matches(self, payload: dict, wanted: dict) -> bool:
+        """A transposed view is the same view: compare the sets of axis names."""
+        return {payload.get("x"), payload.get("y")} == {wanted.get("x"), wanted.get("y")}
+

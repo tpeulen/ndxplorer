@@ -1,64 +1,62 @@
-"""Scores for ranking burst-table projections, and the rankers that use them.
+"""What makes a view of the burst table informative: the scores ndX ranks by.
 
-The panel's *Rank by* switch picks one of three questions. Each score is
-vectorised over the rows of a subsample drawn once per ranking, so a view costs
-about a millisecond whatever the table size.
+Three scores, chosen in the ranking panel (:data:`METHODS`):
 
-**Separation** (the default) -- in which view do the bursts fall into clearly
-separated islands? :func:`ndxplorer.analysis.separation.find_populations`,
-unsupervised: the chance that two bursts drawn at random sit in two different
-islands cut apart by a density valley, discounted by how shallow the valley is
-and counting only the bursts inside an island's core (not on a bridge, in a
-tail or in the noise). It is 0 for one population however elongated or
-correlated, and highest where most bursts sit in well-separated populations --
-donor-only, acceptor-only and FRET species in E vs S.
+``populations`` (*Separation*, the default)
+    How much of the burst cloud falls into clearly separated islands --
+    ndX's density-valley score, :func:`ndxplorer.analysis.separation.find_populations`.
+``correlation``
+    Spearman's rank correlation of the two parameters (Spearman 1904,
+    doi:10.2307/1412159), with ties given average ranks (Kendall & Gibbons
+    1990).
+``separation`` (*Classes*)
+    How well the view keeps labelled bursts apart. VizRank (Leban, Zupan,
+    Vidmar & Bratko 2006, doi:10.1007/s10618-005-0031-5) measures a
+    projection by how well a k-nearest-neighbour classifier (Cover & Hart
+    1967, doi:10.1109/TIT.1967.1053964), trained on the projected
+    coordinates alone and evaluated leave-one-out, predicts each point's
+    class. With uniform votes the probability it gives the true class is
+    the share of a point's neighbours that share its class; ndX reports
+    that share above chance as a chance-corrected agreement (Scott 1955,
+    doi:10.1086/266577; Cohen 1960, doi:10.1177/001316446002000104).
 
-**Correlation** -- which parameters move together? Spearman ``|ρ|`` of the pair
-(:func:`correlation`, Orange3's ``CorrelationRank.compute_score``,
-``Orange/widgets/data/owcorrelations.py``). It finds related measurements, not
-populations.
-
-Both rank the same columns (:class:`ColumnSet`): flags, the acquisition clock
-and folds (``(1-E)*E`` of ``E``) are set aside, and columns that are the same
-quantity (``Proximity ratio`` and ``FRET efficiency``, a rate and its count)
-are ranked once under one representative whose row names the others.
-
-**Classes**, offered only when there are labels (gates, clusters, a label
-column) -- do the bursts of one class sit together? :func:`knn_separation`,
-transcribed from Orange3's scatter-plot VizRank (``ScatterPlotVizRank.
-compute_score``, ``Orange/widgets/visualize/owscatterplot.py``; Bioinformatics
-Lab, University of Ljubljana, GPL-3.0): the share of each point's ``k = 10``
-nearest neighbours with its class. Two departures: neighbours are found in
-**displayed** coordinates (each axis on ``[0, 1]`` over the range and scale ndX
-draws it with), and the score is **chance-corrected**
-(:func:`chance_corrected_agreement`).
-
-The 2-means "population structure" score this module used to offer is gone: on
-real burst tables it was carried by sentinel clumps (``-1`` for an unfitted
-channel) and by deterministic curves between derived columns.
+Every view of one ranking is scored on the same random subsample of the table
+(:class:`RankingTable`), so views compare on identical bursts. Columns that
+cannot carry populations -- flags, the acquisition clock, columns that are the
+same quantity as another, folds of another -- are set aside before pairs are
+formed (:class:`ColumnSet`). The rankers (:class:`ProjectionRanker`,
+:class:`ParameterRanker`) enumerate the views with
+:mod:`ndxplorer.analysis.vizrank`.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from ..i18n import mark, tr
-from ..utils.axis_helpers import robust_axis_range
-from .vizrank import AttrPairRanker, AttrRanker, RankRow
+from .vizrank import ColumnRanker, PairRanker, RankRow
 
 __all__ = [
     "MIN_K",
     "DEFAULT_MAX_ROWS",
     "MIN_DISTINCT",
     "DERIVED_RHO",
+    "FUNCTION_ETA",
+    "CURVE_ETA",
+    "CLOCK_SHARE",
+    "ETA_BINS",
+    "METHODS",
+    "METHOD_HELP",
     "ColumnView",
     "ClassLabels",
     "RankingTable",
     "display_coordinates",
+    "average_ranks",
     "nearest_neighbours",
     "knn_separation",
     "chance_corrected_agreement",
@@ -66,66 +64,67 @@ __all__ = [
     "correlation_ratio",
     "is_clock",
     "ColumnSet",
-    "METHODS",
     "ProjectionRanker",
     "ParameterRanker",
 ]
 
-#: Neighbours per point, and the fewest rows a view needs to be scored at all
-#: (Orange's ``minK``).
+#: Neighbours per burst in the class-separation score. VizRank's published
+#: choice is k = sqrt(N) (71 at a 5000-burst sample); on the test tables it
+#: gave the same top views at about six times the cost, so ndX keeps 10.
 MIN_K = 10
-
-#: Rows scored per ranking. kNN on 5 000 points in 2-D is a few milliseconds, so
-#: a 40-column table (780 pairs) ranks in seconds; the ranking of the top views
-#: is stable well below this (see the tests).
+#: Bursts drawn for one ranking.
 DEFAULT_MAX_ROWS = 5000
-
-#: Fewest distinct values a column needs to be scored for population structure.
-#: A flag (a fit's "scatter?" switch, a 0/1 quality bit) splits into two groups
-#: perfectly and says nothing about populations of molecules; on the real MFD
-#: burst table three such columns took every top row until this was added.
+#: Fewer distinct display values than this make a column a flag.
 MIN_DISTINCT = 20
-
-#: Spearman ``|ρ|`` above which a column counts as derived from another (see
-#: :meth:`RankingTable.derived_from`) or as the same quantity (:class:`ColumnSet`).
+#: Spearman |rho| at which two columns are taken for the same quantity.
 DERIVED_RHO = 0.98
+#: Correlation ratio at which one column is a function of another.
+FUNCTION_ETA = 0.98
+#: ... at which a pair is a single curve rather than a 2-D cloud.
+CURVE_ETA = 0.95
+#: Share of increasing steps that makes a column the acquisition clock.
+CLOCK_SHARE = 0.9
+#: Bins of the conditioning variable in :func:`correlation_ratio`.
+ETA_BINS = 32
+#: A fold's inverse dependence stays below this.
+_FOLD_INVERSE = 0.9
 
-#: Correlation ratio ``η²`` above which one column is a function of another
-#: (:func:`correlation_ratio`): read off the other's bins, it leaves under 2 %
-#: of its variance unexplained.
-FUNCTION_ETA2 = 0.98
+#: key -> (caption, needs class labels, ranks pairs, ranks single columns).
+#: The panel offers them in this order; the first is the default.
+METHODS: Dict[str, Tuple[str, bool, bool, bool]] = {
+    "populations": (mark("Separation"), False, True, True),
+    "correlation": (mark("Correlation"), False, True, False),
+    "separation": (mark("Classes"), True, True, True),
+}
 
-#: A pair in which one axis predicts the other this well is a curve, not a
-#: cloud: its "populations" are stretches of one line, already ranked in 1-D.
-CURVE_ETA2 = 0.95
+#: What each score means, in FRET terms (the line under the choice).
+METHOD_HELP: Dict[str, str] = {
+    "populations": mark(
+        "How many bursts fall into clearly separated islands: donor-only, acceptor-only "
+        "and FRET species in E vs S, a dynamic population off the static FRET line. "
+        "0: one population; 0.5: two equal islands with empty space between; 0.67: three."),
+    "correlation": mark(
+        "|Spearman rho| of the pair: parameters that measure related things (E and a "
+        "lifetime, a rate and its count), not populations. Parameters that are the same "
+        "quantity are ranked once."),
+    "separation": mark(
+        "Do the bursts of one label (a gate, the clusters) sit together in this view? "
+        "Share of each burst's 10 nearest neighbours with its label, above chance."),
+}
 
-#: Share of consecutive rows over which a column rises for it to be the
-#: acquisition clock (burst tables are in time order, file by file).
-CLOCK_RISE = 0.9
-
-#: Orange's bar colours for a positive and a negative correlation.
-POSITIVE_COLOR = (170, 242, 43)
-NEGATIVE_COLOR = (70, 190, 250)
+#: Bar colours of a positive and a negative correlation (ndX's blue and red).
+POSITIVE_BAR = (52, 120, 190)
+NEGATIVE_BAR = (205, 70, 60)
 
 
-# ---------------------------------------------------------------------------
-# the data a ranking reads
-# ---------------------------------------------------------------------------
-
-
+# ---------------------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------------------
 @dataclass
 class ColumnView:
-    """How ndX will draw a column: its scale and, if fixed, its range.
+    """How ndX draws a column: linear or logarithmic, and its range.
 
-    Attributes
-    ----------
-    name : str
-        Column name.
-    scale : str
-        ``"lin"`` or ``"log"``.
-    lo, hi : float or None
-        The axis range. ``None`` means what *Auto* would give, the robust range
-        of the ranked rows (:func:`ndxplorer.utils.axis_helpers.robust_axis_range`).
+    A bound of ``None`` is the automatic range.
     """
 
     name: str
@@ -136,23 +135,21 @@ class ColumnView:
 
 @dataclass
 class ClassLabels:
-    """What "separated" means: one label per row of the full table.
+    """Labels a view should keep apart.
 
     Attributes
     ----------
     values : numpy.ndarray
-        Full-length float array; ``NaN`` means the row has no class and is left
-        out of the separation score.
+        One value per table row; NaN is "no class" (the row is not used).
     discrete : bool
-        Class ids (neighbour agreement) or a quantity (neighbour R²).
+        Class ids (``True``) or a quantity to predict (``False``).
     name : str
-        Shown in the dialog and the tooltips.
+        What the labels are, for the tooltips (translated where shown).
     exclude : tuple of str
-        Columns that must not be ranked against these labels because they
-        define them — the gated parameter separates its own gate perfectly.
+        Columns the labels are made from (a gate's parameters): not ranked.
     use_all_rows : bool
-        The labels need rows the gates remove (inside *and* outside a gate), so
-        the ranked rows are not restricted to what the gates keep.
+        Rows the gates remove still count -- the labels contrast inside
+        with outside.
     """
 
     values: np.ndarray
@@ -163,735 +160,985 @@ class ClassLabels:
 
 
 def display_coordinates(values, view: ColumnView) -> np.ndarray:
-    """Map a column onto ``[0, 1]`` as the axis would draw it.
+    """A column on ``[0, 1]`` as its axis draws it.
 
-    A log axis takes ``log10``; values the axis cannot draw (non-positive on a
-    log axis, non-finite anywhere) become ``NaN``; values beyond the range are
-    clipped to its edge. Returns an all-``NaN`` array when the range is empty,
-    which the caller treats as a constant column.
+    Missing bounds come from
+    :func:`~ndxplorer.utils.axis_helpers.robust_axis_range`. On a log axis
+    the values and bounds are mapped by ``log10`` (values <= 0 cannot be
+    drawn). Values the axis cannot draw -- non-finite, or <= 0 on a log axis
+    -- are NaN; the rest are clipped to the range. An empty or non-finite
+    range gives all-NaN.
+
+    Parameters
+    ----------
+    values : array-like
+        The column.
+    view : ColumnView
+        Its scale and range.
+
+    Returns
+    -------
+    numpy.ndarray
+        float64 coordinates, the shape of *values*.
     """
+    from ..utils.axis_helpers import robust_axis_range
+
     x = np.asarray(values, dtype=np.float64)
+    nothing = np.full(x.shape, np.nan)
     lo, hi = view.lo, view.hi
     if lo is None or hi is None:
         auto_lo, auto_hi = robust_axis_range(x, view.scale)
         lo = auto_lo if lo is None else lo
         hi = auto_hi if hi is None else hi
+    lo, hi = float(lo), float(hi)
     with np.errstate(invalid="ignore", divide="ignore"):
         if view.scale == "log":
             if not (lo > 0 and hi > 0):
-                return np.full(x.shape, np.nan)
+                return nothing
             x = np.where(x > 0, np.log10(np.where(x > 0, x, 1.0)), np.nan)
             lo, hi = math.log10(lo), math.log10(hi)
-        span = float(hi) - float(lo)
-        if not (np.isfinite(span) and span > 0):
-            return np.full(x.shape, np.nan)
-        u = (x - float(lo)) / span
-    return np.clip(u, 0.0, 1.0)  # NaN passes through np.clip unchanged
+        x = np.where(np.isfinite(x), x, np.nan)
+        span = hi - lo
+        if not (math.isfinite(span) and span > 0):
+            return nothing
+        return np.clip((x - lo) / span, 0.0, 1.0)
+
+
+def average_ranks(values) -> np.ndarray:
+    """Ranks 0 .. n-1 of *values*, tied values sharing the mean of the ranks they span.
+
+    The tie rule of Spearman's coefficient (Kendall & Gibbons 1990). NaN in
+    the input must be removed beforehand.
+    """
+    x = np.asarray(values, dtype=np.float64).ravel()
+    n = x.size
+    if n == 0:
+        return np.empty(0)
+    order = np.argsort(x, kind="mergesort")
+    sorted_x = x[order]
+    starts = np.flatnonzero(np.r_[True, sorted_x[1:] != sorted_x[:-1]])
+    ends = np.r_[starts[1:], n]  # exclusive
+    mean_rank = 0.5 * (starts + ends - 1)
+    group = np.repeat(np.arange(starts.size), ends - starts)
+    ranks = np.empty(n)
+    ranks[order] = mean_rank[group]
+    return ranks
+
+
+def _subset_ranks(order: np.ndarray, values: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """:func:`average_ranks` of ``values[keep]``, from the argsort *order* of all *values*.
+
+    Dropping rows from a sorted order leaves it sorted, so the ranks of any
+    subset take one pass instead of a sort. Returned in row order of the
+    kept rows.
+    """
+    idx = order[keep[order]]
+    v = values[idx]
+    n = idx.size
+    starts = np.flatnonzero(np.r_[True, v[1:] != v[:-1]]) if n else np.empty(0, np.int64)
+    ends = np.r_[starts[1:], n]
+    ranks = np.empty(values.shape)
+    ranks[idx] = np.repeat(0.5 * (starts + ends - 1), ends - starts)
+    return ranks[keep]
+
+
+def _abs_spearman(a: np.ndarray, b: np.ndarray, min_rows: int) -> Optional[float]:
+    """|rho| over the rows finite in both, ``None`` with fewer than *min_rows* or a constant."""
+    ok = np.isfinite(a) & np.isfinite(b)
+    if int(ok.sum()) < max(min_rows, 2):
+        return None
+    _key, r, _p = correlation(a[ok], b[ok], "spearman")
+    return None if math.isnan(r) else abs(r)
 
 
 class RankingTable:
-    """The rows a ranking scores, drawn once and shared by every state.
+    """The subsample every view of one ranking is scored on.
 
     Parameters
     ----------
-    columns : mapping of str to array
-        Full-length columns by name.
-    views : mapping of str to ColumnView, optional
-        How each column is drawn; a missing one is linear with *Auto* range.
+    columns : mapping
+        Column name -> full-length array (views into the table; only the
+        sampled rows are ever converted).
+    views : mapping, optional
+        Column name -> :class:`ColumnView`.
     rows : array of bool, optional
-        Rows eligible for ranking (the gates' survivors). Ignored when the
-        labels need every row (:attr:`ClassLabels.use_all_rows`).
+        Rows the gates keep (ignored when the labels use all rows).
     labels : ClassLabels, optional
-        The classes to separate.
+        Classes for the class-separation score.
     max_rows : int
-        Subsample size. The **same** rows serve every state, so two views are
-        compared on identical bursts.
+        Sample size; 0 or less keeps every eligible row.
     seed : int
-        Subsample seed; a ranking is reproducible.
+        Seed of the draw.
     weights : array, optional
-        Full-length burst weights for the population score (photon counts:
-        a bright burst's shot-noise width is narrower). Rows without a
-        finite, positive weight are left out of the sample.
+        Per-row weights (photon counts) for the population score.
     """
 
-    def __init__(
-        self,
-        columns: Mapping[str, np.ndarray],
-        views: Optional[Mapping[str, ColumnView]] = None,
-        rows: Optional[np.ndarray] = None,
-        labels: Optional[ClassLabels] = None,
-        max_rows: int = DEFAULT_MAX_ROWS,
-        seed: int = 0,
-        weights: Optional[np.ndarray] = None,
-    ):
+    def __init__(self, columns, views=None, rows=None, labels: Optional[ClassLabels] = None,
+                 max_rows: int = DEFAULT_MAX_ROWS, seed: int = 0, weights=None) -> None:
         self.columns = dict(columns)
-        self.weights = weights
-        #: Sampled weights (mean 1), or ``None``; and their total, what shares are of.
-        self.w: Optional[np.ndarray] = None
-        self.total_weight = 0.0
         self.views = dict(views or {})
-        self.rows = rows
         self.labels = labels
         self.max_rows = int(max_rows)
-        self.seed = int(seed)
+        self.seed = seed
+        self._rows = rows
+        self._weights = weights
+        self._prepared = False
         self.n_eligible = 0
-        self.coords: Dict[str, np.ndarray] = {}
+        self.index = np.empty(0, dtype=np.int64)
         self.raw: Dict[str, np.ndarray] = {}
-        #: Distinct drawable values per column, over the sample.
+        self.coords: Dict[str, np.ndarray] = {}
         self.distinct: Dict[str, int] = {}
+        self._names: List[str] = []
         self.y: Optional[np.ndarray] = None
-        self.prepared = False
+        self.w: Optional[np.ndarray] = None
+        self.total_weight = 0.0
+
+    @property
+    def n_rows(self) -> int:
+        """The sample size (0 before :meth:`prepare`)."""
+        return int(self.index.size)
+
+    @property
+    def names(self) -> List[str]:
+        """The columns that have a view to rank, in the given order."""
+        return list(self._names)
 
     def view(self, name: str) -> ColumnView:
-        """The view for *name* (linear, *Auto* range when none was given)."""
+        """How *name* is drawn (a linear automatic axis when nothing was given)."""
         return self.views.get(name) or ColumnView(name)
 
-    def prepare(self) -> None:
-        """Draw the subsample and transform every column once.
-
-        A column that is constant (or has no drawable value) over the sampled
-        rows is dropped here, as Orange's correlation widget drops constant
-        features: it has no projection to rank.
-        """
-        if self.prepared:
-            return
-        n = len(next(iter(self.columns.values()))) if self.columns else 0
-        eligible = np.ones(n, dtype=bool)
-        if self.rows is not None and not (self.labels is not None and self.labels.use_all_rows):
-            eligible &= np.asarray(self.rows, dtype=bool)
+    def _length(self) -> int:
+        for column in self.columns.values():
+            return len(column)
         if self.labels is not None:
-            eligible &= np.isfinite(np.asarray(self.labels.values, dtype=np.float64))
-        if self.weights is not None:
-            weights = np.asarray(self.weights, dtype=np.float64)
-            eligible &= np.isfinite(weights) & (weights > 0)
-        index = np.flatnonzero(eligible)
-        self.n_eligible = int(index.size)
-        if index.size > self.max_rows > 0:
+            return len(self.labels.values)
+        return 0
+
+    def prepare(self) -> None:
+        """Draw the sample and convert the sampled rows (once; later calls do nothing).
+
+        Eligible rows pass the gates (unless the labels use all rows), have a
+        finite label and a finite positive weight, when those are given. At
+        most ``max_rows`` of them are drawn uniformly without replacement.
+        """
+        if self._prepared:
+            return
+        self._prepared = True
+        n = self._length()
+        keep = np.ones(n, dtype=bool)
+        labels = self.labels
+        if self._rows is not None and not (labels is not None and labels.use_all_rows):
+            keep &= np.asarray(self._rows, dtype=bool)
+        label_values = None
+        if labels is not None:
+            label_values = np.asarray(labels.values, dtype=np.float64)
+            keep &= np.isfinite(label_values)
+        weights = None
+        if self._weights is not None:
+            weights = np.asarray(self._weights, dtype=np.float64)
+            with np.errstate(invalid="ignore"):
+                keep &= np.isfinite(weights) & (weights > 0)
+        eligible = np.flatnonzero(keep)
+        self.n_eligible = int(eligible.size)
+        if self.max_rows > 0 and eligible.size > self.max_rows:
             rng = np.random.default_rng(self.seed)
-            index = np.sort(rng.choice(index, self.max_rows, replace=False))
-        self.index = index
-        if self.weights is not None and index.size:
-            w = np.asarray(self.weights, dtype=np.float64)[index]
-            self.w = w / w.mean()
-        self.total_weight = float(self.w.sum()) if self.w is not None else float(index.size)
-        for name, values in self.columns.items():
-            raw = np.asarray(values, dtype=np.float64)[index]
+            eligible = np.sort(rng.choice(eligible, size=self.max_rows, replace=False))
+        self.index = eligible.astype(np.int64)
+
+        self._all_raw: Dict[str, np.ndarray] = {}
+        for name, column in self.columns.items():
+            # Gather first, then widen: a float32 view of a large table stays as it is.
+            raw = np.asarray(np.asarray(column)[self.index], dtype=np.float64)
+            self._all_raw[name] = raw
             coords = display_coordinates(raw, self.view(name))
             finite = coords[np.isfinite(coords)]
-            if finite.size < 2 or np.ptp(finite) == 0:
+            if finite.size < 2 or np.all(finite == finite[0]):
                 continue
             self.raw[name] = raw
             self.coords[name] = coords
             self.distinct[name] = int(np.unique(finite).size)
-        if self.labels is not None:
-            self.y = np.asarray(self.labels.values, dtype=np.float64)[index]
-        self.prepared = True
-
-    @property
-    def names(self) -> List[str]:
-        """Columns that survived :meth:`prepare`, in the order given."""
-        return [n for n in self.columns if n in self.coords]
-
-    @property
-    def n_rows(self) -> int:
-        """Rows in the subsample."""
-        return int(self.index.size) if self.prepared else 0
+            self._names.append(name)
+        self.y = label_values[self.index] if label_values is not None else None
+        if weights is not None and self.index.size:
+            w = weights[self.index]
+            self.w = w / w.mean()
+            self.total_weight = float(self.w.sum())
+        else:
+            self.w = None
+            self.total_weight = float(self.index.size)
 
     def derived_from(self, sources: Sequence[str], threshold: float = DERIVED_RHO) -> List[str]:
-        """Columns that are (nearly) a monotone function of one of *sources*.
+        """Columns (other than *sources*) that are, rank for rank, a source.
 
-        ndX computes columns from others by equations: ``E_tau`` is a function
-        of ``Tau (green)``, a rate is a count over a duration. Leaving out the
-        parameter a gate is defined on is not enough when a transform of it is
-        still in the table -- it separates the gate just as trivially. A
-        Spearman ``|ρ|`` at or above *threshold* over the sample is the test,
-        because ranks see through any monotone transform.
+        A surviving column is derived when its Spearman |rho| with any
+        source present in the sample is at least *threshold*, over rows
+        finite in both and only with at least :data:`MIN_K` of them.
         """
-        from chisurf.core.math.special import rankdata
-
-        present = [n for n in sources if n in self.raw]
-        if not present:
-            return []
+        self.prepare()
+        present = [s for s in sources if s in getattr(self, "_all_raw", {})]
         out = []
-        ranked = {}
-
-        def ranks(name):
-            if name not in ranked:
-                values = self.raw[name]
-                r = np.full(values.shape, np.nan)
-                ok = np.isfinite(values)
-                r[ok] = rankdata(values[ok])
-                ranked[name] = r
-            return ranked[name]
-
-        for name in self.names:
+        for name in self._names:
             if name in sources:
                 continue
             for source in present:
-                a, b = ranks(name), ranks(source)
-                ok = np.isfinite(a) & np.isfinite(b)
-                if ok.sum() < MIN_K:
-                    continue
-                rho = np.corrcoef(a[ok], b[ok])[0, 1]
-                if np.isfinite(rho) and abs(rho) >= threshold:
+                rho = _abs_spearman(self.raw[name], self._all_raw[source], MIN_K)
+                if rho is not None and rho >= threshold:
                     out.append(name)
                     break
         return out
 
     def matrix(self, names: Sequence[str]) -> np.ndarray:
-        """Displayed coordinates of *names* as an ``(n_rows, len(names))`` array."""
-        return np.column_stack([self.coords[n] for n in names])
+        """Display coordinates of *names*, ``(n_rows, len(names))``."""
+        return np.column_stack([self.coords[n] for n in names]) if names \
+            else np.empty((self.n_rows, 0))
 
 
-# ---------------------------------------------------------------------------
-# class separation (Orange's scatter-plot score)
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------
+# Class separation by nearest neighbours
+# ---------------------------------------------------------------------------------------
+def _as_points(points) -> np.ndarray:
+    p = np.asarray(points, dtype=np.float64)
+    return p[:, None] if p.ndim == 1 else p
 
 
-def nearest_neighbours(points: np.ndarray, k: int) -> np.ndarray:
-    """Indices of each point's *k* nearest other points, shape ``(n, k)``.
-
-    The point itself is never among them — including when duplicates put
-    another point at distance zero ahead of it, which is common in burst tables
-    (integer photon counts). That matches ``NearestNeighbors.kneighbors()``
-    called without query points, which is what Orange uses.
-    """
-    from tttrlib import KDTree
-
-    points = np.asarray(points, dtype=np.float64)
-    if points.ndim == 1:
-        points = points[:, None]
-    n = points.shape[0]
-    _, ind = KDTree(points).query(points, k=k + 1)
-    ind = np.asarray(ind).reshape(n, k + 1)
-    is_self = ind == np.arange(n)[:, None]
-    # Stable sort on "is it me" moves the self hit (if present) to the end and
-    # keeps the distance order of the rest; without a self hit the last,
-    # farthest neighbour is the one dropped.
-    order = np.argsort(is_self, axis=1, kind="stable")
-    return np.take_along_axis(ind, order, axis=1)[:, :k]
+#: Relative slack on squared distances below which two distances count as tied.
+_TIE = 1e-9
 
 
-def knn_separation(
-    points: np.ndarray,
-    y: np.ndarray,
-    *,
-    discrete: bool,
-    n_total: Optional[int] = None,
-    k: int = MIN_K,
-) -> Optional[float]:
-    """Orange's scatter-plot VizRank score; lower is better.
+def nearest_neighbours(points, k: int) -> np.ndarray:
+    """The *k* nearest other points of every point, exactly.
+
+    Euclidean distance; a point is never its own neighbour, even when
+    duplicates sit at distance 0; ties at the k-th distance go to the lower
+    row index. Each row is in ascending (distance, index) order, so the
+    answer does not depend on the order of the columns.
+
+    A k-d tree proposes ``k + 2`` candidates per point. A row is settled when
+    the candidate after its k-th neighbour is clearly farther (everything
+    outside the candidates is at least as far). The rest -- a tie at the
+    k-th distance, typical of counts and of values clipped to an axis edge
+    -- are settled on the distinct coordinates (:func:`_settle_ties`), where
+    a stack of duplicates is one site with a multiplicity.
 
     Parameters
     ----------
     points : array, shape (n,) or (n, d)
-        The projection.
-    y : array, shape (n,)
-        Class ids (``discrete``) or values; ``NaN`` rows are dropped.
-    discrete : bool
-        Which of the two scores.
-    n_total : int, optional
-        Rows before dropping missing values; the continuous score is multiplied
-        by the fraction that had values, so a projection that is defined for
-        few bursts cannot win on those alone. Defaults to ``len(y)``.
+        Finite coordinates.
     k : int
-        Neighbours per point (Orange's ``minK``).
+        Neighbours per point, ``k < n``.
+
+    Returns
+    -------
+    numpy.ndarray of int64, shape (n, k)
+    """
+    import tttrlib
+
+    p = np.ascontiguousarray(_as_points(points))
+    n = p.shape[0]
+    k = int(k)
+    if k <= 0:
+        return np.empty((n, 0), dtype=np.int64)
+    if n <= k:
+        raise ValueError(f"{k} neighbours need more than {n} points")
+    width = min(k + 2, n)
+    tree = tttrlib.KDTree(p)
+    _dist, idx = tree.query(p, k=width)
+    idx = np.asarray(idx, dtype=np.int64).reshape(n, width)
+    # The distances ties are judged by are the ones computed here.
+    sq = ((p[idx] - p[:, None, :]) ** 2).sum(axis=2)
+    sq[idx == np.arange(n)[:, None]] = np.inf  # never oneself
+    order = np.lexsort((idx, sq), axis=1)
+    idx = np.take_along_axis(idx, order, axis=1)
+    sq = np.take_along_axis(sq, order, axis=1)
+    out = idx[:, :k].copy()
+    if width < n:
+        tied = np.flatnonzero(~(sq[:, k] > sq[:, k - 1] * (1.0 + _TIE)))
+        if tied.size:
+            _settle_ties(p, tied, k, out)
+    return out
+
+
+def _settle_ties(p: np.ndarray, rows: np.ndarray, k: int, out: np.ndarray) -> None:
+    """Exact neighbours of the points *rows* whose k-th distance is tied, into *out*.
+
+    Identical points form one *site*. For a site, the first ``k + 1`` points
+    in (distance, index) order -- its own members first, at distance 0 --
+    serve every member: a member drops itself from them, or, when it is not
+    among them, takes the first ``k``. Sites are drawn from a k-d tree of
+    the distinct coordinates, widening until the multiplicities reach
+    ``k + 1`` and the boundary distance is closed.
+    """
+    import tttrlib
+
+    sites, inverse, counts = np.unique(p, axis=0, return_inverse=True, return_counts=True)
+    inverse = np.asarray(inverse).ravel()
+    grouped = np.argsort(inverse, kind="stable")  # members of each site, ascending index
+    bounds = np.r_[0, np.cumsum(counts)]
+    u = sites.shape[0]
+    tree = tttrlib.KDTree(np.ascontiguousarray(sites))
+    want = k + 1
+    row_site = inverse[rows]
+    for site in np.unique(row_site):
+        width = min(want + 1, u)
+        while True:
+            _dist, near = tree.query(sites[site:site + 1], k=width)
+            near = np.asarray(near, dtype=np.int64).reshape(-1)
+            d2 = ((sites[near] - sites[site]) ** 2).sum(axis=1)
+            o = np.argsort(d2, kind="stable")
+            near, d2 = near[o], d2[o]
+            reach = int(np.searchsorted(np.cumsum(counts[near]), want))
+            boundary = d2[min(reach, d2.size - 1)]
+            if width >= u or (reach < d2.size and d2[-1] > boundary * (1.0 + _TIE)):
+                break
+            width = min(2 * width, u)
+        chosen = near[d2 <= boundary * (1.0 + _TIE)]
+        members = np.concatenate([grouped[bounds[t]:bounds[t + 1]] for t in chosen])
+        member_d2 = np.repeat(d2[:chosen.size], counts[chosen])
+        first = members[np.lexsort((members, member_d2))][:want]
+        mine = rows[row_site == site]
+        keep = first[None, :] != mine[:, None]
+        keep[keep.all(axis=1), want - 1] = False  # not among them: take the first k
+        out[mine] = np.broadcast_to(first, keep.shape)[keep].reshape(mine.size, k)
+
+
+def _knn_details(points, y, discrete: bool, k: int):
+    """``(statistic, n_valid, valid labels)``: the share of neighbours of the
+    same class (discrete) or R^2 of the neighbour mean (continuous); ``None``
+    when undefined."""
+    p = _as_points(points)
+    y = np.asarray(y, dtype=np.float64).ravel()
+    ok = np.isfinite(p).all(axis=1) & np.isfinite(y)
+    n_valid = int(ok.sum())
+    if n_valid < k + 1:
+        return None
+    yv = y[ok]
+    neighbours = nearest_neighbours(p[ok], k)
+    if discrete:
+        return float(np.mean(yv[neighbours] == yv[:, None])), n_valid, yv
+    predicted = yv[neighbours].mean(axis=1)
+    total = float(np.sum((yv - yv.mean()) ** 2))
+    if not total > 0:
+        return None
+    return 1.0 - float(np.sum((yv - predicted) ** 2)) / total, n_valid, yv
+
+
+def knn_separation(points, y, *, discrete: bool, n_total: Optional[int] = None,
+                   k: int = MIN_K) -> Optional[float]:
+    """How well a view's k nearest neighbours predict each point's class (lower is better).
+
+    Leave-one-out k-nearest-neighbour prediction on the view's coordinates,
+    the projection quality of VizRank (Leban et al. 2006,
+    doi:10.1007/s10618-005-0031-5) with uniform votes. Rows with a missing
+    coordinate or label are dropped (``n_v`` remain).
+
+    * Discrete labels: ``-p_o``, where ``p_o`` is the share of the
+      neighbours that share the point's class, averaged over the points --
+      the mean leave-one-out probability of the correct class.
+    * Continuous labels: ``-R^2 * n_v / n_total``, where ``R^2`` is the
+      variance of *y* explained by the mean of the neighbours' *y*; the
+      factor is the share of rows the view can draw (a row it cannot draw
+      has none of its variance explained).
+
+    Parameters
+    ----------
+    points : array, shape (n,) or (n, d)
+        Display coordinates.
+    y : array, shape (n,)
+        Labels; NaN is "no label".
+    discrete : bool
+        Class ids or a quantity.
+    n_total : int, optional
+        Rows the coverage is a share of (default ``len(y)``).
+    k : int
+        Neighbours per point (:data:`MIN_K`).
 
     Returns
     -------
     float or None
-        Discrete: ``-mean(fraction of neighbours with the same class)``.
-        Continuous: ``-R²(y, mean of neighbours' y) · n_valid / n_total``.
-        ``None`` with fewer than *k* usable rows.
+        ``None`` with ``n_v <= k`` (every point needs k others) or, for a
+        quantity, with no variance to explain.
     """
-    points = np.asarray(points, dtype=np.float64)
-    if points.ndim == 1:
-        points = points[:, None]
-    y = np.asarray(y, dtype=np.float64)
-    n_total = len(y) if n_total is None else int(n_total)
-    valid = np.isfinite(points).all(axis=1) & np.isfinite(y)
-    points, y = points[valid], y[valid]
-    n = len(y)
-    if n < k:
+    y = np.asarray(y, dtype=np.float64).ravel()
+    found = _knn_details(points, y, discrete, k)
+    if found is None:
         return None
-    n_neighbors = min(k, n - 1)
-    ind = nearest_neighbours(points, n_neighbors)
+    statistic, n_valid, _labels = found
     if discrete:
-        return -float(np.sum(y[ind] == y[:, None])) / n_neighbors / n
-    predicted = y[ind].mean(axis=1)
-    total = float(np.sum((y - y.mean()) ** 2))
-    if total == 0:
-        return None
-    r2 = 1.0 - float(np.sum((y - predicted) ** 2)) / total
-    return -r2 * (n / n_total if n_total else 1.0)
+        return -statistic
+    total = int(n_total) if n_total is not None else y.size
+    return -statistic * n_valid / total
 
 
-def chance_corrected_agreement(same_fraction: float, y: np.ndarray) -> Optional[float]:
-    """Neighbour agreement above what the class proportions give by chance.
+def chance_corrected_agreement(same_fraction: float, y) -> Optional[float]:
+    """The share of same-class neighbours above what chance gives.
 
-    ``(p_o − p_e) / (1 − p_e)`` with ``p_e = Σ_c p_c²``, the agreement of a
-    neighbour drawn at random. For one fixed set of rows it is a monotone
-    function of Orange's score, so it ranks identically; it differs only across
-    views whose missing values remove different rows — which is exactly where
-    the raw fraction misleads, because a view that happens to drop the minority
-    class scores perfect agreement.
-
-    Returns ``None`` when only one class is left (nothing to separate).
-    """
-    y = np.asarray(y, dtype=np.float64)
-    y = y[np.isfinite(y)]
-    if y.size == 0:
-        return None
-    _, counts = np.unique(y, return_counts=True)
-    p = counts / counts.sum()
-    expected = float(np.sum(p * p))
-    if expected >= 1.0:
-        return None
-    return (float(same_fraction) - expected) / (1.0 - expected)
-
-
-# ---------------------------------------------------------------------------
-# correlation (Orange's correlation score)
-# ---------------------------------------------------------------------------
-
-
-def correlation(a, b, method: str = "pearson") -> Tuple[float, float, float]:
-    """Orange's correlation-rank score: ``(-|r|, r, p)``.
-
-    Rows where either value is missing are dropped pairwise. Fewer than two
-    rows give ``(inf, nan, nan)``; a constant column gives ``(inf, nan, nan)``
-    too, which sorts it last. The p-value is the two-sided t-test of ``r = 0``
-    (what ``scipy.stats.pearsonr`` reports); with exactly two rows it is 1.
+    ``kappa = (p_o - p_e) / (1 - p_e)``. ``p_e`` is the share expected when
+    the labels have nothing to do with position: a neighbour drawn uniformly
+    from the *other* ``n - 1`` points has the same class with probability
+    ``sum_c n_c (n_c - 1) / (n (n - 1))``, so kappa is 0 on average for a
+    random view, 1 for perfect separation, negative for a view that mixes
+    classes more than chance. One marginal for both "raters", as in Scott's
+    pi (Scott 1955, doi:10.1086/266577); the chance correction is Cohen's
+    (1960, doi:10.1177/001316446002000104). The correction matters with
+    unbalanced classes: with a 95 % / 5 % gate a random view already has
+    ``p_o`` near 0.9.
 
     Parameters
     ----------
-    a, b : array
-        The two columns.
-    method : str
-        ``"pearson"``, or ``"spearman"`` (Pearson on average ranks).
-    """
-    from chisurf.core.math.special import rankdata, t as t_dist
+    same_fraction : float
+        ``p_o``.
+    y : array
+        The labels it was measured on (non-finite entries ignored).
 
-    a = np.asarray(a, dtype=np.float64)
-    b = np.asarray(b, dtype=np.float64)
-    mask = np.isfinite(a) & np.isfinite(b)
-    n = int(mask.sum())
+    Returns
+    -------
+    float or None
+        ``None`` without labels or with a single class.
+    """
+    y = np.asarray(y, dtype=np.float64).ravel()
+    y = y[np.isfinite(y)]
+    if y.size < 2:
+        return None
+    _values, counts = np.unique(y, return_counts=True)
+    if counts.size < 2:
+        return None
+    n = float(y.size)
+    counts = counts.astype(np.float64)
+    expected = float(np.sum(counts * (counts - 1.0)) / (n * (n - 1.0)))
+    return (float(same_fraction) - expected) / (1.0 - expected)
+
+
+# ---------------------------------------------------------------------------------------
+# Correlation
+# ---------------------------------------------------------------------------------------
+def _beta_continued_fraction(a: float, b: float, x: float) -> float:
+    """The continued fraction of the incomplete beta function (modified Lentz).
+
+    DLMF 8.17.22; converges quickly for ``x < (a + 1) / (a + b + 2)``.
+    """
+    tiny = 1e-300
+    c, d = 1.0, 1.0 - (a + b) * x / (a + 1.0)
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    f = d
+    for m in range(1, 1000):
+        # even step
+        num = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m))
+        d = 1.0 + num * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + num / c
+        c = c if abs(c) > tiny else tiny
+        f *= d * c
+        # odd step
+        num = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))
+        d = 1.0 + num * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + num / c
+        c = c if abs(c) > tiny else tiny
+        delta = d * c
+        f *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return f
+
+
+def _regularized_beta(a: float, b: float, x: float) -> float:
+    """``I_x(a, b)``, the regularised incomplete beta function."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    log_front = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                 + a * math.log(x) + b * math.log1p(-x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return math.exp(log_front) * _beta_continued_fraction(a, b, x) / a
+    return 1.0 - math.exp(log_front) * _beta_continued_fraction(b, a, 1.0 - x) / b
+
+
+def _t_test_p(r: float, n: int) -> float:
+    """Two-sided p of ``t = r sqrt((n-2)/(1-r^2))`` under Student's t with ``n - 2``
+    degrees of freedom (Student 1908, doi:10.1093/biomet/6.1.1).
+
+    ``P(|T| > t) = I_{df/(df+t^2)}(df/2, 1/2)`` and ``df/(df+t^2) = 1 - r^2``.
+    """
+    df = n - 2
+    return _regularized_beta(0.5 * df, 0.5, 1.0 - r * r)
+
+
+def correlation(a, b, method: str = "pearson") -> Tuple[float, float, float]:
+    """Correlation of two columns over the rows where both are finite.
+
+    Pearson's product-moment r (Pearson 1895, doi:10.1098/rspl.1895.0041),
+    or Spearman's rho -- Pearson's r of the average ranks (Spearman 1904,
+    doi:10.2307/1412159). The p value is the two-sided t test of
+    ``rho = 0`` with ``n - 2`` degrees of freedom: exact for Pearson under
+    bivariate normality, the usual large-sample approximation for Spearman.
+
+    Parameters
+    ----------
+    a, b : array-like
+        The columns; NaN and +-inf are missing (pairwise deletion).
+    method : str
+        ``"pearson"`` or ``"spearman"``.
+
+    Returns
+    -------
+    tuple
+        ``(key, r, p)`` with ``key = -|r|`` (lower is better). ``(inf, nan,
+        nan)`` with fewer than two rows or a constant column; ``p = 1`` with
+        two rows (no degrees of freedom), ``p = 0`` when ``|r| = 1``.
+    """
+    x = np.asarray(a, dtype=np.float64).ravel()
+    y = np.asarray(b, dtype=np.float64).ravel()
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    n = int(x.size)
+    undefined = (math.inf, math.nan, math.nan)
     if n < 2:
-        return math.inf, math.nan, math.nan
-    a, b = a[mask], b[mask]
+        return undefined
     if method == "spearman":
-        a, b = rankdata(a), rankdata(b)
-    a = a - a.mean()
-    b = b - b.mean()
-    denominator = math.sqrt(float(np.dot(a, a)) * float(np.dot(b, b)))
-    if denominator == 0:
-        return math.inf, math.nan, math.nan
-    r = max(-1.0, min(1.0, float(np.dot(a, b)) / denominator))
+        x, y = average_ranks(x), average_ranks(y)
+    elif method != "pearson":
+        raise ValueError(f"unknown correlation method {method!r}")
+    return _product_moment(x, y)
+
+
+def _product_moment(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float]:
+    """``(key, r, p)`` of two complete columns (see :func:`correlation`)."""
+    n = int(x.size)
+    x = x - x.mean()
+    y = y - y.mean()
+    sxx, syy = float(np.dot(x, x)), float(np.dot(y, y))
+    if n < 2 or not (sxx > 0 and syy > 0):
+        return (math.inf, math.nan, math.nan)
+    r = float(np.dot(x, y)) / math.sqrt(sxx * syy)
+    r = max(-1.0, min(1.0, r))
     if n == 2:
         p = 1.0
-    elif abs(r) >= 1.0:
+    elif abs(r) == 1.0:
         p = 0.0
     else:
-        dof = n - 2
-        t_stat = r * math.sqrt(dof / (1.0 - r * r))
-        p = float(2.0 * t_dist.sf(abs(t_stat), dof))
+        p = _t_test_p(r, n)
     return -abs(r), r, p
 
 
-# ---------------------------------------------------------------------------
-# the columns worth ranking for populations and correlation
-# ---------------------------------------------------------------------------
+def correlation_ratio(y, x, bins: int = ETA_BINS) -> float:
+    """eta^2 of *y* given *x*: the share of y's variance explained by x's bins.
 
+    Pearson's correlation ratio (1903; Kendall & Stuart, *The Advanced
+    Theory of Statistics*, vol. 2): 1 when y is any function of x, monotone
+    or not; 0 when the bin means of y do not move. Both values are in
+    ``[0, 1]``; x is binned by ``floor(x * bins)``.
 
-def correlation_ratio(y, x, bins: int = 32) -> float:
-    """``η²`` of *y* given *x*: the share of y's variance its means in x's bins explain.
-
-    Both in ``[0, 1]`` coordinates; rows missing either are left out. 1 when y
-    is a function of x (monotone or not), 0 when x says nothing about y.
+    Returns 0 with fewer than ``2 * MIN_K`` rows finite in both, or when y
+    is constant.
     """
-    y = np.asarray(y, dtype=np.float64)
-    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64).ravel()
+    x = np.asarray(x, dtype=np.float64).ravel()
     ok = np.isfinite(x) & np.isfinite(y)
-    if ok.sum() < 2 * MIN_K:
+    if int(ok.sum()) < 2 * MIN_K:
         return 0.0
-    x, y = x[ok], y[ok]
-    total = float(np.sum((y - y.mean()) ** 2))
+    return _binned_eta(y[ok], _cells(x[ok], bins), bins)
+
+
+def _cells(x: np.ndarray, bins: int) -> np.ndarray:
+    """The bin of each value of *x* in ``[0, 1]``: ``floor(x * bins)``, clipped."""
+    with np.errstate(invalid="ignore"):
+        return np.clip(np.floor(np.nan_to_num(x) * bins).astype(np.int64), 0, bins - 1)
+
+
+def _binned_eta(y: np.ndarray, cell: np.ndarray, bins: int) -> float:
+    """eta^2 of complete *y* given the bin of each row."""
+    centred = y - y.mean()
+    total = float(np.dot(centred, centred))
     if not total > 0:
         return 0.0
-    b = np.clip((x * bins).astype(np.int64), 0, bins - 1)
-    count = np.bincount(b, minlength=bins)
-    means = np.bincount(b, y, bins) / np.maximum(count, 1)
-    return 1.0 - float(np.sum((y - means[b]) ** 2)) / total
+    counts = np.bincount(cell, minlength=bins)
+    sums = np.bincount(cell, weights=y, minlength=bins)
+    means = np.divide(sums, counts, out=np.zeros(bins), where=counts > 0)
+    within = float(np.sum((y - means[cell]) ** 2))
+    return 1.0 - within / total
 
 
 def is_clock(values) -> bool:
-    """Whether a column rises from row to row: the acquisition clock.
+    """Whether a column counts time along the acquisition (it rises row after row).
 
-    A burst table is in time order (file by file), so the first photon's index
-    and the mean macrotime rise over nearly every pair of consecutive rows. A
-    clock carries when a burst was seen, not what molecule it was, and its
-    uneven file lengths would pass for "populations".
+    True when more than ``2 * MIN_K`` finite values remain and at least
+    :data:`CLOCK_SHARE` of the steps between consecutive ones are increases.
     """
-    x = np.asarray(values, dtype=np.float64)
+    x = np.asarray(values, dtype=np.float64).ravel()
     x = x[np.isfinite(x)]
-    return x.size > 2 * MIN_K and float(np.mean(np.diff(x) > 0)) >= CLOCK_RISE
+    if x.size <= 2 * MIN_K:
+        return False
+    return float(np.mean(np.diff(x) > 0)) >= CLOCK_SHARE
 
 
+# ---------------------------------------------------------------------------------------
+# The columns worth pairing
+# ---------------------------------------------------------------------------------------
 class ColumnSet:
-    """The columns of a :class:`RankingTable` worth ranking, prepared for density.
+    """The columns a population or correlation ranking pairs, and why the rest are not.
 
-    Each column is fitted a :class:`~ndxplorer.analysis.separation.RobustAxis`
-    in the scale ndX draws it with. Set aside, with the reason in
-    :attr:`left_out`: flags (fewer than :data:`MIN_DISTINCT` values), the
-    acquisition clock (:func:`is_clock`), columns with nothing left after
-    outlier removal, and **folds** -- a column that is a many-to-one function of
-    another (``(1-E)*E`` of ``E``, ``sigma_E = |Var(E)|^½``), which adds no
-    information and piles density up where it folds. Columns that are the
-    *same* quantity (Spearman ``|ρ| >= DERIVED_RHO``, or each a function of the
-    other) are one :attr:`aliases` group, ranked once under the representative
-    ndX has an axis range for, else the one computed last.
+    Each surviving column of *table* (outside *exclude*) is set aside with a
+    reason in :attr:`left_out` when it is a flag (few distinct values), the
+    acquisition clock, or has nothing left once its axis is prepared
+    (:class:`~ndxplorer.analysis.separation.RobustAxis`). Of the rest,
+    columns that are the same quantity -- Spearman |rho| of at least
+    :data:`DERIVED_RHO`, or each a function of the other -- form one alias
+    group, ranked once under its head; a column that is a many-to-one
+    function of another (a *fold*, (1-E)E of E) is set aside too.
+
+    Attributes
+    ----------
+    names : list of str
+        The ranked columns (alias heads), in table order.
+    axes, coords : dict
+        Per kept column, its robust axis and coordinates on it.
+    ranks, uniform : dict
+        Average ranks of the coordinates (NaN where missing), and the ranks
+        scaled onto ``[0, 1]``.
+    aliases : dict
+        Head -> the columns merged into it.
+    left_out : dict
+        Column -> why it is not ranked.
     """
 
-    def __init__(self, table: RankingTable, exclude: Sequence[str] = ()):
+    def __init__(self, table: RankingTable, exclude: Sequence[str] = ()) -> None:
         from .separation import RobustAxis
 
         table.prepare()
+        self.table = table
+        exclude = set(exclude)
+        self.left_out: Dict[str, str] = {}
         self.axes: Dict[str, object] = {}
         self.coords: Dict[str, np.ndarray] = {}
-        self.left_out: Dict[str, str] = {}
-        ranks: Dict[str, np.ndarray] = {}
+        self.ranks: Dict[str, np.ndarray] = {}
+        self.uniform: Dict[str, np.ndarray] = {}
+        self.aliases: Dict[str, List[str]] = {}
+        self._order: Dict[str, np.ndarray] = {}
+        self._finite: Dict[str, np.ndarray] = {}
+        self._cells: Dict[str, np.ndarray] = {}
+        kept: List[str] = []
         for name in table.names:
             if name in exclude:
                 continue
             raw = table.raw[name]
-            if table.distinct.get(name, 0) < MIN_DISTINCT:
+            if table.distinct[name] < MIN_DISTINCT:
                 self.left_out[name] = "a flag (few distinct values)"
                 continue
             if is_clock(raw):
                 self.left_out[name] = "the acquisition clock"
                 continue
             axis, u = RobustAxis.fit(raw, table.view(name).scale)
-            if axis is None or np.isfinite(u).sum() < 5 * MIN_K:
+            if axis is None or int(np.isfinite(u).sum()) < 5 * MIN_K:
                 self.left_out[name] = "nothing left after outliers"
                 continue
-            self.axes[name], self.coords[name] = axis, u
-            # Ordinal ranks: the coordinates are continuous (counts are dithered),
-            # and scipy.stats alone would cost a second to import.
-            r = np.full(u.shape, np.nan)
+            self.axes[name] = axis
+            self.coords[name] = u
             finite = np.isfinite(u)
-            r[finite] = np.argsort(np.argsort(u[finite], kind="stable"), kind="stable")
-            ranks[name] = r
-        #: Ordinal ranks per column (Pearson on them is Spearman's ρ).
-        self.ranks = ranks
-        #: The ranks on [0, 1]. "Is one a function of the other" is asked of these,
-        #: not of the coordinates: two species far apart on both axes explain most
-        #: of each other's variance in coordinates (η² 0.95 on a planted pair), but
-        #: within each species the ranks are independent, while a function stays
-        #: a function of the other's ranks.
-        self.uniform = {n: r / max(np.isfinite(r).sum() - 1, 1) for n, r in ranks.items()}
-        eta2 = correlation_ratio
-        u = self.uniform
+            # One sort per column: the order serves every later rank of any
+            # subset of its rows (_subset_ranks) without sorting again.
+            self._order[name] = np.argsort(u, kind="mergesort")
+            self._finite[name] = finite
+            ranks = np.full(u.shape, np.nan)
+            ranks[finite] = _subset_ranks(self._order[name], u, finite)
+            self.ranks[name] = ranks
+            self.uniform[name] = ranks / max(int(finite.sum()) - 1, 1)
+            self._cells[name] = _cells(self.uniform[name], ETA_BINS)
+            kept.append(name)
 
-        def rho(a: str, b: str) -> float:
-            ok = np.isfinite(ranks[a]) & np.isfinite(ranks[b])
-            if ok.sum() < 2 * MIN_K:
-                return 0.0
-            value = np.corrcoef(ranks[a][ok], ranks[b][ok])[0, 1]
-            return abs(float(value)) if np.isfinite(value) else 0.0
+        heads = self._group(kept)
+        self._fold_out(heads)
+        position = {name: i for i, name in enumerate(table.names)}
+        self.names = sorted((h for h in heads if h not in self.left_out), key=position.get)
 
-        order = list(self.coords)
-        def preference(name: str):
-            view = table.view(name)
-            return (view.lo is not None and view.hi is not None, order.index(name))
+    def spearman(self, a: str, b: str, min_rows: int = 2) -> Tuple[float, float]:
+        """``(rho, p)`` of two kept columns over the rows finite in both
+        (:func:`correlation` with ``"spearman"``, reusing each column's sort).
 
-        groups: List[List[str]] = []
-        for name in sorted(order, key=preference, reverse=True):
-            for group in groups:
-                head = group[0]
-                if rho(head, name) >= DERIVED_RHO or (
-                        eta2(u[head], u[name]) >= FUNCTION_ETA2
-                        and eta2(u[name], u[head]) >= FUNCTION_ETA2):
-                    group.append(name)
+        ``(nan, nan)`` with fewer than *min_rows* such rows or a constant.
+        """
+        ok = self._finite[a] & self._finite[b]
+        if int(ok.sum()) < max(min_rows, 2):
+            return math.nan, math.nan
+        ra = _subset_ranks(self._order[a], self.coords[a], ok)
+        rb = _subset_ranks(self._order[b], self.coords[b], ok)
+        _key, r, p = _product_moment(ra, rb)
+        return r, p
+
+    def eta(self, y: str, x: str) -> float:
+        """:func:`correlation_ratio` of the rank-uniform values of *y* given *x*."""
+        ok = self._finite[y] & self._finite[x]
+        if int(ok.sum()) < 2 * MIN_K:
+            return 0.0
+        return _binned_eta(self.uniform[y][ok], self._cells[x][ok], ETA_BINS)
+
+    def _same_quantity(self, head: str, name: str) -> bool:
+        rho, _p = self.spearman(head, name, 2 * MIN_K)
+        if not math.isnan(rho) and abs(rho) >= DERIVED_RHO:
+            return True
+        return self.eta(head, name) >= FUNCTION_ETA and self.eta(name, head) >= FUNCTION_ETA
+
+    def _group(self, kept: List[str]) -> List[str]:
+        """Merge columns that are one quantity; the heads, in the order they were made.
+
+        Columns drawn with a fixed range come first (they are the ones the
+        user set up), later table positions before earlier ones.
+        """
+        def fixed(name: str) -> bool:
+            view = self.table.view(name)
+            return view.lo is not None and view.hi is not None
+
+        position = {name: i for i, name in enumerate(kept)}
+        visit = sorted(kept, key=lambda n: (not fixed(n), -position[n]))
+        heads: List[str] = []
+        for name in visit:
+            for head in heads:
+                if self._same_quantity(head, name):
+                    self.aliases.setdefault(head, []).append(name)
+                    self.left_out[name] = f"the same as {head}"
                     break
             else:
-                groups.append([name])
-        heads = [g[0] for g in groups]
-        self.aliases: Dict[str, List[str]] = {g[0]: g[1:] for g in groups}
-        for group in groups:
-            for name in group[1:]:
-                self.left_out[name] = f"the same as {group[0]}"
+                heads.append(name)
+        return heads
+
+    def _fold_out(self, heads: List[str]) -> None:
+        """Set aside heads that are a many-to-one function of another head."""
         for name in heads:
             for other in heads:
-                if other != name and eta2(u[name], u[other]) >= FUNCTION_ETA2 \
-                        and eta2(u[other], u[name]) < 0.9:
+                if other == name:
+                    continue
+                if self.eta(name, other) >= FUNCTION_ETA and \
+                        self.eta(other, name) < _FOLD_INVERSE:
                     self.left_out[name] = f"a fold of {other}"
                     break
-        #: The representatives, in table order.
-        self.names: List[str] = [n for n in order if n in self.aliases and n not in self.left_out]
 
     def matrix(self, names: Sequence[str]) -> np.ndarray:
-        """Density coordinates of *names* as an ``(n_rows, len(names))`` array."""
+        """Robust-axis coordinates of *names*, ``(n, len(names))``."""
         return np.column_stack([self.coords[n] for n in names])
 
     def is_curve(self, a: str, b: str) -> bool:
-        """Whether one of the two is (nearly) a function of the other in the sample."""
-        u = self.uniform
-        return max(correlation_ratio(u[a], u[b]), correlation_ratio(u[b], u[a])) >= CURVE_ETA2
+        """Whether one of the two is (nearly) a function of the other: a line, not a cloud."""
+        return max(self.eta(a, b), self.eta(b, a)) >= CURVE_ETA
 
 
-# ---------------------------------------------------------------------------
-# rankers
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------
+# The rankers
+# ---------------------------------------------------------------------------------------
+class _ScoredViews:
+    """What the pair and the single-column ranker share: the table, the
+    method, the column choice and the scores.
 
+    Scores (lower is better):
 
-#: Score methods: key -> (caption, needs class labels, ranks pairs, ranks single columns).
-METHODS: Dict[str, Tuple[str, bool, bool, bool]] = {
-    "populations": (mark("Separation"), False, True, True),
-    "correlation": (mark("Correlation"), False, True, False),
-    "separation": (mark("Classes"), True, True, True),
-}
+    * populations: ``(-score, -islands, arrival, found)`` -- *arrival*
+      keeps equal scores in scoring order and keeps two ``found`` objects
+      from ever being compared;
+    * correlation: ``(-|rho|, p, arrival, rho)``;
+    * separation, class ids: ``(-kappa, -p_o, n_valid)`` with kappa weighted
+      by the share of rows the view draws;
+    * separation, a quantity: ``(-R2c, -R2c, n_valid)``, R2c the
+      coverage-weighted R^2.
+    """
 
-#: What each method means, for the panel's tooltip.
-METHOD_HELP = {
-    "populations": mark("How many bursts fall into clearly separated islands: donor-only, "
-                        "acceptor-only and FRET species in E vs S, a dynamic population off the "
-                        "static FRET line. 0: one population; 0.5: two equal islands with empty "
-                        "space between; 0.67: three."),
-    "correlation": mark("|Spearman rho| of the pair: parameters that measure related things (E "
-                        "and a lifetime, a rate and its count), not populations. Parameters that "
-                        "are the same quantity are ranked once."),
-    "separation": mark("Do the bursts of one label (a gate, the clusters) sit together in this "
-                       "view? Share of each burst's 10 nearest neighbours with its label, above "
-                       "chance."),
-}
-
-
-def _label(view: ColumnView) -> str:
-    return f"{view.name} (log)" if view.scale == "log" else view.name
-
-
-def _rankable(table: RankingTable) -> List[str]:
-    """Columns the class-separation score may use: not the class's own, nor derived from it."""
-    excluded = set(table.labels.exclude) if table.labels is not None else set()
-    if excluded:
-        excluded.update(table.derived_from(sorted(excluded)))
-    return [n for n in table.names if n not in excluded]
-
-
-def _percent(shares) -> str:
-    return ", ".join(f"{100 * s:.0f} %" for s in shares)
-
-
-class _ScoredRanker:
-    """Method dispatch shared by the pair and the single-column ranker."""
-
-    table: RankingTable
-    method: str
-    columns: Optional[ColumnSet] = None
-    #: The score column's bar range.
-    score_span: Tuple[float, float] = (0.0, 1.0)
-
-    def _init_scored(self, table: RankingTable, method: str) -> None:
+    def _setup(self, table: RankingTable, method: str, single: bool) -> None:
         if method not in METHODS:
             raise ValueError(f"unknown ranking method {method!r}")
-        if METHODS[method][1] and table.labels is None:
-            raise ValueError(f"{METHODS[method][0]} needs class labels")
+        _caption, needs_labels, pairs, singles = METHODS[method]
+        if needs_labels and table.labels is None:
+            raise ValueError(f"ranking by {method!r} needs class labels")
+        if single and not singles:
+            raise ValueError(f"{method!r} does not rank single parameters")
+        if not single and not pairs:
+            raise ValueError(f"{method!r} does not rank pairs")
         self.table = table
         self.method = method
-        self._sequence = 0
-        self.score_span = {"populations": (0.0, 0.5), "correlation": (-1.0, 1.0)}.get(
-            method, (0.0, 1.0))
-
-    @property
-    def header(self) -> Tuple[str, ...]:  # type: ignore[override]
-        if self.method == "populations":
-            return ("Separation",) + self._name_headers + ("Islands",)
-        return ({"correlation": "ρ", "separation": "κ"}[self.method],) + self._name_headers
+        self.columns: Optional[ColumnSet] = None
+        self._arrival = itertools.count()
 
     def prepare(self) -> None:
-        """Draw the sample (on the GUI thread: it reads the live table).
-
-        Choosing the columns -- fitting axes, finding aliases and folds -- is
-        left to the first :meth:`state_count`, which the panel calls in its
-        worker, so a browser does not freeze on *Start*.
-        """
+        """Draw the sample (GUI thread); the columns are chosen later, in the worker."""
         self.table.prepare()
-        self.attrs = []
-        self._attr_order = None
-        self._columns_ready = False
-
-    def _ensure_columns(self) -> None:
-        if getattr(self, "_columns_ready", True):
-            return
-        self._columns_ready = True
-        if self.method == "separation":
-            self.attrs = _rankable(self.table)
-        else:
-            self.columns = ColumnSet(self.table)
-            self.attrs = list(self.columns.names)
-        self._attr_order = None
-
-    def state_count(self) -> int:
-        self._ensure_columns()
-        return super().state_count()  # type: ignore[misc]
-
-    def iterate_states(self):
-        self._ensure_columns()
-        return super().iterate_states()  # type: ignore[misc]
+        self.columns = None
+        self._arrival = itertools.count()
+        super().prepare()
 
     def left_out(self) -> Dict[str, str]:
-        """Columns set aside, with why (empty for the class-separation score)."""
+        """Columns not ranked, with the reason."""
         return dict(self.columns.left_out) if self.columns is not None else {}
 
-    def _score(self, names: Sequence[str]):
+    # ---- columns -----------------------------------------------------------------------
+    def _candidates(self) -> List[str]:
         table = self.table
-        if self.method == "correlation":
-            ranks = self.columns.ranks
-            return correlation(ranks[names[0]], ranks[names[1]])
-        if self.method == "populations":
+        table.prepare()
+        if self.method == "separation":
+            exclude = tuple(table.labels.exclude) if table.labels is not None else ()
+            derived = set(table.derived_from(sorted(exclude)))
+            return [n for n in table.names if n not in exclude and n not in derived]
+        exclude = tuple(table.labels.exclude) if table.labels is not None else ()
+        self.columns = ColumnSet(table, exclude=exclude)
+        return list(self.columns.names)
+
+    def _single_primary(self, name: str) -> float:
+        score = self._score((name,))
+        return math.inf if score is None else float(score[0])
+
+    # ---- scores ------------------------------------------------------------------------
+    def _score(self, state: Tuple[str, ...]):
+        method = self.method
+        if method == "populations":
             from .separation import find_populations
 
-            cols = self.columns
-            if len(names) == 2 and cols.is_curve(*names):
+            columns = self.columns
+            if len(state) == 2 and columns.is_curve(*state):
                 return None
-            found = find_populations(cols.matrix(names), table.total_weight, table.w)
+            found = find_populations(columns.matrix(state), self.table.total_weight, self.table.w)
             if found is None:
                 return None
-            self._sequence += 1
-            # (sort keys..., a tie-breaker so the Populations is never compared)
-            return (-found.score, -found.count, self._sequence, found)
-        points = table.matrix(names)
-        y = table.y
-        valid = np.isfinite(points).all(axis=1) & np.isfinite(y)
-        raw = knn_separation(points, y, discrete=table.labels.discrete, n_total=len(y))
-        if raw is None:
+            return (-float(found.score), -int(found.count), next(self._arrival), found)
+        if method == "correlation":
+            rho, p = self.columns.spearman(*state)
+            if math.isnan(rho):
+                return None
+            return (-abs(rho), p, next(self._arrival), rho)
+        table = self.table
+        labels = table.labels
+        found = _knn_details(table.matrix(state), table.y, labels.discrete, MIN_K)
+        if found is None:
             return None
-        if table.labels.discrete:
-            kappa = chance_corrected_agreement(-raw, y[valid])
-            return None if kappa is None else (-kappa, raw, int(valid.sum()))
-        return (raw, raw, int(valid.sum()))
+        statistic, n_valid, valid_labels = found
+        coverage = n_valid / max(table.n_rows, 1)
+        if labels.discrete:
+            kappa = chance_corrected_agreement(statistic, valid_labels)
+            if kappa is None:
+                return None
+            return (-kappa * coverage, -statistic, n_valid)
+        weighted = statistic * coverage
+        return (-weighted, -weighted, n_valid)
 
-    def _aliases(self, names: Sequence[str]) -> str:
+    def compute_score(self, state: Tuple[str, ...]):
+        """The score of the view *state* (lower is better), ``None`` to leave it out."""
+        self._ensure_columns()
+        return self._score(tuple(state))
+
+    # ---- rows --------------------------------------------------------------------------
+    def _label(self, name: str) -> str:
+        return f"{name} (log)" if self.table.view(name).scale == "log" else name
+
+    def _payload(self, state: Tuple[str, ...]) -> dict:
+        if len(state) == 1:
+            return {"z": state[0], "scale_z": self.table.view(state[0]).scale}
+        x, y = state
+        return {"x": x, "y": y, "scale_x": self.table.view(x).scale,
+                "scale_y": self.table.view(y).scale}
+
+    def _also(self, state: Tuple[str, ...]) -> str:
         if self.columns is None:
             return ""
-        same = [a for n in names for a in self.columns.aliases.get(n, ())]
-        return " " + tr("Also this view: {names}.").format(names=", ".join(same)) if same else ""
+        merged = [m for name in state for m in self.columns.aliases.get(name, [])]
+        if not merged:
+            return ""
+        return " " + tr("Also this view: {names}.").format(names=", ".join(merged))
 
-    def _row(self, score, names: Sequence[str], payload) -> RankRow:
-        views = [self.table.view(n) for n in names]
-        labels = tuple(_label(v) for v in views)
+    def row_for_state(self, score, state: Tuple[str, ...]) -> RankRow:
+        """The table row of a scored view."""
+        state = tuple(state)
+        labels = tuple(self._label(n) for n in state)
+        payload = self._payload(state)
         n = self.table.n_rows
         if self.method == "populations":
             found = score[3]
-            value = found.score
-            if found.count > 1:
-                note = tr("{count} islands holding {shares} of the {n} sampled bursts; "
-                          "{inside} % sit clearly inside one (not on a bridge or in a tail). "
-                          "Score {score}: the chance that two bursts are in two different, "
-                          "clearly separated populations.").format(
-                    count=found.count, shares=_percent(found.shares), n=n,
-                    inside=f"{100 * found.in_islands:.0f}", score=f"{value:.3f}")
+            value = float(found.score)
+            count = int(found.count)
+            if count > 1:
+                tooltip = tr(
+                    "{count} islands holding {shares} of the {n} sampled bursts; {inside} % sit "
+                    "clearly inside one (not on a bridge or in a tail). Score {score}: the chance "
+                    "that two bursts are in two different, clearly separated populations."
+                ).format(count=count, n=n,
+                         shares=", ".join(f"{100.0 * s:.0f} %" for s in found.shares),
+                         inside=int(round(100.0 * found.in_islands)), score=f"{value:.3f}")
             else:
-                note = tr("One population: no significant density valley over {n} sampled "
-                          "bursts.").format(n=n)
-            return RankRow((f"{value:.3f}",) + labels + (str(found.count),), payload,
-                           min(1.0, value / 0.5), value, note + self._aliases(names))
+                tooltip = tr("One population: no significant density valley over {n} sampled "
+                             "bursts.").format(n=n)
+            return RankRow((f"{value:.3f}",) + labels + (str(count),), payload,
+                           bar=min(1.0, value / 0.5), sort_value=value,
+                           tooltip=tooltip + self._also(state))
         if self.method == "correlation":
-            _, r, p = score
-            if math.isnan(r):
-                return RankRow(("N/A",) + labels, payload, None, -math.inf,
-                               tr("No finite pairs, or a constant column."))
-            return RankRow(
-                (f"{r:+.3f}",) + labels, payload, abs(r), abs(r),
-                tr("Spearman ρ = {rho}, p = {p} over {n} sampled bursts: the two move "
-                   "together, which says nothing about populations.").format(
-                    rho=f"{r:+.4f}", p=f"{p:.3g}", n=n) + self._aliases(names),
-                POSITIVE_COLOR if r >= 0 else NEGATIVE_COLOR, r)
-        value, raw, n_valid = score
-        classes = self.table.labels
-        if classes.discrete:
-            kappa = -value
-            return RankRow(
-                (f"{kappa:.3f}",) + labels, payload, min(1.0, max(0.0, kappa)), kappa,
-                tr("{share} of each burst's {k} nearest neighbours share its class ({classes}); "
-                   "κ = {kappa} above chance, over {valid} of {n} sampled rows.").format(
-                    share=f"{-raw:.1%}", k=MIN_K, classes=tr(classes.name),
-                    kappa=f"{kappa:.3f}", valid=n_valid, n=n),
-            )
-        r2 = -raw
-        return RankRow(
-            (f"{r2:.3f}",) + labels, payload, min(1.0, max(0.0, r2)), r2,
-            tr("The mean {classes} of each burst's {k} nearest neighbours predicts its own with "
-               "R² = {r2}; weighted by the {share} of sampled rows that have values.").format(
-                classes=tr(classes.name), k=MIN_K,
-                r2=f"{r2 / (n_valid / n) if n_valid else 0:.3f}", share=f"{n_valid / n:.0%}"),
-        )
+            rho, p = float(score[3]), float(score[1])
+            tooltip = tr("Spearman ρ = {rho}, p = {p} over {n} sampled bursts: the two move "
+                         "together, which says nothing about populations.").format(
+                rho=f"{rho:+.4f}", p=f"{p:.3g}", n=n)
+            return RankRow((f"{rho:+.3f}",) + labels, payload, bar=abs(rho),
+                           sort_value=abs(rho), tooltip=tooltip + self._also(state),
+                           bar_color=POSITIVE_BAR if rho >= 0 else NEGATIVE_BAR, value=rho)
+        table_labels = self.table.labels
+        classes = tr(table_labels.name)
+        n_valid = int(score[2])
+        coverage = n_valid / max(n, 1)
+        if table_labels.discrete:
+            weighted = -float(score[0])
+            share = -float(score[1])
+            kappa = weighted / coverage if coverage > 0 else 0.0
+            tooltip = tr("{share} of each burst's {k} nearest neighbours share its class "
+                         "({classes}); κ = {kappa} above chance, over {valid} of {n} sampled "
+                         "rows.").format(share=f"{share:.1%}", k=MIN_K, classes=classes,
+                                         kappa=f"{kappa:.3f}", valid=n_valid, n=n)
+        else:
+            weighted = -float(score[0])
+            r2 = weighted / coverage if coverage > 0 else 0.0
+            tooltip = tr("The mean {classes} of each burst's {k} nearest neighbours predicts its "
+                         "own with R² = {r2}; weighted by the {share} of sampled rows that "
+                         "have values.").format(classes=classes, k=MIN_K, r2=f"{r2:.3f}",
+                                                share=f"{coverage:.0%}")
+        return RankRow((f"{weighted:.3f}",) + labels, payload,
+                       bar=min(1.0, max(0.0, weighted)), sort_value=weighted, tooltip=tooltip)
 
-    def _order_by_single(self) -> List[str]:
-        """Most promising columns first, by the same score in one dimension."""
-        self._ensure_columns()
+    # ---- table layout --------------------------------------------------------------------
+    def _name_headers(self) -> Tuple[str, ...]:
+        raise NotImplementedError
+
+    @property
+    def header(self) -> Tuple[str, ...]:
+        if self.method == "populations":
+            return (mark("Separation"),) + self._name_headers() + ("Islands",)
         if self.method == "correlation":
-            return list(self.attrs)
-        keyed = []
-        for position, name in enumerate(self.attrs):
-            score = self._score([name])
-            keyed.append((math.inf if score is None else score[0], position, name))
-        return [name for _, _, name in sorted(keyed)]
+            return ("ρ",) + self._name_headers()
+        discrete = self.table.labels is None or self.table.labels.discrete
+        return ("κ" if discrete else "R²",) + self._name_headers()
 
+    @property
+    def score_span(self) -> Tuple[float, float]:
+        if self.method == "populations":
+            return (0.0, 0.5)
+        if self.method == "correlation":
+            return (-1.0, 1.0)
+        return (0.0, 1.0)
+
+    # ---- the islands of a view (populations only) ----------------------------------------
     def ranked_names(self, names: Sequence[str]) -> Optional[List[str]]:
-        """The ranked columns that stand for *names*, or ``None``.
-
-        A column merged into another as its alias (``Proximity ratio`` into
-        ``FRET efficiency``) is represented by it: the same bursts in the same
-        order, so the representative's islands label the alias' view too.
-        """
+        """Each name as ranked: itself, or the head it was merged into; ``None`` if any is neither."""
         if self.method != "populations" or self.columns is None:
             return None
-        axes, aliases = self.columns.axes, self.columns.aliases
         out = []
         for name in names:
-            if name not in axes:
-                name = next((r for r, same in aliases.items() if name in same), None)
-                if name is None or name not in axes:
-                    return None
-            out.append(name)
+            if name in self.columns.names:
+                out.append(name)
+                continue
+            head = next((h for h, members in self.columns.aliases.items()
+                         if name in members and h in self.columns.names), None)
+            if head is None:
+                return None
+            out.append(head)
         return out
 
-    def islands(self, names: Sequence[str], values: Sequence[np.ndarray],
-                core: bool = False) -> Optional[np.ndarray]:
-        """The island of every row of *values* (full columns of *names*), -1 none.
-
-        The islands are found again on the ranking's sample, as they were
-        scored, and every burst of *values* is looked up in them through the
-        axes' preparation (scale, sentinels, outlier fence, robust range).
-        With *core* only bursts in an island's core are labelled; bridges,
-        tails and outliers get -1. Islands are numbered largest first.
-        """
-        found = self._found_points(names, values)
-        return None if found is None else found[0].label(found[1], core=core)
-
-    def assign_islands(self, names: Sequence[str], values: Sequence[np.ndarray],
-                       mode: str = "whole") -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """``(labels, probabilities)`` of every row of *values*, or ``None``.
-
-        :meth:`~.separation.Populations.assign`: *mode* ``"whole"`` labels
-        every burst of an island's catchment basin but its ridges, ``"cores"``
-        only its core; the probability is the island's share of the smoothed
-        density at the burst (0 for -1).
-        """
-        found = self._found_points(names, values)
-        return None if found is None else found[0].assign(found[1], mode)
-
-    def _found_points(self, names, values):
-        """The view's populations on the ranking sample and *values* in its
-        coordinates, or ``None``."""
+    def _refound(self, names: Sequence[str], values: Sequence):
         from .separation import find_populations
 
         if self.method != "populations" or self.columns is None:
             return None
-        if any(n not in self.columns.axes for n in names):
+        if any(n not in self.columns.coords for n in names):
             return None
-        found = find_populations(self.columns.matrix(names), self.table.total_weight,
+        found = find_populations(self.columns.matrix(list(names)), self.table.total_weight,
                                  self.table.w)
         if found is None:
             return None
@@ -899,68 +1146,77 @@ class _ScoredRanker:
                                   for n, v in zip(names, values)])
         return found, points
 
+    def islands(self, names: Sequence[str], values: Sequence, core: bool = False):
+        """The island of every row of *values* (full columns of *names*), -1 none.
 
-class ProjectionRanker(_ScoredRanker, AttrPairRanker):
-    """Rank x/y pairs of a burst table.
+        The view's populations are found again on the ranking's sample, as
+        scored, and every row is mapped through each column's robust axis.
+        ``None`` unless ranked by populations and the columns are known.
+        """
+        refound = self._refound(names, values)
+        if refound is None:
+            return None
+        found, points = refound
+        return found.label(points, core=core)
 
-    The payload of a row is ``{"x", "y", "scale_x", "scale_y"}``: what ndX sets
-    when the row is clicked, in the scales it was scored in.
+    def assign_islands(self, names: Sequence[str], values: Sequence, mode: str = "whole"):
+        """``(labels, probabilities)`` of every row of *values*; ``None`` as :meth:`islands`."""
+        refound = self._refound(names, values)
+        if refound is None:
+            return None
+        found, points = refound
+        return found.assign(points, mode)
+
+
+class ProjectionRanker(_ScoredViews, PairRanker):
+    """Ranks the x/y views of a table.
+
+    Parameters
+    ----------
+    table : RankingTable
+        The sample (read only by :meth:`prepare`).
+    method : str
+        A key of :data:`METHODS`.
+
+    Pairs are enumerated over the selected columns put in order of their
+    own one-column score (populations and separation), so promising pairs
+    are scored first -- the role a univariate attribute estimate (ReliefF;
+    Kononenko 1994, doi:10.1007/3-540-57868-4_57) plays in VizRank.
     """
 
-    dimension = 2
-    _name_headers = ("x", "y")
+    def __init__(self, table: RankingTable, method: str) -> None:
+        PairRanker.__init__(self)
+        self._setup(table, method, single=False)
 
-    def __init__(self, table: RankingTable, method: str):
-        self._init_scored(table, method)
-        AttrPairRanker.__init__(self, [])
+    def _name_headers(self) -> Tuple[str, ...]:
+        return ("x", "y")
 
-    def score_attributes(self) -> Sequence[str]:
-        """Columns that split on their own first (Orange's ReliefF ordering), so
-        the top of the table fills early."""
-        return self._order_by_single()
-
-    def compute_score(self, state):
-        j, i = state
-        order = self.attr_order
-        return self._score([order[j], order[i]])
-
-    def row_for_state(self, score, state) -> RankRow:
-        j, i = state
-        x, y = self.attr_order[j], self.attr_order[i]
-        payload = {
-            "x": x, "y": y,
-            "scale_x": self.table.view(x).scale, "scale_y": self.table.view(y).scale,
-        }
-        return self._row(score, [x, y], payload)
-
-    def matches(self, payload, wanted) -> bool:
-        """The same two columns, in either order — a transposed view is the same view."""
-        return {payload.get("x"), payload.get("y")} == {wanted.get("x"), wanted.get("y")}
+    def select_columns(self) -> List[str]:
+        names = self._candidates()
+        if self.method == "correlation":
+            return names
+        primary = {name: self._single_primary(name) for name in names}
+        position = {name: i for i, name in enumerate(names)}
+        return sorted(names, key=lambda n: (primary[n], position[n]))
 
 
-class ParameterRanker(_ScoredRanker, AttrRanker):
-    """Rank single columns — the z parameter. Payload ``{"z", "scale_z"}``."""
+class ParameterRanker(_ScoredViews, ColumnRanker):
+    """Ranks single parameters (the z axis), in selection order.
 
-    dimension = 1
-    _name_headers = ("Parameter",)
+    Parameters
+    ----------
+    table : RankingTable
+        The sample.
+    method : str
+        A key of :data:`METHODS` that ranks single columns.
+    """
 
-    def __init__(self, table: RankingTable, method: str):
-        if not METHODS.get(method, ("", False, False, False))[3]:
-            raise ValueError(f"{method!r} does not rank single columns")
-        self._init_scored(table, method)
-        AttrRanker.__init__(self, [])
+    def __init__(self, table: RankingTable, method: str) -> None:
+        ColumnRanker.__init__(self)
+        self._setup(table, method, single=True)
 
-    def score_attributes(self) -> Sequence[str]:
-        self._ensure_columns()
-        return self.attrs
+    def _name_headers(self) -> Tuple[str, ...]:
+        return (mark("Parameter"),)
 
-    def compute_score(self, state):
-        return self._score([self.attr_order[state]])
-
-    def row_for_state(self, score, state) -> RankRow:
-        name = self.attr_order[state]
-        payload = {"z": name, "scale_z": self.table.view(name).scale}
-        return self._row(score, [name], payload)
-
-    def matches(self, payload, wanted) -> bool:
-        return payload.get("z") == wanted.get("z")
+    def select_columns(self) -> List[str]:
+        return self._candidates()

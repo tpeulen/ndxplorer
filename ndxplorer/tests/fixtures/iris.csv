@@ -1,4 +1,5 @@
-# Fisher's iris data (R. A. Fisher 1936; UCI Machine Learning Repository), as shipped with Orange3.
+# Fisher's iris data: R. A. Fisher (1936), Ann. Eugen. 7:179-188, doi:10.1111/j.1469-1809.1936.tb02137.x (public domain).
+# Values as in iris.data of the UCI Machine Learning Repository (doi:10.24432/C56C76), which differs from Fisher's table in samples 35 and 38.
 # class: 0 Iris-setosa, 1 Iris-versicolor, 2 Iris-virginica
 sepal length,sepal width,petal length,petal width,class
 5.1,3.5,1.4,0.2,0
