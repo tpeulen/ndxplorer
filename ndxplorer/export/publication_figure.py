@@ -66,6 +66,7 @@ def draw_density_with_marginals(
     y_log: bool = False,
     z_log: bool = False,
     count_labels: bool = True,
+    colorbar_axes: Optional[Axes] = None,
 ) -> None:
     """Draw ndX's density panel -- 2D histogram, X/Y marginals, colour bar --
     into *density* and the marginal panels *top* / *right* of the caller's
@@ -86,8 +87,11 @@ def draw_density_with_marginals(
     density.set_log(x=x_log, y=y_log)
     density.set_xlim(*xlim)
     density.set_ylim(*ylim)
-    # The colour bar goes beside the right-most panel of the density's row.
-    (right or density).add_colorbar(colorbar_label, low, high, colormap=cmap, log=z_log)
+    # The colour bar goes beside the right-most panel of the density's row --
+    # or onto a caller-supplied panel when the layout keeps it out of the
+    # marginal's cell (a joint plot's marginal sits flush against the density).
+    (colorbar_axes or right or density).add_colorbar(colorbar_label, low, high,
+                                                     colormap=cmap, log=z_log)
 
     if top is not None and x_marginal is not None:
         _draw_marginal(top, x_marginal, horizontal=False)
