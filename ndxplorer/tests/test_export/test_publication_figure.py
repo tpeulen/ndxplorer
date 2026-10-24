@@ -82,3 +82,19 @@ def test_render_log_scales_do_not_crash(hist_2d):
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
+
+
+def test_density_panel_draws_into_a_callers_grid(hist_2d):
+    """The extractor: ndX's panel composes into another page's grid."""
+    from emtk.figure import Figure
+    from ndxplorer.export.publication_figure import draw_density_with_marginals
+
+    H, xe, ye, xm, ym = hist_2d
+    fig = Figure(rows=2, cols=2, size=(560, 420), height_ratios=[1.0, 4.0],
+                 width_ratios=[440.0, 120.0])
+    draw_density_with_marginals(fig, fig.ax(1, 0), fig.ax(0, 0), fig.ax(1, 1),
+                                H, xe, ye, x_marginal=xm, y_marginal=ym,
+                                x_label="E", y_label="S")
+    fig.ax(0, 1).hide()
+    pdf = fig.pdf_bytes()
+    assert pdf[:4] == b"%PDF" and b"%%EOF" in pdf[-32:]

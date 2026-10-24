@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import numpy as np
-from emtk.figure import Figure, colorbar_space
+from emtk.figure import Axes, Figure, colorbar_space
 
 from ..i18n import mark
 
@@ -45,6 +45,62 @@ def figure_bytes(fig: Figure, suffix: str, *, dpi: int = 300, transparent: bool 
     """
     del transparent
     return fig.to_bytes(suffix, dpi=dpi)
+
+
+def draw_density_with_marginals(
+    fig: Figure,
+    density: Axes,
+    top: Optional[Axes],
+    right: Optional[Axes],
+    H: np.ndarray,
+    x_edges: np.ndarray,
+    y_edges: np.ndarray,
+    *,
+    x_marginal: Marginal = None,
+    y_marginal: Marginal = None,
+    x_label: str = "",
+    y_label: str = "",
+    colorbar_label: str = "counts",
+    cmap: str = "viridis",
+    x_log: bool = False,
+    y_log: bool = False,
+    z_log: bool = False,
+) -> None:
+    """Draw ndX's density panel -- 2D histogram, X/Y marginals, colour bar --
+    into *density* and the marginal panels *top* / *right* of the caller's
+    figure (either marginal panel ``None``: that marginal is skipped).
+
+    The panels come from the caller's grid, so a report page composes this
+    block beside its own panels instead of re-drawing it: one composer, the
+    interactive view and the print view stay the same picture.
+    """
+    H = np.asarray(H, dtype=float)
+    x_edges = np.asarray(x_edges, dtype=float)
+    y_edges = np.asarray(y_edges, dtype=float)
+    xlim = (float(x_edges[0]), float(x_edges[-1]))
+    ylim = (float(y_edges[0]), float(y_edges[-1]))
+    low, high = _density_levels(H, z_log)
+    density.mesh(x_edges, y_edges, H, colormap=cmap, levels=(low, high), log=z_log)
+    density.set_labels(x=x_label, y=y_label)
+    density.set_log(x=x_log, y=y_log)
+    density.set_xlim(*xlim)
+    density.set_ylim(*ylim)
+    # The colour bar goes beside the right-most panel of the density's row.
+    (right or density).add_colorbar(colorbar_label, low, high, colormap=cmap, log=z_log)
+
+    if top is not None and x_marginal is not None:
+        _draw_marginal(top, x_marginal, horizontal=False)
+        top.set_log(x=x_log)
+        top.set_xlim(*xlim)
+        top.hide_tick_labels(x=True)
+        top.set_labels(y="count")
+    if right is not None and y_marginal is not None:
+        _draw_marginal(right, y_marginal, horizontal=True)
+        right.set_log(y=y_log)
+        right.set_ylim(*ylim)
+        right.hide_tick_labels(y=True)
+        right.set_labels(x="count")
+    del fig  # the panels carry the drawing; kept for a stable call signature
 
 
 def render_publication_figure(
@@ -121,29 +177,13 @@ def render_publication_figure(
         fig = Figure(rows=1, cols=1, size=size, title=title or "")
         density, top, right = fig.ax(), None, None
 
-    xlim = (float(x_edges[0]), float(x_edges[-1]))
-    ylim = (float(y_edges[0]), float(y_edges[-1]))
-    low, high = _density_levels(H, z_log)
-    density.mesh(x_edges, y_edges, H, colormap=cmap, levels=(low, high), log=z_log)
-    density.set_labels(x=x_label, y=y_label)
-    density.set_log(x=x_log, y=y_log)
-    density.set_xlim(*xlim)
-    density.set_ylim(*ylim)
-    # The colour bar goes beside the right-most panel of the density's row.
-    (right or density).add_colorbar(colorbar_label, low, high, colormap=cmap, log=z_log)
-
-    if draw_marginals:
-        _draw_marginal(top, x_marginal, horizontal=False)
-        top.set_log(x=x_log)
-        top.set_xlim(*xlim)
-        top.hide_tick_labels(x=True)
-        top.set_labels(y="count")
-        _draw_marginal(right, y_marginal, horizontal=True)
-        right.set_log(y=y_log)
-        right.set_ylim(*ylim)
-        right.hide_tick_labels(y=True)
-        right.set_labels(x="count")
-
+    draw_density_with_marginals(
+        fig, density, top if draw_marginals else None, right if draw_marginals else None,
+        H, x_edges, y_edges,
+        x_marginal=x_marginal, y_marginal=y_marginal,
+        x_label=x_label, y_label=y_label, colorbar_label=colorbar_label,
+        cmap=cmap, x_log=x_log, y_log=y_log, z_log=z_log,
+    )
     return fig
 
 
@@ -168,4 +208,5 @@ def _draw_marginal(ax, marginal: Marginal, *, horizontal: bool) -> None:
             horizontal=horizontal)
 
 
-__all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure"]
+__all__ = ["EXPORT_FORMATS", "figure_bytes", "render_publication_figure",
+           "draw_density_with_marginals"]
