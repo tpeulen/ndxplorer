@@ -65,6 +65,7 @@ def draw_density_with_marginals(
     x_log: bool = False,
     y_log: bool = False,
     z_log: bool = False,
+    count_labels: bool = True,
 ) -> None:
     """Draw ndX's density panel -- 2D histogram, X/Y marginals, colour bar --
     into *density* and the marginal panels *top* / *right* of the caller's
@@ -93,13 +94,13 @@ def draw_density_with_marginals(
         top.set_log(x=x_log)
         top.set_xlim(*xlim)
         top.hide_tick_labels(x=True)
-        top.set_labels(y="count")
+        top.set_labels(y="count" if count_labels else "")
     if right is not None and y_marginal is not None:
         _draw_marginal(right, y_marginal, horizontal=True)
         right.set_log(y=y_log)
         right.set_ylim(*ylim)
         right.hide_tick_labels(y=True)
-        right.set_labels(x="count")
+        right.set_labels(x="count" if count_labels else "")
     del fig  # the panels carry the drawing; kept for a stable call signature
 
 
